@@ -27,13 +27,14 @@ See: .planning/PROJECT.md (updated 2026-05-09)
 **Milestone:** Phase 2 MVP — shadow/dry-run parallel to Phase 1 live
 **Phase:** 1 (of 7) — Ralph Loop Infrastructure Tests + OM Crew
 **Requirements:** RAL-01 to RAL-04, OPS-01 to OPS-08 (12 total)
-**Status:** Not started
-**Blockers:** None
+**Status:** Context gathered — 25 implementation decisions locked. Ready for planning.
+**Blockers:** `ralph_loop.py:_parse_metric_value()` needs fix for boolean/percentage PRD targets before RL-02 test
 
 ## Recent Changes
 
 | Date | What | Why |
 |------|------|-----|
+| 2026-05-09 | Phase 1 context gathered: 25 decisions locked (OM 3-agent, pre-flight policy, RL engine-only, PRD traffic light) | gsd-discuss-phase 1 complete |
 | 2026-05-09 | GSD alignment: map-codebase + new-project artifacts | Structure Phase 2 build with spec-driven process |
 | 2026-05-09 | Hardcoded DeepSeek API key redacted from crew_structure.py | Security — now env-only |
 | 2026-05-09 | GitHub repo created (venkatseshadri/antariskh) | Version control for Phase 2 |

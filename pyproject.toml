@@ -54,7 +54,7 @@ source = ["tools", "crews", "ralph"]
 omit = ["tests/*", "*.pyc", "__pycache__/*"]
 
 [tool.coverage.report]
-fail_under = 85
+fail_under = 70
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",

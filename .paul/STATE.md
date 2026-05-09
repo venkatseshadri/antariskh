@@ -7,11 +7,20 @@ See: .paul/PROJECT.md (updated 2026-05-09)
 **Current focus:** Phase 2 — Multi-Crew Ralph Loop Architecture (TDD buildout)
 
 ## Loop Position
-**Phase:** 2 (of 7) — COMPLETE ✅
-**Next:** Phase 3 — Portfolio Manager Crew
+**Phase 8:** Inter-crew Communication ✅
+**Phase 9:** Deployment ✅
+**Phase 10:** Hardening ✅
+**Next:** Phase 3 milestone (SENSEX, MCX, autonomy L0→L4) or production live
 
-## Blockers
-- None (01-01 resolved: parsed_value fix + 12 RL tests pass)
+## Current Status
+- 6 crews, 13 agents, 36 tools, ~187 tests (162 engine, 25 LLM-dependent)
+- Coverage: 71% with 70% threshold
+- Chairman orchestrator routes NL queries to correct crew
+- OM 8:00 AM cron + systemd watchdog configs ready
+- Telegram bridge wired for OM + CEO reports
+- All 6 agent prompts hardened against injection (promptfoo validated)
+- AgentOps observability active (20 tracing tests)
+- PAUL planning: .paul/ with 10 phases archived
 
 ## Decisions (accumulated from Phase 1 context)
 - D-01: OM crew = 3 agents (PreFlightAgent, CronWatchdog, Reporter)

@@ -7,9 +7,8 @@ See: .paul/PROJECT.md (updated 2026-05-09)
 **Current focus:** Phase 2 — Multi-Crew Ralph Loop Architecture (TDD buildout)
 
 ## Loop Position
-**Phase:** 1 (of 7) — Ralph Loop Infrastructure Tests + OM Crew
-**Status:** PLAN — context gathered, 25 decisions locked, ready for plan creation
-**Phase plan:** .paul/phases/01-ralph-loop-infrastructure-tests-om-crew/01-01-PLAN.md
+**Phase:** 1 (of 7) — COMPLETE ✅
+**Phase:** 2 (of 7) — Trading Analyst Crew — PLAN
 
 ## Blockers
 - None (01-01 resolved: parsed_value fix + 12 RL tests pass)

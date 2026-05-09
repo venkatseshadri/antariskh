@@ -516,5 +516,16 @@ def dispatch_with_ralph(crew_name: str, query: str = "") -> Dict:
             f"RALPH ESCALATION: {crew_name} has {ralph_result['escalation_consecutive']} "
             f"consecutive PRD failures — notifying Chairman"
         )
+        # Push to Chairman via notification layer
+        try:
+            from tools.notifications import push_ralph_escalation
+
+            push_ralph_escalation(
+                crew_name,
+                ralph_result["escalation_consecutive"],
+                ralph_result.get("metrics", []),
+            )
+        except Exception:
+            pass
 
     return {**crew_result, "ralph": ralph_result}

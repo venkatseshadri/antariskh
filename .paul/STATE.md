@@ -12,8 +12,7 @@ See: .paul/PROJECT.md (updated 2026-05-09)
 **Phase plan:** .paul/phases/01-ralph-loop-infrastructure-tests-om-crew/01-01-PLAN.md
 
 ## Blockers
-- `ralph_loop.py:_parse_metric_value()` needs fix for boolean/percentage PRD targets before RL-02 test
-- CrewAI 1.14.4 `Process.hierarchical` confirmed available
+- None (01-01 resolved: parsed_value fix + 12 RL tests pass)
 
 ## Decisions (accumulated from Phase 1 context)
 - D-01: OM crew = 3 agents (PreFlightAgent, CronWatchdog, Reporter)

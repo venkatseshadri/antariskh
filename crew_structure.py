@@ -32,7 +32,7 @@ from crewai.tools import tool
 # LLM Configuration
 # ============================================================
 
-DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
 deepseek_llm = LLM(
@@ -49,7 +49,7 @@ deepseek_llm = LLM(
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("Antariksh-Crew")
 
@@ -87,6 +87,7 @@ market_state: Dict = {
 # TOOLS — Deterministic Functions (no LLM, instant execution)
 # ============================================================
 
+
 @tool
 def scan_market() -> str:
     """
@@ -103,7 +104,9 @@ def scan_market() -> str:
     mock_event_name = os.environ.get("ANTARIKSH_MOCK_EVENT_NAME", "")
 
     vix = market_state.get("vix") or float(os.environ.get("ANTARIKSH_MOCK_VIX", 18.5))
-    nifty = market_state.get("nifty_spot") or float(os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0))
+    nifty = market_state.get("nifty_spot") or float(
+        os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0)
+    )
 
     market_state["vix"] = vix
     market_state["nifty_spot"] = nifty
@@ -126,11 +129,17 @@ def scan_market() -> str:
     market_state["gate_pass"] = gate_pass
     market_state["gate_reason"] = " | ".join(reasons) if reasons else "All gates passed"
 
-    logger.info(f"scan_market: VIX={vix}, NIFTY={nifty}, gate_pass={gate_pass}, reason={market_state['gate_reason']}")
-    return json.dumps({
-        "vix": vix, "nifty_spot": nifty,
-        "gate_pass": gate_pass, "gate_reason": market_state["gate_reason"],
-    })
+    logger.info(
+        f"scan_market: VIX={vix}, NIFTY={nifty}, gate_pass={gate_pass}, reason={market_state['gate_reason']}"
+    )
+    return json.dumps(
+        {
+            "vix": vix,
+            "nifty_spot": nifty,
+            "gate_pass": gate_pass,
+            "gate_reason": market_state["gate_reason"],
+        }
+    )
 
 
 @tool
@@ -158,17 +167,29 @@ def generate_trade_plan() -> str:
         "target_profit": 1000,
         "max_loss": 3500,
         "legs": [
-            {"type": "BUY", "strike": atm_strike - 300, "option": "PE", "action": "BUY"},
+            {
+                "type": "BUY",
+                "strike": atm_strike - 300,
+                "option": "PE",
+                "action": "BUY",
+            },
             {"type": "SELL", "strike": atm_strike, "option": "PE", "action": "SELL"},
             {"type": "SELL", "strike": atm_strike, "option": "CE", "action": "SELL"},
-            {"type": "BUY", "strike": atm_strike + 300, "option": "CE", "action": "BUY"},
+            {
+                "type": "BUY",
+                "strike": atm_strike + 300,
+                "option": "CE",
+                "action": "BUY",
+            },
         ],
         "entry_time": _dt.now().isoformat(),
     }
     market_state["trade_plan"] = plan
     market_state["atm_strike"] = atm_strike
 
-    logger.info(f"generate_trade_plan: ATM={atm_strike}, spot={spot}, wings={plan['wing_width']}")
+    logger.info(
+        f"generate_trade_plan: ATM={atm_strike}, spot={spot}, wings={plan['wing_width']}"
+    )
     return json.dumps({"status": "generated", "atm_strike": atm_strike, "legs": 4})
 
 
@@ -183,16 +204,22 @@ def check_risk() -> str:
     mtd_pnl = market_state.get("mtd_pnl", 0.0)
     recent = market_state.get("recent_pnls", None)
 
-    verdict = RiskGuardEngine.full_check(session_pnl=session_pnl, mtd_pnl=mtd_pnl, recent_pnls=recent)
+    verdict = RiskGuardEngine.full_check(
+        session_pnl=session_pnl, mtd_pnl=mtd_pnl, recent_pnls=recent
+    )
 
-    logger.info(f"check_risk: passed={verdict['passed']}, halt={verdict['halt']}, "
-                f"violations={verdict['violations']}")
-    return json.dumps({
-        "passed": verdict["passed"],
-        "halt": verdict["halt"],
-        "violations": verdict["violations"],
-        "recommendations": verdict["recommendations"],
-    })
+    logger.info(
+        f"check_risk: passed={verdict['passed']}, halt={verdict['halt']}, "
+        f"violations={verdict['violations']}"
+    )
+    return json.dumps(
+        {
+            "passed": verdict["passed"],
+            "halt": verdict["halt"],
+            "violations": verdict["violations"],
+            "recommendations": verdict["recommendations"],
+        }
+    )
 
 
 @tool
@@ -217,15 +244,19 @@ def execute_trade() -> str:
     plan = market_state["trade_plan"]
     fills = []
     for leg in plan.get("legs", []):
-        fills.append({
-            "leg": f"{leg['option']}_{leg['strike']}_{leg['type']}",
-            "status": "filled",
-            "price": 0.0,  # STUBBED in Phase 2
-        })
+        fills.append(
+            {
+                "leg": f"{leg['option']}_{leg['strike']}_{leg['type']}",
+                "status": "filled",
+                "price": 0.0,  # STUBBED in Phase 2
+            }
+        )
 
     market_state["positions"] = {"legs": fills, "status": "open"}
     logger.info(f"execute_trade: {len(fills)} legs placed (stubbed)")
-    return json.dumps({"status": "executed", "legs_executed": len(fills), "fills": fills})
+    return json.dumps(
+        {"status": "executed", "legs_executed": len(fills), "fills": fills}
+    )
 
 
 @tool
@@ -238,7 +269,9 @@ def monitor_positions() -> str:
     if not positions or not positions.get("legs"):
         market_state["session_pnl"] = market_state.get("session_pnl", 0.0)
         logger.info("monitor_positions: no open positions")
-        return json.dumps({"status": "no_positions", "session_pnl": market_state["session_pnl"]})
+        return json.dumps(
+            {"status": "no_positions", "session_pnl": market_state["session_pnl"]}
+        )
 
     # Simulate P&L for mock mode (target hit scenario)
     mock_mode = os.environ.get("ANTARIKSH_MOCK_MODE", "0") == "1"
@@ -252,12 +285,18 @@ def monitor_positions() -> str:
     sl_breach = pnl <= -3500
     sl_distance = 3500 + pnl  # positive = still above SL
 
-    logger.info(f"monitor_positions: P&L={pnl}, target_hit={target_hit}, "
-                f"sl_breach={sl_breach}, sl_distance={sl_distance}")
-    return json.dumps({
-        "session_pnl": pnl, "target_hit": target_hit,
-        "sl_breach": sl_breach, "sl_distance": sl_distance,
-    })
+    logger.info(
+        f"monitor_positions: P&L={pnl}, target_hit={target_hit}, "
+        f"sl_breach={sl_breach}, sl_distance={sl_distance}"
+    )
+    return json.dumps(
+        {
+            "session_pnl": pnl,
+            "target_hit": target_hit,
+            "sl_breach": sl_breach,
+            "sl_distance": sl_distance,
+        }
+    )
 
 
 @tool
@@ -281,14 +320,18 @@ def log_audit() -> str:
         recommendations=recommendations,
     )
 
-    logger.info(f"log_audit: session logged, passed={passed}, mtd_pnl={market_state.get('mtd_pnl')}")
-    return json.dumps({
-        "session_id": entry["session_id"],
-        "verdict": "passed" if passed else "failed",
-        "mtd_pnl": market_state.get("mtd_pnl"),
-        "violations": violations,
-        "entries_appended": 1,
-    })
+    logger.info(
+        f"log_audit: session logged, passed={passed}, mtd_pnl={market_state.get('mtd_pnl')}"
+    )
+    return json.dumps(
+        {
+            "session_id": entry["session_id"],
+            "verdict": "passed" if passed else "failed",
+            "mtd_pnl": market_state.get("mtd_pnl"),
+            "violations": violations,
+            "entries_appended": 1,
+        }
+    )
 
 
 # ============================================================
@@ -298,8 +341,8 @@ def log_audit() -> str:
 orchestrator = Agent(
     role="Orchestrator",
     goal="Coordinate the daily trading session by calling tools in strict sequence: "
-         "scan → plan → risk → execute → monitor → audit. "
-         "Skip execution on gate fail or halt. Never skip risk check before trade.",
+    "scan → plan → risk → execute → monitor → audit. "
+    "Skip execution on gate fail or halt. Never skip risk check before trade.",
     backstory=(
         "You are the master coordinator of Antariksh. You run the daily "
         "rhythm: 9:30 AM entry gate check, 10:30 AM entry window, 2:35 PM exit. "
@@ -312,7 +355,14 @@ orchestrator = Agent(
         "When check_risk says 'halt', you halt — no exceptions."
     ),
     llm=deepseek_llm,
-    tools=[scan_market, generate_trade_plan, check_risk, execute_trade, monitor_positions, log_audit],
+    tools=[
+        scan_market,
+        generate_trade_plan,
+        check_risk,
+        execute_trade,
+        monitor_positions,
+        log_audit,
+    ],
     verbose=True,
     allow_delegation=False,
 )
@@ -346,6 +396,7 @@ run_session_task = Task(
 # IMPLEMENTATION: AUDITOR — Phase 1 Log Integration
 # ============================================================
 
+
 class AuditorEngine:
     """
     Deterministic auditor — reads Phase 1 CFO JSONL logs,
@@ -370,7 +421,7 @@ class AuditorEngine:
         entries = []
         if log_file.exists():
             try:
-                with open(log_file, 'r') as f:
+                with open(log_file, "r") as f:
                     for line in f:
                         line = line.strip()
                         if line:
@@ -393,7 +444,7 @@ class AuditorEngine:
         try:
             month_prefix = (date_str or _dt.now().strftime("%Y-%m-%d"))[:7]
             for log_file in sorted(log_dir.glob(f"cfo_audit_{month_prefix}*.jsonl")):
-                with open(log_file, 'r') as f:
+                with open(log_file, "r") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
@@ -454,10 +505,12 @@ class AuditorEngine:
         }
 
         log_file = AuditorEngine.AUDIT_DIR / f"cfo_audit_{session_date}.jsonl"
-        with open(log_file, 'a') as f:
+        with open(log_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
-        logger.info(f"Auditor: appended session {session_id} to {log_file} — P&L ₹{pnl}")
+        logger.info(
+            f"Auditor: appended session {session_id} to {log_file} — P&L ₹{pnl}"
+        )
         market_state["audit_entries"].append(entry)
         market_state["mtd_pnl"] = mtd_pnl
         return entry
@@ -472,13 +525,21 @@ class AuditorEngine:
         mtd = AuditorEngine.calculate_mtd_from_logs() + pnl
 
         if pnl <= -AuditorEngine.DAILY_SL:
-            violations.append(f"Daily SL breached: P&L ₹{pnl} <= -₹{AuditorEngine.DAILY_SL}")
+            violations.append(
+                f"Daily SL breached: P&L ₹{pnl} <= -₹{AuditorEngine.DAILY_SL}"
+            )
         if mtd <= -AuditorEngine.PORTFOLIO_SL:
-            violations.append(f"Portfolio SL breached: MTD ₹{mtd} <= -₹{AuditorEngine.PORTFOLIO_SL}")
+            violations.append(
+                f"Portfolio SL breached: MTD ₹{mtd} <= -₹{AuditorEngine.PORTFOLIO_SL}"
+            )
         if mtd <= -AuditorEngine.MAX_30DAY_DD:
-            violations.append(f"30-day DD breached: ₹{mtd} <= -₹{AuditorEngine.MAX_30DAY_DD}")
+            violations.append(
+                f"30-day DD breached: ₹{mtd} <= -₹{AuditorEngine.MAX_30DAY_DD}"
+            )
         if AuditorEngine.MIN_FREE_CASH + pnl < 0:
-            violations.append(f"Free cash exhausted: ₹{AuditorEngine.MIN_FREE_CASH + pnl}")
+            violations.append(
+                f"Free cash exhausted: ₹{AuditorEngine.MIN_FREE_CASH + pnl}"
+            )
 
         if pnl > 0 and pnl < 500:
             recommendations.append("Low profit session — review entry timing")
@@ -486,13 +547,16 @@ class AuditorEngine:
             recommendations.append("MTD deeply negative — consider lot size reduction")
 
         passed = len(violations) == 0
-        logger.info(f"Auditor L1 validation: passed={passed}, violations={len(violations)}")
+        logger.info(
+            f"Auditor L1 validation: passed={passed}, violations={len(violations)}"
+        )
         return passed, violations, recommendations
 
 
 # ============================================================
 # IMPLEMENTATION: RISK GUARD — Hard Deterministic Rules
 # ============================================================
+
 
 class RiskGuardEngine:
     """
@@ -501,29 +565,38 @@ class RiskGuardEngine:
     The Risk Guard AGENT only generates recommendation TEXT — this class enforces.
     """
 
-    DAILY_SL = 3500       # ₹3,500 per session
-    PORTFOLIO_SL = 4500    # ₹4,500 cumulative
-    MAX_30DAY_DD = 30000   # ₹30,000 max drawdown
+    DAILY_SL = 3500  # ₹3,500 per session
+    PORTFOLIO_SL = 4500  # ₹4,500 cumulative
+    MAX_30DAY_DD = 30000  # ₹30,000 max drawdown
     MIN_FREE_CASH = 11000  # ₹11,000 floor
-    BURN_DAYS = 10         # Lookback window for burn rate
+    BURN_DAYS = 10  # Lookback window for burn rate
     BURN_THRESHOLD = 0.30  # 30% of free cash
 
     @staticmethod
     def check_daily_sl(session_pnl: float) -> Tuple[bool, str]:
         if session_pnl <= -RiskGuardEngine.DAILY_SL:
-            return False, f"Daily SL ₹{RiskGuardEngine.DAILY_SL} breached: P&L ₹{session_pnl}"
+            return (
+                False,
+                f"Daily SL ₹{RiskGuardEngine.DAILY_SL} breached: P&L ₹{session_pnl}",
+            )
         return True, f"Daily SL OK (₹{session_pnl} > -₹{RiskGuardEngine.DAILY_SL})"
 
     @staticmethod
     def check_portfolio_sl(mtd_pnl: float) -> Tuple[bool, str]:
         if mtd_pnl <= -RiskGuardEngine.PORTFOLIO_SL:
-            return False, f"Portfolio SL ₹{RiskGuardEngine.PORTFOLIO_SL} breached: MTD ₹{mtd_pnl}"
+            return (
+                False,
+                f"Portfolio SL ₹{RiskGuardEngine.PORTFOLIO_SL} breached: MTD ₹{mtd_pnl}",
+            )
         return True, f"Portfolio SL OK (MTD ₹{mtd_pnl})"
 
     @staticmethod
     def check_30day_dd(mtd_pnl: float) -> Tuple[bool, str]:
         if mtd_pnl <= -RiskGuardEngine.MAX_30DAY_DD:
-            return False, f"30-day DD ₹{RiskGuardEngine.MAX_30DAY_DD} breached: ₹{mtd_pnl}"
+            return (
+                False,
+                f"30-day DD ₹{RiskGuardEngine.MAX_30DAY_DD} breached: ₹{mtd_pnl}",
+            )
         return True, f"30-day DD OK (₹{mtd_pnl})"
 
     @staticmethod
@@ -532,18 +605,27 @@ class RiskGuardEngine:
         if remaining < 0:
             return False, f"Free cash exhausted: ₹{remaining}"
         if remaining < RiskGuardEngine.MIN_FREE_CASH * 0.5:
-            return True, f"Free cash WARNING: ₹{remaining} (floor ₹{RiskGuardEngine.MIN_FREE_CASH})"
+            return (
+                True,
+                f"Free cash WARNING: ₹{remaining} (floor ₹{RiskGuardEngine.MIN_FREE_CASH})",
+            )
         return True, f"Free cash OK: ₹{remaining}"
 
     @staticmethod
     def check_burn_rate(recent_pnls: List[float]) -> Tuple[bool, str]:
         if len(recent_pnls) < RiskGuardEngine.BURN_DAYS:
-            return True, f"Burn rate: insufficient data ({len(recent_pnls)}/{RiskGuardEngine.BURN_DAYS} days)"
-        recent_slice = recent_pnls[-RiskGuardEngine.BURN_DAYS:]
+            return (
+                True,
+                f"Burn rate: insufficient data ({len(recent_pnls)}/{RiskGuardEngine.BURN_DAYS} days)",
+            )
+        recent_slice = recent_pnls[-RiskGuardEngine.BURN_DAYS :]
         total_loss = sum(p for p in recent_slice if p < 0)
         burn_pct = abs(total_loss) / RiskGuardEngine.MIN_FREE_CASH
         if burn_pct > RiskGuardEngine.BURN_THRESHOLD:
-            return False, f"Burn rate {burn_pct:.0%} > {RiskGuardEngine.BURN_THRESHOLD:.0%} of free cash"
+            return (
+                False,
+                f"Burn rate {burn_pct:.0%} > {RiskGuardEngine.BURN_THRESHOLD:.0%} of free cash",
+            )
         return True, f"Burn rate OK: {burn_pct:.0%}"
 
     @staticmethod
@@ -606,14 +688,17 @@ class RiskGuardEngine:
         market_state["risk_ok"] = verdict["passed"]
         market_state["halt"] = verdict["halt"]
 
-        logger.info(f"Risk Guard full check: passed={verdict['passed']}, "
-                    f"halt={verdict['halt']}, violations={len(violations)}")
+        logger.info(
+            f"Risk Guard full check: passed={verdict['passed']}, "
+            f"halt={verdict['halt']}, violations={len(violations)}"
+        )
         return verdict
 
 
 # ============================================================
 # IMPLEMENTATION: RE-ENTRY TRACKER
 # ============================================================
+
 
 class ReEntryTracker:
     """
@@ -641,7 +726,9 @@ class ReEntryTracker:
     def mark_re_entry() -> int:
         market_state["re_entries_used"] = market_state.get("re_entries_used", 0) + 1
         count = market_state["re_entries_used"]
-        logger.info(f"Re-entry marked: {count}/{market_state.get('max_re_entries', 1)} used")
+        logger.info(
+            f"Re-entry marked: {count}/{market_state.get('max_re_entries', 1)} used"
+        )
         return count
 
     @staticmethod
@@ -654,6 +741,7 @@ class ReEntryTracker:
 # PRE-SESSION INITIALIZATION
 # ============================================================
 
+
 def initialize_session():
     """
     Called at crew startup. Loads Phase 1 audit trail,
@@ -665,8 +753,10 @@ def initialize_session():
     market_state["halt"] = False
     market_state["risk_ok"] = True
     ReEntryTracker.reset_session()
-    logger.info(f"Session initialized: MTD ₹{mtd_pnl:.2f}, "
-                f"re-entries 0/{market_state['max_re_entries']}")
+    logger.info(
+        f"Session initialized: MTD ₹{mtd_pnl:.2f}, "
+        f"re-entries 0/{market_state['max_re_entries']}"
+    )
 
 
 # ============================================================
@@ -674,6 +764,7 @@ def initialize_session():
 # ============================================================
 
 _crew_cache = None
+
 
 def _build_crew():
     """Build the Antariksh crew. Lazy — no LLM connection until kickoff()."""
@@ -687,12 +778,18 @@ def _build_crew():
         )
     return _crew_cache
 
+
 # ============================================================
 # ENTRY POINTS
 # ============================================================
 
-def run_entry_session(mock_mode: bool = False, mock_vix: float = 18.5,
-                      mock_nifty: float = 24500.0, mock_time: str = "10:30") -> Dict:
+
+def run_entry_session(
+    mock_mode: bool = False,
+    mock_vix: float = 18.5,
+    mock_nifty: float = 24500.0,
+    mock_time: str = "10:30",
+) -> Dict:
     """
     Run the entry gate + trade plan generation crew.
     Called at 9:30 AM IST.
@@ -711,10 +808,12 @@ def run_entry_session(mock_mode: bool = False, mock_vix: float = 18.5,
     logger.info("ANTARIKSH PHASE 2 CREW — ENTRY SESSION START")
     logger.info("=" * 60)
 
-    result = _build_crew().kickoff(inputs={
-        "session_type": "entry",
-        "mock_mode": mock_mode,
-    })
+    result = _build_crew().kickoff(
+        inputs={
+            "session_type": "entry",
+            "mock_mode": mock_mode,
+        }
+    )
 
     logger.info(f"Crew kickoff result: {result}")
     logger.info("=" * 60)
@@ -743,10 +842,12 @@ def run_exit_session(mock_mode: bool = False, mock_pnl: float = 0.0) -> Dict:
     logger.info("ANTARIKSH PHASE 2 CREW — EXIT SESSION START")
     logger.info("=" * 60)
 
-    result = _build_crew().kickoff(inputs={
-        "session_type": "exit",
-        "mock_mode": mock_mode,
-    })
+    result = _build_crew().kickoff(
+        inputs={
+            "session_type": "exit",
+            "mock_mode": mock_mode,
+        }
+    )
 
     logger.info(f"Crew kickoff result: {result}")
     logger.info("=" * 60)
@@ -760,8 +861,12 @@ def run_exit_session(mock_mode: bool = False, mock_pnl: float = 0.0) -> Dict:
     }
 
 
-def run_full_session(mock_mode: bool = False, mock_vix: float = 18.5,
-                     mock_nifty: float = 24500.0, mock_time: str = "10:30") -> Dict:
+def run_full_session(
+    mock_mode: bool = False,
+    mock_vix: float = 18.5,
+    mock_nifty: float = 24500.0,
+    mock_time: str = "10:30",
+) -> Dict:
     """Run full entry + exit session in a single LLM kickoff (all 6 tools)."""
     if mock_mode:
         os.environ["ANTARIKSH_MOCK_MODE"] = "1"
@@ -774,10 +879,12 @@ def run_full_session(mock_mode: bool = False, mock_vix: float = 18.5,
     logger.info("ANTARIKSH PHASE 2 CREW — FULL SESSION START")
     logger.info("=" * 60)
 
-    _build_crew().kickoff(inputs={
-        "session_type": "full",
-        "mock_mode": mock_mode,
-    })
+    _build_crew().kickoff(
+        inputs={
+            "session_type": "full",
+            "mock_mode": mock_mode,
+        }
+    )
 
     logger.info("=" * 60)
     logger.info("ANTARIKSH PHASE 2 CREW — FULL SESSION COMPLETE")
@@ -807,10 +914,12 @@ def run_risk_halt_test() -> Dict:
     logger.info("ANTARIKSH PHASE 2 CREW — RISK GUARD HALT TEST")
     logger.info("=" * 60)
 
-    result = _build_crew().kickoff(inputs={
-        "session_type": "risk_test",
-        "test_scenario": "capital_floor_breach",
-    })
+    result = _build_crew().kickoff(
+        inputs={
+            "session_type": "risk_test",
+            "test_scenario": "capital_floor_breach",
+        }
+    )
 
     logger.info(f"Risk halt test result: {result}")
     return {
@@ -828,8 +937,11 @@ if __name__ == "__main__":
     parser.add_argument("--nifty", type=float, default=24500.0, help="Mock NIFTY")
     parser.add_argument("--time", type=str, default="10:30", help="Mock time (HH:MM)")
     parser.add_argument("--trace", action="store_true", help="Enable trace logging")
-    parser.add_argument("--capital-floor-breach", action="store_true",
-                        help="Test Risk Guard halt scenario")
+    parser.add_argument(
+        "--capital-floor-breach",
+        action="store_true",
+        help="Test Risk Guard halt scenario",
+    )
     args = parser.parse_args()
 
     if args.trace:
@@ -837,8 +949,10 @@ if __name__ == "__main__":
 
     if args.capital_floor_breach:
         result = run_risk_halt_test()
-        print(f"\nRisk Halt Test: halt_issued={result['halt_issued']}, "
-              f"risk_ok={result['risk_verdict']}")
+        print(
+            f"\nRisk Halt Test: halt_issued={result['halt_issued']}, "
+            f"risk_ok={result['risk_verdict']}"
+        )
     else:
         result = run_full_session(
             mock_mode=args.mock,
@@ -846,5 +960,7 @@ if __name__ == "__main__":
             mock_nifty=args.nifty,
             mock_time=args.time,
         )
-        print(f"\nSession Result: gate_pass={result['entry']['gate_pass']}, "
-              f"pnl={result['exit']['session_pnl']}")
+        print(
+            f"\nSession Result: gate_pass={result['entry']['gate_pass']}, "
+            f"pnl={result['exit']['session_pnl']}"
+        )

@@ -178,3 +178,98 @@ def test_INT_12_full_company_stack():
     import tools.om_tools, tools.ta_tools, tools.pm_tools, tools.am_tools, tools.pa_tools, tools.ceo_tools
 
     assert True, "All tool modules importable"
+
+
+# ============================================================
+# GA-01 to GA-13: Governance Authority Tests
+# ============================================================
+
+
+def test_GA_01_ceo_can_dispatch_crews():
+    from tools.ceo_tools import check_authority
+
+    assert check_authority("crew_dispatch") is True
+
+
+def test_GA_02_ceo_cannot_trade_directly():
+    from tools.ceo_tools import check_authority
+
+    assert check_authority("trade_directly") is False
+
+
+def test_GA_03_ceo_cannot_override_risk_guard():
+    from tools.ceo_tools import check_authority
+
+    assert check_authority("override_risk_guard_halt") is False
+
+
+def test_GA_04_ceo_cannot_modify_constitution():
+    from tools.ceo_tools import check_authority
+
+    assert check_authority("modify_constitution") is False
+
+
+def test_GA_05_unknown_action_denied():
+    from tools.ceo_tools import check_authority
+
+    assert check_authority("delete_all_trades") is False
+
+
+def test_GA_06_pm_strategy_switch_needs_ceo_approval():
+    from tools.ceo_tools import governance_veto
+
+    r = governance_veto("PM", "strategy_switch", "IF → CS")
+    assert r["needs_approval"] is True
+    assert "CEO" in r["approvers"]
+
+
+def test_GA_07_ceo_halt_needs_board_approval():
+    from tools.ceo_tools import governance_veto
+
+    r = governance_veto("CEO", "halt_all", "market panic")
+    assert r["needs_approval"] is True
+    assert "Board" in r["approvers"]
+
+
+def test_GA_08_ceo_constitution_change_needs_board():
+    from tools.ceo_tools import governance_veto
+
+    r = governance_veto("CEO", "modify_constitution", "change SL")
+    assert r["needs_approval"] is True
+    assert "Board" in r["approvers"]
+
+
+def test_GA_09_escalation_3_consecutive_failures():
+    from tools.ceo_tools import should_escalate
+
+    assert should_escalate([False, False, False], 3) is True
+
+
+def test_GA_10_escalation_mixed_no_streak():
+    from tools.ceo_tools import should_escalate
+
+    assert should_escalate([False, True, False, False], 3) is False
+
+
+def test_GA_11_escalation_empty_history():
+    from tools.ceo_tools import should_escalate
+
+    assert should_escalate([], 3) is False
+
+
+def test_GA_12_resource_caps_blocked_by_ceo():
+    from tools.ceo_tools import enforce_resource_caps
+
+    r = enforce_resource_caps(positions=6, capital_inr=700000, strategies=5)
+    assert r["ok"] is False
+    assert len(r["violations"]) == 3  # all 3 caps exceeded
+
+
+def test_GA_13_alignment_violation_tracking():
+    from tools.ceo_tools import alignment_check
+
+    goals = ["Don't burn capital", "Systematic trading"]
+    bad_decision = {"action": "all-in on 0DTE calls", "reason": "greed + fomo"}
+    r = alignment_check(bad_decision, goals)
+    assert r["aligned"] is False
+    assert len(r["violations"]) >= 2, "Should flag emotional + capital risk"

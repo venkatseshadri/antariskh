@@ -27,6 +27,8 @@ from ralph.ralph_loop import (
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_01_scheduler_picks_correct_crew():
     """RL-01: RalphScheduler.run_due_roles() runs the correct crew at the
     configured time and skips roles that are not due."""
@@ -77,6 +79,8 @@ def test_RL_01_scheduler_picks_correct_crew():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_02_yaml_loading_happy_path():
     """RL-02: load_prd_yaml() loads all 6 PRDs with correct value types."""
     for role in ["om", "pm", "ta", "am", "pa", "ceo"]:
@@ -96,12 +100,16 @@ def test_RL_02_yaml_loading_happy_path():
             )
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_02_yaml_loading_missing_file():
     """RL-02: load_prd_yaml() raises FileNotFoundError for nonexistent PRD."""
     with pytest.raises(FileNotFoundError, match="PRD file not found"):
         load_prd_yaml("ralph/prds/nonexistent_prd.yaml")
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_02_yaml_loading_malformed_yaml():
     """RL-02: load_prd_yaml() handles malformed YAML."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
@@ -114,6 +122,8 @@ def test_RL_02_yaml_loading_malformed_yaml():
         os.unlink(tmp_path)
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_02_yaml_loading_missing_fields():
     """RL-02: load_prd_yaml() returns defaults for missing optional fields."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
@@ -135,6 +145,8 @@ def test_RL_02_yaml_loading_missing_fields():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_03_escalation_counter_increments():
     """RL-03: PRDRalphLoop escalation counter tracks consecutive PRD failures.
 
@@ -174,6 +186,8 @@ def test_RL_03_escalation_counter_increments():
     )
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_03_no_escalation_when_eventually_pass():
     """RL-03: PRD passes on retry — no escalation triggered."""
     prd = RolePRD(
@@ -211,6 +225,8 @@ def test_RL_03_no_escalation_when_eventually_pass():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_04_data_immature_status():
     """RL-04: check_metric() returns DATA_IMMATURE when samples < min_samples."""
     prd = RolePRD(
@@ -242,6 +258,8 @@ def test_RL_04_data_immature_status():
     assert status == "PASS", "0.70 >= target 0.60 should PASS"
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_04_pass_warning_fail_with_samples():
     """RL-04: check_metric reports correct status based on actual vs target/floor."""
     prd = RolePRD(
@@ -278,6 +296,8 @@ def test_RL_04_pass_warning_fail_with_samples():
     assert status == "FAIL"
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_04_boolean_metric_check():
     """RL-04: check_metric() handles boolean targets."""
     prd = RolePRD(
@@ -300,6 +320,8 @@ def test_RL_04_boolean_metric_check():
     assert status == "FAIL", "False < True should be FAIL"
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_RL_04_unknown_metric_graceful():
     """RL-04: check_metric() returns PASS for unknown metric (not an error)."""
     prd = RolePRD(
@@ -320,6 +342,8 @@ def test_RL_04_unknown_metric_graceful():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ralph
 def test_parse_metric_value_all_types():
     """Verify _parse_metric_value handles all PRD value types."""
     assert _parse_metric_value("True") is True

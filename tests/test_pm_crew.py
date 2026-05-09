@@ -45,6 +45,8 @@ SAMPLE_MARKET_BEARISH = {
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_01_select_iron_fly_normal_conditions():
     """PM-01: Normal conditions (VIX<20, bullish, no event) → Iron Butterfly."""
     from tools.pm_tools import select_strategy
@@ -54,6 +56,8 @@ def test_PM_01_select_iron_fly_normal_conditions():
     assert result["reason"] is not None
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_02_select_credit_spread_high_vix():
     """PM-02: VIX > 20 → Credit Spread (lower risk in volatile markets)."""
     from tools.pm_tools import select_strategy
@@ -63,6 +67,8 @@ def test_PM_02_select_credit_spread_high_vix():
     assert "VIX" in result["reason"].upper() or "vix" in result["reason"].lower()
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_03_select_iron_fly_high_vix_confirmed_trend():
     """PM-03: VIX>20 but all confirmations bullish + strong ADX → IB."""
     from tools.pm_tools import select_strategy
@@ -85,6 +91,8 @@ def test_PM_03_select_iron_fly_high_vix_confirmed_trend():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_04_calculate_iron_fly_strikes():
     """PM-04: NIFTY at 24500, wing 300, grid 50 → 4 strikes calculated."""
     from tools.pm_tools import calculate_strikes
@@ -106,6 +114,8 @@ def test_PM_04_calculate_iron_fly_strikes():
         assert s % 50 == 0, f"Strike {s} not on 50-point grid"
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_05_calculate_credit_spread_strikes():
     """PM-05: Credit Spread = 2 strikes."""
     from tools.pm_tools import calculate_strikes
@@ -118,6 +128,8 @@ def test_PM_05_calculate_credit_spread_strikes():
     assert strikes[1] == 24800, "Upper strike"
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_06_strikes_grid_alignment():
     """PM-06: All strikes snap to the 50-point grid."""
     from tools.pm_tools import calculate_strikes
@@ -135,6 +147,8 @@ def test_PM_06_strikes_grid_alignment():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_07_build_strategy_spec_iron_fly():
     """PM-07: Full IB spec built from market state."""
     from tools.pm_tools import build_strategy_spec
@@ -148,6 +162,8 @@ def test_PM_07_build_strategy_spec_iron_fly():
     assert "indicators" in spec
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_08_build_strategy_spec_credit_spread():
     """PM-08: Credit Spread spec with wider wings at high VIX."""
     from tools.pm_tools import build_strategy_spec
@@ -157,6 +173,8 @@ def test_PM_08_build_strategy_spec_credit_spread():
     assert len(spec["strikes"]) == 2, "CS needs 2 strikes"
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_09_spec_respects_resource_limits():
     """PM-09: Spec stays within resource caps (max lots, max indicators)."""
     from tools.pm_tools import build_strategy_spec
@@ -171,6 +189,8 @@ def test_PM_09_spec_respects_resource_limits():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_10_strategy_summary_ceo():
     """PM-10: CEO strategy summary includes WR, PF, strategy type."""
     from tools.pm_tools import build_strategy_spec, generate_strategy_summary
@@ -184,6 +204,8 @@ def test_PM_10_strategy_summary_ceo():
     assert summary["strategies_active"] == 1
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_11_strategy_summary_no_active():
     """PM-11: No strategies active — empty summary handled."""
     from tools.pm_tools import generate_strategy_summary
@@ -199,6 +221,8 @@ def test_PM_11_strategy_summary_no_active():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.pm
 def test_PM_12_full_pm_pipeline():
     """PM-12: Select → calculate → spec → summary — full PM workflow."""
     from tools.pm_tools import (
@@ -218,3 +242,116 @@ def test_PM_12_full_pm_pipeline():
     assert summary["strategies_active"] == 1, "One strategy should be active"
     assert summary["win_rate"] == 0.65
     assert summary["profit_factor"] == 1.8
+
+
+# ============================================================
+# Edge-Case Tests — PM-13 through PM-18
+# ============================================================
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_13_strategy_select_edge_case_all_fail():
+    """PM-13: VIX>20 + event day + bearish + gap>0.5 + all indicators bearish → Credit Spread."""
+    from tools.pm_tools import select_strategy
+
+    result = select_strategy(SAMPLE_MARKET_BEARISH)
+    # All signals fail: high VIX, event day, bearish, high gap — must be CS
+    assert result["type"] == "CREDIT_SPREAD", (
+        f"All-fail edge case should return Credit Spread, got {result['type']}"
+    )
+    assert "CS" in result.get("reason", "") or "CREDIT_SPREAD" in result.get(
+        "reason", ""
+    )
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_14_strike_calculation_nifty_boundary():
+    """PM-14: Spot at exact grid boundaries (24500, 24550) → handled without crash."""
+    from tools.pm_tools import calculate_strikes
+
+    for spot in [24500, 24550]:
+        strikes = calculate_strikes(
+            nifty_spot=spot, strategy_type="IRON_FLY", wing_width=300, grid=50
+        )
+        assert len(strikes) == 4, (
+            f"Expected 4 strikes at spot {spot}, got {len(strikes)}"
+        )
+        for s in strikes:
+            assert s % 50 == 0, f"Strike {s} not on grid for spot {spot}"
+            assert s > 0, f"Strike {s} must be positive for spot {spot}"
+        # Verify strike ordering
+        assert strikes == sorted(strikes), (
+            f"Strikes not monotonic for spot {spot}: {strikes}"
+        )
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_15_strike_calculation_nonstandard_wing():
+    """PM-15: wing_width=0 returns meaningful strikes (no crash)."""
+    from tools.pm_tools import calculate_strikes
+
+    strikes = calculate_strikes(
+        nifty_spot=24485, strategy_type="IRON_FLY", wing_width=0, grid=50
+    )
+    assert isinstance(strikes, list), f"Expected list, got {type(strikes)}"
+    for s in strikes:
+        assert isinstance(s, (int, float)), f"Strike {s} should be numeric"
+        assert s % 50 == 0, f"Strike {s} not on grid"
+        assert s > 0, f"Strike {s} must be positive"
+
+    # wing_width=0 on Credit Spread should also work
+    cs_strikes = calculate_strikes(
+        nifty_spot=24485, strategy_type="CREDIT_SPREAD", wing_width=0, grid=50
+    )
+    assert len(cs_strikes) == 2, f"Expected 2 CS strikes, got {len(cs_strikes)}"
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_16_spec_includes_vix_and_spot():
+    """PM-16: Built spec contains vix_at_spec_time and nifty_spot fields."""
+    from tools.pm_tools import build_strategy_spec
+
+    spec = build_strategy_spec("IRON_FLY", SAMPLE_MARKET)
+    assert "vix_at_spec_time" in spec, "Spec must include vix_at_spec_time"
+    assert "nifty_spot" in spec, "Spec must include nifty_spot"
+    assert spec["vix_at_spec_time"] == pytest.approx(15.0)
+    assert spec["nifty_spot"] == 24500
+
+    # Also verify for Credit Spread
+    cs_spec = build_strategy_spec("CREDIT_SPREAD", SAMPLE_MARKET_BEARISH)
+    assert cs_spec["vix_at_spec_time"] == pytest.approx(22.0)
+    assert cs_spec["nifty_spot"] == 24500
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_17_ceo_summary_verdict_below_floor():
+    """PM-17: WR at 0.50 (below 0.55 floor) → verdict mentions 'below floor'."""
+    from tools.pm_tools import build_strategy_spec, generate_strategy_summary
+
+    specs = [build_strategy_spec("IRON_FLY", SAMPLE_MARKET)]
+    summary = generate_strategy_summary(specs, win_rate=0.50, profit_factor=1.5)
+    assert "below floor" in summary["text"].lower(), (
+        f"Verdict should mention 'below floor', got:\n{summary['text']}"
+    )
+    assert summary["win_rate"] == pytest.approx(0.50)
+    assert summary["strategies_active"] == 1
+
+
+@pytest.mark.engine
+@pytest.mark.pm
+def test_PM_18_ceo_summary_verdict_near_floor():
+    """PM-18: WR at 0.55 (exactly at floor) → verdict mentions 'near floor'."""
+    from tools.pm_tools import build_strategy_spec, generate_strategy_summary
+
+    specs = [build_strategy_spec("CREDIT_SPREAD", SAMPLE_MARKET_BEARISH)]
+    summary = generate_strategy_summary(specs, win_rate=0.55, profit_factor=1.8)
+    assert "near floor" in summary["text"].lower(), (
+        f"Verdict should mention 'near floor', got:\n{summary['text']}"
+    )
+    assert summary["win_rate"] == pytest.approx(0.55)
+    assert summary["strategies_active"] == 1

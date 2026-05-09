@@ -50,6 +50,8 @@ SAMPLE_TRADE = {
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_01_validate_trade_exact_match():
     """TA-01: Trade matches PM spec exactly — no violations."""
     from tools.ta_tools import validate_trade
@@ -59,6 +61,8 @@ def test_TA_01_validate_trade_exact_match():
     assert result["violations"] == [], "No violations expected"
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_02_validate_trade_wrong_strikes():
     """TA-02: Trade has different strikes than spec — CRITICAL violation."""
     from tools.ta_tools import validate_trade
@@ -71,6 +75,8 @@ def test_TA_02_validate_trade_wrong_strikes():
     assert strike_v["severity"] == "CRITICAL"
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_03_validate_trade_wrong_lots():
     """TA-03: Trade uses 2 lots, spec says 1 — CRITICAL."""
     from tools.ta_tools import validate_trade
@@ -83,6 +89,8 @@ def test_TA_03_validate_trade_wrong_lots():
     assert lot_v["actual"] == 2
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_04_validate_trade_wrong_sl():
     """TA-04: SL = 2000 instead of 3500 — CRITICAL."""
     from tools.ta_tools import validate_trade
@@ -95,6 +103,8 @@ def test_TA_04_validate_trade_wrong_sl():
     assert sl_v["actual"] == 2000
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_05_validate_trade_wrong_type():
     """TA-05: Credit Spread instead of Iron Fly — CRITICAL."""
     from tools.ta_tools import validate_trade
@@ -105,6 +115,8 @@ def test_TA_05_validate_trade_wrong_type():
     assert any(v["field"] == "type" for v in result["violations"])
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_06_validate_trade_missing_field():
     """TA-06: Trade missing TSL field — violation."""
     from tools.ta_tools import validate_trade
@@ -115,6 +127,8 @@ def test_TA_06_validate_trade_missing_field():
     assert any(v["field"] == "tsl" for v in result["violations"])
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_07_validate_multiple_violations():
     """TA-07: Trade with wrong strikes AND wrong lots — all violations reported."""
     from tools.ta_tools import validate_trade
@@ -132,6 +146,8 @@ def test_TA_07_validate_multiple_violations():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_08_slippage_within_tolerance():
     """TA-08: 5 point slippage within 50 point tolerance — ok."""
     from tools.ta_tools import check_slippage
@@ -141,6 +157,8 @@ def test_TA_08_slippage_within_tolerance():
     assert result["slippage"] == 5
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_09_slippage_exceeds_tolerance():
     """TA-09: 75 point slippage exceeds 50 point tolerance — flagged."""
     from tools.ta_tools import check_slippage
@@ -156,6 +174,8 @@ def test_TA_09_slippage_exceeds_tolerance():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_10_no_duplicate_detected():
     """TA-10: Unique trade in session — no duplicates."""
     from tools.ta_tools import detect_duplicate
@@ -171,6 +191,8 @@ def test_TA_10_no_duplicate_detected():
     assert result["duplicate"] is False, f"Should not be duplicate: {result}"
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_11_duplicate_detected():
     """TA-11: Same strikes + type + lots in session — duplicate flagged."""
     from tools.ta_tools import detect_duplicate
@@ -194,6 +216,8 @@ def test_TA_11_duplicate_detected():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_12_compliance_report():
     """TA-12: Compliance report generated with violations."""
     from tools.ta_tools import generate_compliance_report
@@ -210,6 +234,8 @@ def test_TA_12_compliance_report():
     assert "text" in report, "Must include human-readable text"
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_13_execution_ledger():
     """TA-13: Execution ledger with P&L + broker + fees for AM."""
     from tools.ta_tools import generate_execution_ledger
@@ -229,6 +255,8 @@ def test_TA_13_execution_ledger():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_14_full_validation_pipeline():
     """TA-14: Full flow — validate → slippage → duplicate → report."""
     from tools.ta_tools import (
@@ -256,6 +284,8 @@ def test_TA_14_full_validation_pipeline():
     assert report["accuracy"] == 1.0
 
 
+@pytest.mark.engine
+@pytest.mark.ta
 def test_TA_15_full_violation_flow():
     """TA-15: Trade with multiple violations — full reporting chain."""
     from tools.ta_tools import (
@@ -283,3 +313,69 @@ def test_TA_15_full_violation_flow():
 
     ledger = generate_execution_ledger([bad_trade], "2026-05-12")
     assert len(ledger["trades"]) == 1
+
+
+# ============================================================
+# Boundary / Edge Case Tests (4 tests)
+# ============================================================
+
+
+@pytest.mark.engine
+@pytest.mark.ta
+def test_TA_16_slippage_exactly_at_tolerance():
+    """TA-16: Exactly 50pt slippage at tolerance boundary — ok (<= not <)."""
+    from tools.ta_tools import check_slippage
+
+    result = check_slippage(expected_strike=24500, actual_fill=24550, tolerance=50)
+    assert result["ok"] is True, f"Exactly at tolerance should be ok: {result}"
+    assert result["slippage"] == 50
+
+
+@pytest.mark.engine
+@pytest.mark.ta
+def test_TA_17_validate_broker_mismatch():
+    """TA-17: Shoonya spec vs Flattrade actual — WARNING violation."""
+    from tools.ta_tools import validate_trade
+
+    bad_trade = {**SAMPLE_TRADE, "broker": "flattrade"}
+    result = validate_trade(SAMPLE_SPEC, bad_trade)
+    assert result["valid"] is False, "Broker mismatch should invalidate"
+    broker_v = next(v for v in result["violations"] if v["field"] == "broker")
+    assert broker_v["severity"] == "WARNING"
+    assert broker_v["expected"] == "shoonya"
+    assert broker_v["actual"] == "flattrade"
+
+
+@pytest.mark.engine
+@pytest.mark.ta
+def test_TA_18_ledger_multiple_sessions():
+    """TA-18: Generate ledger for 5-trade session — totals correct."""
+    from tools.ta_tools import generate_execution_ledger
+
+    trades = [
+        {**SAMPLE_TRADE, "trade_id": "T001", "pnl": 100, "fees": 10, "slippage": 2},
+        {**SAMPLE_TRADE, "trade_id": "T002", "pnl": 200, "fees": 15, "slippage": 3},
+        {**SAMPLE_TRADE, "trade_id": "T003", "pnl": -50, "fees": 10, "slippage": 1},
+        {**SAMPLE_TRADE, "trade_id": "T004", "pnl": 300, "fees": 20, "slippage": 4},
+        {**SAMPLE_TRADE, "trade_id": "T005", "pnl": 150, "fees": 12, "slippage": 2},
+    ]
+    ledger = generate_execution_ledger(trades, session="2026-05-12")
+    assert ledger["session"] == "2026-05-12"
+    assert ledger["total_pnl"] == 700
+    assert ledger["total_fees"] == 67
+    assert ledger["total_slippage"] == 12.0
+    assert ledger["trade_count"] == 5
+    assert len(ledger["trades"]) == 5
+
+
+@pytest.mark.engine
+@pytest.mark.ta
+def test_TA_19_compliance_perfect_score():
+    """TA-19: No violations → 1.0 accuracy and valid."""
+    from tools.ta_tools import validate_trade, generate_compliance_report
+
+    result = validate_trade(SAMPLE_SPEC, SAMPLE_TRADE)
+    assert result["valid"] is True
+    report = generate_compliance_report("T001", SAMPLE_SPEC, result["violations"])
+    assert report["accuracy"] == 1.0
+    assert "All checks passed" in report["text"]

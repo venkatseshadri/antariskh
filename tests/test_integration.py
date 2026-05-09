@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # INT-01 to INT-08: Crew-to-crew data contracts
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_01_pm_to_ta_spec_format():
     from tools.pm_tools import build_strategy_spec
     from tools.ta_tools import validate_trade
@@ -22,6 +24,8 @@ def test_INT_01_pm_to_ta_spec_format():
     )
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_02_ta_to_pm_compliance_format():
     from tools.ta_tools import generate_compliance_report, validate_trade
 
@@ -47,6 +51,8 @@ def test_INT_02_ta_to_pm_compliance_format():
     assert "accuracy" in report, "Compliance report has accuracy"
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_03_ta_to_am_ledger_format():
     from tools.ta_tools import generate_execution_ledger
 
@@ -56,6 +62,8 @@ def test_INT_03_ta_to_am_ledger_format():
     assert "total_pnl" in ledger, "Ledger has total P&L for AM"
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_04_am_to_pm_capital_format():
     from tools.am_tools import generate_capital_report
 
@@ -63,6 +71,8 @@ def test_INT_04_am_to_pm_capital_format():
     assert "margin_pct" in r, "Capital report has margin % for PM"
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_05_am_to_ceo_financial_format():
     from tools.am_tools import generate_financial_report
 
@@ -79,6 +89,8 @@ def test_INT_05_am_to_ceo_financial_format():
     assert "text" in r
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_06_pm_to_ceo_strategy_format():
     from tools.pm_tools import generate_strategy_summary
 
@@ -100,6 +112,8 @@ def test_INT_06_pm_to_ceo_strategy_format():
     assert "win_rate" in r
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_07_om_to_ceo_health_format():
     from tools.om_tools import aggregate_health_report
 
@@ -107,6 +121,8 @@ def test_INT_07_om_to_ceo_health_format():
     assert "overall" in r and "telegram_md" in r
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_08_pm_to_ta_full_roundtrip():
     from tools.pm_tools import build_strategy_spec
     from tools.ta_tools import validate_trade
@@ -127,6 +143,8 @@ def test_INT_08_pm_to_ta_full_roundtrip():
 
 
 # INT-09 to INT-12: Multi-crew integration
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_09_om_to_ceo_roundtrip():
     from tools.om_tools import token_refresh_status, aggregate_health_report
     import os
@@ -138,6 +156,8 @@ def test_INT_09_om_to_ceo_roundtrip():
     del os.environ["ANTARIKSH_MOCK_MODE"]
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_10_all_crews_report_to_ceo():
     from tools.ceo_tools import aggregate_crew_performance
 
@@ -151,6 +171,8 @@ def test_INT_10_all_crews_report_to_ceo():
     assert r["crews_active"] == 4
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_11_pa_feedback_reaches_pm():
     from tools.pa_tools import (
         review_trade,
@@ -173,6 +195,8 @@ def test_INT_11_pa_feedback_reaches_pm():
     assert len(report["recommendations"]) > 0
 
 
+@pytest.mark.engine
+@pytest.mark.integration
 def test_INT_12_full_company_stack():
     """All 6 crew tools importable and callable."""
     import tools.om_tools, tools.ta_tools, tools.pm_tools, tools.am_tools, tools.pa_tools, tools.ceo_tools
@@ -185,36 +209,54 @@ def test_INT_12_full_company_stack():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_01_ceo_can_dispatch_crews():
     from tools.ceo_tools import check_authority
 
     assert check_authority("crew_dispatch") is True
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_02_ceo_cannot_trade_directly():
     from tools.ceo_tools import check_authority
 
     assert check_authority("trade_directly") is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_03_ceo_cannot_override_risk_guard():
     from tools.ceo_tools import check_authority
 
     assert check_authority("override_risk_guard_halt") is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_04_ceo_cannot_modify_constitution():
     from tools.ceo_tools import check_authority
 
     assert check_authority("modify_constitution") is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_05_unknown_action_denied():
     from tools.ceo_tools import check_authority
 
     assert check_authority("delete_all_trades") is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_06_pm_strategy_switch_needs_ceo_approval():
     from tools.ceo_tools import governance_veto
 
@@ -223,6 +265,9 @@ def test_GA_06_pm_strategy_switch_needs_ceo_approval():
     assert "CEO" in r["approvers"]
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_07_ceo_halt_needs_board_approval():
     from tools.ceo_tools import governance_veto
 
@@ -231,6 +276,9 @@ def test_GA_07_ceo_halt_needs_board_approval():
     assert "Board" in r["approvers"]
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_08_ceo_constitution_change_needs_board():
     from tools.ceo_tools import governance_veto
 
@@ -239,24 +287,36 @@ def test_GA_08_ceo_constitution_change_needs_board():
     assert "Board" in r["approvers"]
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_09_escalation_3_consecutive_failures():
     from tools.ceo_tools import should_escalate
 
     assert should_escalate([False, False, False], 3) is True
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_10_escalation_mixed_no_streak():
     from tools.ceo_tools import should_escalate
 
     assert should_escalate([False, True, False, False], 3) is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_11_escalation_empty_history():
     from tools.ceo_tools import should_escalate
 
     assert should_escalate([], 3) is False
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_12_resource_caps_blocked_by_ceo():
     from tools.ceo_tools import enforce_resource_caps
 
@@ -265,6 +325,9 @@ def test_GA_12_resource_caps_blocked_by_ceo():
     assert len(r["violations"]) == 3  # all 3 caps exceeded
 
 
+@pytest.mark.engine
+@pytest.mark.integration
+@pytest.mark.ceo
 def test_GA_13_alignment_violation_tracking():
     from tools.ceo_tools import alignment_check
 

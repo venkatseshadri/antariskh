@@ -48,6 +48,7 @@ def _clear_api_key_env():
 # ============================================================
 
 
+@pytest.mark.agentops
 def test_AO_01_agentops_imports():
     """AO-01: AgentOps SDK is importable and has expected decorators."""
     ao = _import_agentops()
@@ -59,6 +60,7 @@ def test_AO_01_agentops_imports():
     assert callable(operation), "@operation decorator should be callable"
 
 
+@pytest.mark.agentops
 def test_AO_02_session_init_and_end():
     """AO-02: Session init/end without errors."""
     _mock_api_key_env()
@@ -70,6 +72,7 @@ def test_AO_02_session_init_and_end():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_03_operation_decorator_tracks_execution():
     """AO-03: @operation decorator wraps function and tracks execution."""
     _mock_api_key_env()
@@ -87,6 +90,7 @@ def test_AO_03_operation_decorator_tracks_execution():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_04_operation_decorator_captures_errors():
     """AO-04: @operation decorator captures exceptions."""
     _mock_api_key_env()
@@ -108,6 +112,7 @@ def test_AO_04_operation_decorator_captures_errors():
 # ============================================================
 
 
+@pytest.mark.agentops
 def test_AO_05_om_tools_span_tracking():
     """AO-05: OM tools execute with AgentOps span tracking."""
     _mock_api_key_env()
@@ -125,6 +130,7 @@ def test_AO_05_om_tools_span_tracking():
     os.environ.pop("ANTARIKSH_MOCK_MODE", None)
 
 
+@pytest.mark.agentops
 def test_AO_06_ta_tools_span_tracking():
     """AO-06: TA tools execute with span tracking."""
     _mock_api_key_env()
@@ -148,6 +154,7 @@ def test_AO_06_ta_tools_span_tracking():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_07_pm_tools_span_tracking():
     """AO-07: PM tools execute with span tracking."""
     _mock_api_key_env()
@@ -170,6 +177,7 @@ def test_AO_07_pm_tools_span_tracking():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_08_am_tools_span_tracking():
     """AO-08: AM tools execute with span tracking."""
     _mock_api_key_env()
@@ -183,6 +191,7 @@ def test_AO_08_am_tools_span_tracking():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_09_pa_tools_span_tracking():
     """AO-09: PA tools execute with span tracking."""
     _mock_api_key_env()
@@ -205,6 +214,7 @@ def test_AO_09_pa_tools_span_tracking():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_10_ceo_tools_span_tracking():
     """AO-10: CEO tools execute with span tracking."""
     _mock_api_key_env()
@@ -219,6 +229,7 @@ def test_AO_10_ceo_tools_span_tracking():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_11_all_36_tools_span_integrity():
     """AO-11: All 36 tools execute within a single session, spans created."""
     _mock_api_key_env()
@@ -383,6 +394,7 @@ def test_AO_11_all_36_tools_span_integrity():
 # ============================================================
 
 
+@pytest.mark.agentops
 def test_AO_12_om_crew_builds_with_agentops():
     """AO-12: OM crew builds and agents are traceable."""
     _mock_api_key_env()
@@ -397,6 +409,7 @@ def test_AO_12_om_crew_builds_with_agentops():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_13_ta_crew_builds_with_agentops():
     """AO-13: TA crew builds and agents are traceable."""
     _mock_api_key_env()
@@ -410,6 +423,7 @@ def test_AO_13_ta_crew_builds_with_agentops():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_14_all_6_crews_build_traceable():
     """AO-14: All 6 crews build within a single AgentOps session."""
     _mock_api_key_env()
@@ -432,6 +446,7 @@ def test_AO_14_all_6_crews_build_traceable():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_15_crew_tools_are_agentops_compatible():
     """AO-15: All crew tools are decorated callables suitable for AgentOps tracking."""
     _mock_api_key_env()
@@ -467,6 +482,7 @@ def test_AO_15_crew_tools_are_agentops_compatible():
 # ============================================================
 
 
+@pytest.mark.agentops
 def test_AO_16_tool_errors_captured_in_span():
     """AO-16: Tool exceptions do not crash AgentOps session."""
     _mock_api_key_env()
@@ -484,6 +500,7 @@ def test_AO_16_tool_errors_captured_in_span():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_17_multi_session_isolation():
     """AO-17: Multiple AgentOps sessions are isolated — no cross-contamination."""
     _mock_api_key_env()
@@ -497,6 +514,7 @@ def test_AO_17_multi_session_isolation():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_18_session_without_init_graceful():
     """AO-18: Calling end_session without init is handled gracefully."""
     _clear_api_key_env()
@@ -511,6 +529,7 @@ def test_AO_18_session_without_init_graceful():
 # ============================================================
 
 
+@pytest.mark.agentops
 def test_AO_19_cross_crew_data_flow_tracked():
     """AO-19: PM → TA → AM data flow tracked in single session."""
     _mock_api_key_env()
@@ -541,6 +560,7 @@ def test_AO_19_cross_crew_data_flow_tracked():
     _clear_api_key_env()
 
 
+@pytest.mark.agentops
 def test_AO_20_full_company_execution_graph():
     """AO-20: Full 6-crew execution in single session mirrors production."""
     _mock_api_key_env()

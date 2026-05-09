@@ -22,12 +22,15 @@ from tools.am_tools import (
 )
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DS_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 manager_llm = LLM(
     model="deepseek/deepseek-chat",
     base_url=DEEPSEEK_BASE,
     temperature=0.3,
-    api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+    api_key=DS_KEY,
 )
+# Suppress CrewAI telemetry: also set OPENAI_API_KEY for internal client
+os.environ.setdefault("OPENAI_API_KEY", DS_KEY)
 
 
 @tool

@@ -164,6 +164,17 @@ def data_capture_health() -> Dict:
 def disk_usage_check() -> Dict:
     """Check disk usage on logs/ directory."""
     if _is_mock():
+        pct_str = os.environ.get("ANTARIKSH_MOCK_DISK_PCT", "")
+        if pct_str:
+            pct_used = float(pct_str)
+            free_gb = round(500.0 * (1.0 - pct_used / 100.0), 1)
+            ok = pct_used < 90
+            return {
+                "pct_used": pct_used,
+                "free_gb": free_gb,
+                "ok": ok,
+                "evidence": f"Disk: {pct_used}% used, {free_gb}GB free ({_now_ist()})",
+            }
         full = os.environ.get("ANTARIKSH_MOCK_DISK_FULL", "0") == "1"
         if full:
             return {
@@ -212,6 +223,13 @@ def network_connectivity_check() -> Dict:
                 "broker": {"shoonya": -1, "flattrade": -1},
                 "ok": False,
                 "evidence": f"Broker APIs unreachable — Shoonya: TIMEOUT, Flattrade: TIMEOUT ({_now_ist()})",
+            }
+        network_down = os.environ.get("ANTARIKSH_MOCK_NETWORK_DOWN", "0") == "1"
+        if network_down:
+            return {
+                "broker": {"shoonya": 120, "flattrade": 85},
+                "ok": False,
+                "evidence": f"Broker latency: Shoonya 120ms, Flattrade 85ms. Telegram: UNREACHABLE ({_now_ist()})",
             }
         return {
             "broker": {"shoonya": 120, "flattrade": 85},

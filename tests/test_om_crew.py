@@ -22,6 +22,8 @@ def _clear_mock_env(monkeypatch):
         "ANTARIKSH_MOCK_DATA_STOPPED",
         "ANTARIKSH_MOCK_DISK_FULL",
         "ANTARIKSH_MOCK_CRON_DEAD",
+        "ANTARIKSH_MOCK_NETWORK_DOWN",
+        "ANTARIKSH_MOCK_DISK_PCT",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -35,6 +37,8 @@ def _enable_mock(monkeypatch):
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_01_token_refresh_both_ok(monkeypatch):
     """OM-01: Both Shoonya + Flattrade tokens valid."""
     from tools.om_tools import token_refresh_status
@@ -46,6 +50,8 @@ def test_OM_01_token_refresh_both_ok(monkeypatch):
     assert result["ok"] is True, "Both tokens valid → ok=True"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_02_token_refresh_shoonya_fail_flattrade_ok(monkeypatch):
     """OM-02: Shoonya token fails, Flattrade valid."""
     from tools.om_tools import token_refresh_status
@@ -58,6 +64,8 @@ def test_OM_02_token_refresh_shoonya_fail_flattrade_ok(monkeypatch):
     assert result["ok"] is True, "One broker up → ok=True"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_03_token_refresh_both_fail(monkeypatch):
     """OM-03: Both broker tokens fail."""
     from tools.om_tools import token_refresh_status
@@ -71,6 +79,8 @@ def test_OM_03_token_refresh_both_fail(monkeypatch):
     assert result["ok"] is False, "Both brokers down → ok=False"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_04_code_verification_unchanged(monkeypatch):
     """OM-04: Code hash matches — no unauthorized changes."""
     from tools.om_tools import verify_code_hash
@@ -81,6 +91,8 @@ def test_OM_04_code_verification_unchanged(monkeypatch):
     assert result["ok"] is True, "Unchanged code → ok=True"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_05_code_verification_changed(monkeypatch):
     """OM-05: Unauthorized code change detected."""
     from tools.om_tools import verify_code_hash
@@ -93,6 +105,8 @@ def test_OM_05_code_verification_changed(monkeypatch):
     assert "evidence" in result, "Must include evidence of change"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_06_data_capture_running(monkeypatch):
     """OM-06: DuckDB market data stream alive."""
     from tools.om_tools import data_capture_health
@@ -103,6 +117,8 @@ def test_OM_06_data_capture_running(monkeypatch):
     assert result["ok"] is True, "Running data → ok=True"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_07_data_capture_stopped(monkeypatch):
     """OM-07: DuckDB stream dead."""
     from tools.om_tools import data_capture_health
@@ -114,6 +130,8 @@ def test_OM_07_data_capture_stopped(monkeypatch):
     assert result["ok"] is False, "Stopped data → ok=False"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_08_disk_usage_normal(monkeypatch):
     """OM-08: Disk at 45% — healthy."""
     from tools.om_tools import disk_usage_check
@@ -124,6 +142,8 @@ def test_OM_08_disk_usage_normal(monkeypatch):
     assert result["ok"] is True, "Normal disk → ok=True"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_09_disk_usage_critical(monkeypatch):
     """OM-09: Disk 98% full — halt condition."""
     from tools.om_tools import disk_usage_check
@@ -135,6 +155,8 @@ def test_OM_09_disk_usage_critical(monkeypatch):
     assert result["ok"] is False, "Full disk → ok=False"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_10_network_broker_reachable(monkeypatch):
     """OM-10: Both Shoonya and Flattrade APIs reachable."""
     from tools.om_tools import network_connectivity_check
@@ -146,6 +168,8 @@ def test_OM_10_network_broker_reachable(monkeypatch):
     assert result["broker"]["shoonya"] > 0, "Shoonya latency > 0"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_11_network_broker_unreachable(monkeypatch):
     """OM-11: Broker APIs unreachable."""
     from tools.om_tools import network_connectivity_check
@@ -157,6 +181,8 @@ def test_OM_11_network_broker_unreachable(monkeypatch):
     assert result["broker"]["shoonya"] < 0, "Unreachable → negative latency code"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_12_network_telegram_reachable(monkeypatch):
     """OM-12: Telegram via picoclaw is reachable."""
     from tools.om_tools import network_connectivity_check
@@ -173,6 +199,8 @@ def test_OM_12_network_telegram_reachable(monkeypatch):
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_13_crons_all_active(monkeypatch):
     """OM-13: All expected crons running."""
     from tools.om_tools import cron_health_check
@@ -184,6 +212,8 @@ def test_OM_13_crons_all_active(monkeypatch):
     assert len(result.get("missing", [])) == 0, "No missing crons"
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_14_crons_missing_entry(monkeypatch):
     """OM-14: Expected crons missing from crontab."""
     from tools.om_tools import cron_health_check
@@ -200,6 +230,8 @@ def test_OM_14_crons_missing_entry(monkeypatch):
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_15_health_report_all_pass():
     """OM-15: All checks pass → GO decision with evidence."""
     from tools.om_tools import aggregate_health_report
@@ -226,6 +258,8 @@ def test_OM_15_health_report_all_pass():
         )
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_16_health_report_critical_fail():
     """OM-16: CRITICAL failure → NOGO with halt reason."""
     from tools.om_tools import aggregate_health_report
@@ -254,6 +288,8 @@ def test_OM_16_health_report_critical_fail():
 # ============================================================
 
 
+@pytest.mark.engine
+@pytest.mark.om
 def test_OM_17_full_pre_flight_pipeline(monkeypatch):
     """OM-17: Full pipeline — all 7 checks run, report assembled."""
     from tools.om_tools import (
@@ -295,3 +331,55 @@ def test_OM_17_full_pre_flight_pipeline(monkeypatch):
     assert "telegram_md" in report
     assert len(report["telegram_md"]) > 200, "Report should be substantial"
     assert "IST" in report["telegram_md"], "Report should include timestamps"
+
+
+# ============================================================
+# Edge Case / Real Path Tests (3 tests)
+# ============================================================
+
+
+@pytest.mark.engine
+@pytest.mark.om
+def test_OM_18_network_telegram_unreachable(monkeypatch):
+    """OM-18: ANTARIKSH_MOCK_NETWORK_DOWN simulates Telegram down."""
+    from tools.om_tools import network_connectivity_check
+
+    _enable_mock(monkeypatch)
+    monkeypatch.setenv("ANTARIKSH_MOCK_NETWORK_DOWN", "1")
+    result = network_connectivity_check()
+    assert result["ok"] is False, f"Telegram down → ok=False: {result}"
+    assert "UNREACHABLE" in result["evidence"], (
+        f"Telegram should be unreachable: {result['evidence']}"
+    )
+    assert result["broker"]["shoonya"] > 0, "Brokers still reachable"
+
+
+@pytest.mark.engine
+@pytest.mark.om
+def test_OM_19_disk_exactly_at_threshold(monkeypatch):
+    """OM-19: Disk at exactly 90% → ok=False (boundary)."""
+    from tools.om_tools import disk_usage_check
+
+    _enable_mock(monkeypatch)
+    monkeypatch.setenv("ANTARIKSH_MOCK_DISK_PCT", "90.0")
+    result = disk_usage_check()
+    assert result["pct_used"] == 90.0, f"Disk should be exactly 90%: {result}"
+    assert result["ok"] is False, "Exactly 90% should be NOT ok"
+
+
+@pytest.mark.engine
+@pytest.mark.om
+def test_OM_20_code_hash_real_calculation():
+    """OM-20: verify_code_hash produces a non-empty hash string (real path)."""
+    from tools.om_tools import verify_code_hash
+
+    result = verify_code_hash()
+    assert "evidence" in result
+    assert "Code hash:" in result["evidence"], (
+        f"Must contain hash: {result['evidence']}"
+    )
+    import re
+
+    match = re.search(r"Code hash: (\S+)", result["evidence"])
+    assert match, f"No hash found: {result['evidence']}"
+    assert len(match.group(1)) > 0, "Hash must not be empty"

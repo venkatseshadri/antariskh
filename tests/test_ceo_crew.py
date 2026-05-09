@@ -14,6 +14,8 @@ STRATEGY_BAD = {"action": "double lots to 4", "reason": "greed"}
 
 
 # Alignment (3)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_01_alignment_check_pass():
     from tools.ceo_tools import alignment_check
 
@@ -21,6 +23,8 @@ def test_CEO_01_alignment_check_pass():
     assert r["aligned"] is True, f"Should align: {r}"
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_02_alignment_check_violation():
     from tools.ceo_tools import alignment_check
 
@@ -29,6 +33,8 @@ def test_CEO_02_alignment_check_violation():
     assert len(r["violations"]) > 0
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_03_alignment_check_empty():
     from tools.ceo_tools import alignment_check
 
@@ -37,6 +43,8 @@ def test_CEO_03_alignment_check_empty():
 
 
 # Aggregation (3)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_04_aggregate_performance():
     from tools.ceo_tools import aggregate_crew_performance
 
@@ -50,6 +58,8 @@ def test_CEO_04_aggregate_performance():
     assert r["overall_healthy"] is True
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_05_aggregate_with_failure():
     from tools.ceo_tools import aggregate_crew_performance
 
@@ -57,6 +67,8 @@ def test_CEO_05_aggregate_with_failure():
     assert r["overall_healthy"] is False
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_06_aggregate_empty():
     from tools.ceo_tools import aggregate_crew_performance
 
@@ -65,6 +77,8 @@ def test_CEO_06_aggregate_empty():
 
 
 # Resource caps (3)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_07_resource_caps_within_limits():
     from tools.ceo_tools import enforce_resource_caps
 
@@ -72,6 +86,8 @@ def test_CEO_07_resource_caps_within_limits():
     assert r["ok"] is True
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_08_resource_caps_exceeded():
     from tools.ceo_tools import enforce_resource_caps
 
@@ -80,6 +96,8 @@ def test_CEO_08_resource_caps_exceeded():
     assert len(r["violations"]) >= 2
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_09_resource_caps_positions_only():
     from tools.ceo_tools import enforce_resource_caps
 
@@ -88,6 +106,8 @@ def test_CEO_09_resource_caps_positions_only():
 
 
 # Board report (3)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_10_board_report():
     from tools.ceo_tools import generate_board_report
 
@@ -102,6 +122,8 @@ def test_CEO_10_board_report():
     assert "OM" in report["text"]
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_11_board_report_with_violations():
     from tools.ceo_tools import generate_board_report
 
@@ -111,6 +133,8 @@ def test_CEO_11_board_report_with_violations():
     assert "ALERT" in report["text"].upper() or "violation" in report["text"].lower()
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_12_board_report_clean():
     from tools.ceo_tools import generate_board_report
 
@@ -119,18 +143,24 @@ def test_CEO_12_board_report_clean():
 
 
 # Escalation (3)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_13_escalate_after_consecutive_failures():
     from tools.ceo_tools import should_escalate
 
     assert should_escalate([False, False, False], threshold=3) is True
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_14_no_escalate_below_threshold():
     from tools.ceo_tools import should_escalate
 
     assert should_escalate([False, False], threshold=3) is False
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_15_escalate_with_mixed():
     from tools.ceo_tools import should_escalate
 
@@ -140,12 +170,16 @@ def test_CEO_15_escalate_with_mixed():
 
 
 # Authority chain (2)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_16_authority_can():
     from tools.ceo_tools import check_authority
 
     assert check_authority("crew_dispatch") is True
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_17_authority_cannot():
     from tools.ceo_tools import check_authority
 
@@ -153,6 +187,8 @@ def test_CEO_17_authority_cannot():
 
 
 # CEO does NOT override risk guard (1)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_18_ceo_no_risk_override():
     from tools.ceo_tools import check_authority
 
@@ -160,6 +196,8 @@ def test_CEO_18_ceo_no_risk_override():
 
 
 # Governance boundary tests (GA-01 to GA-15 condensed to 2 tests)
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_19_governance_veto_chain():
     from tools.ceo_tools import governance_veto
 
@@ -168,6 +206,8 @@ def test_CEO_19_governance_veto_chain():
     assert "CEO" in r.get("approvers", [])
 
 
+@pytest.mark.engine
+@pytest.mark.ceo
 def test_CEO_20_governance_self_approval_blocked():
     from tools.ceo_tools import governance_veto
 

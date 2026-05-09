@@ -1,0 +1,60 @@
+[project]
+name = "antariskh"
+version = "0.2.0"
+description = "Antariksh — Autonomous Intraday Options Trading System"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = []
+python_functions = ["test_*"]
+
+# Markers
+markers = [
+    "engine: Deterministic no-LLM tests (fast, <1s)",
+    "llm: Tests requiring DeepSeek API calls (slow, ~5-30s each)",
+    "slow: Tests taking >30s (LLM multi-call)",
+    "agentops: AgentOps observability tests",
+    "promptfoo: Prompt security/injection eval tests",
+    "integration: Cross-crew integration tests",
+    "om: Operations Manager crew tests",
+    "ta: Trading Analyst crew tests",
+    "pm: Portfolio Manager crew tests",
+    "am: Asset Manager crew tests",
+    "pa: Post-Mortem Analyst crew tests",
+    "ceo: CEO + Governance crew tests",
+    "ralph: Ralph Loop infrastructure tests",
+    "orchestration: Cross-crew orchestration and routing tests",
+]
+
+# Filter warnings
+filterwarnings = [
+    "ignore::DeprecationWarning:crewai.agent.core",
+    "ignore::DeprecationWarning:crewai.rag",
+    "ignore::DeprecationWarning:agentops.client",
+    "default::UserWarning",
+]
+
+# Timeout
+timeout = 120
+
+# Coverage
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-v",
+    "--no-header",
+]
+
+[tool.coverage.run]
+source = ["tools", "crews", "ralph"]
+omit = ["tests/*", "*.pyc", "__pycache__/*"]
+
+[tool.coverage.report]
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

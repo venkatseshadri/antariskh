@@ -1,14 +1,17 @@
-"""Chairman Orchestrator — query routing, crew dispatch, response aggregation.
+"""Chairman Orchestrator — query routing, crew dispatch, Ralph Loop PRD verification.
 
-Routes natural language Chairman queries to the correct crew,
-executes them via CrewAI hierarchical process with DeepSeek,
-and returns structured responses.
+Routes natural language Chairman queries, dispatches to crews via CrewAI,
+and runs Ralph Loop PRD verification after every crew execution.
 """
 
-import os, sys, re
-from typing import Dict, Tuple
+import os, sys, re, logging
+from typing import Dict, Tuple, List
+from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+IST = timezone(timedelta(hours=5, minutes=30))
+logger = logging.getLogger(__name__)
 
 # Keyword-to-crew routing table
 ROUTING_TABLE = {
@@ -288,3 +291,230 @@ def handle_query(query: str) -> Dict:
         "response": result["result"],
         "error": result.get("error"),
     }
+
+
+# ============================================================
+# Ralph Loop PRD Verification Integration
+# ============================================================
+
+# Ralph PRD check schedule (from PRD frequency fields)
+RALPH_SCHEDULE = {
+    "om": ["08:00", "08:55"],
+    "pm": ["08:55", "16:00"],
+    "ta": ["09:18", "15:35"],
+    "am": ["08:55", "16:00", "fr:18:00"],
+    "pa": ["16:00", "fr:18:00"],
+    "ceo": ["08:55", "16:00", "fr:18:00"],
+}
+
+_ralph_escalation_counters: Dict[str, int] = {}
+_ralph_metric_history: Dict[str, List[Dict]] = {}
+
+
+def run_ralph_check(crew_name: str, crew_output: any) -> Dict:
+    """Run Ralph Loop PRD verification on crew output.
+
+    Called after every crew kickoff to verify output against PRD metrics.
+    Tracks metric history and escalation counters across sessions.
+
+    Returns:
+        {status: "PASS"|"FAIL"|"WARNING"|"DATA_IMMATURE", metrics: [...], escalation: bool}
+    """
+    try:
+        from ralph.ralph_loop import load_prd_yaml
+
+        prd_path = f"ralph/prds/{crew_name}_prd.yaml"
+        prd = load_prd_yaml(prd_path)
+
+        # Extract metrics from crew output (handle both str and dict results)
+        output_str = str(crew_output) if not isinstance(crew_output, dict) else ""
+        metrics_result = []
+
+        for metric_def in prd.metrics:
+            name = metric_def.get("name", "")
+            target = metric_def.get("target", 0)
+            floor = metric_def.get("floor", 0)
+            min_samples = metric_def.get("min_samples", 1)
+
+            # Count samples from history
+            history_key = f"{crew_name}:{name}"
+            samples = _ralph_metric_history.get(history_key, [])
+            sample_count = len(samples)
+
+            # Determine status based on min_samples
+            if sample_count < min_samples:
+                status = "DATA_IMMATURE"
+                reason = metric_def.get("before_min", "TRACKING")
+            else:
+                # Check against PRD thresholds
+                actual = _extract_metric_value(output_str, name)
+                if isinstance(target, bool):
+                    status = "PASS" if actual == target else "FAIL"
+                elif isinstance(target, (int, float)):
+                    if actual >= target:
+                        status = "PASS"
+                    elif actual >= floor:
+                        status = "WARNING"
+                    else:
+                        status = "FAIL"
+                else:
+                    status = "DATA_IMMATURE"  # qualitative metric
+
+                if status == "PASS":
+                    reason = f"{name}: {actual} ≥ target {target}"
+                elif status == "WARNING":
+                    reason = f"{name}: {actual} ≥ floor {floor} but < target {target}"
+                else:
+                    reason = f"{name}: {actual} < floor {floor}"
+
+            metrics_result.append(
+                {
+                    "name": name,
+                    "status": status,
+                    "reason": reason,
+                    "samples": sample_count,
+                    "min_samples": min_samples,
+                }
+            )
+
+            # Track history
+            samples.append(
+                {
+                    "status": status,
+                    "reason": reason,
+                    "timestamp": datetime.now(IST).isoformat(),
+                }
+            )
+            _ralph_metric_history[history_key] = samples[-50:]  # Keep last 50
+
+        # Escalation tracking
+        failures = [m for m in metrics_result if m["status"] == "FAIL"]
+        counter_key = f"{crew_name}:escalation"
+        if failures:
+            _ralph_escalation_counters[counter_key] = (
+                _ralph_escalation_counters.get(counter_key, 0) + 1
+            )
+        else:
+            _ralph_escalation_counters[counter_key] = 0
+
+        escalation_needed = _ralph_escalation_counters.get(counter_key, 0) >= 3
+
+        return {
+            "crew": crew_name,
+            "status": "FAIL" if failures else "PASS",
+            "metrics": metrics_result,
+            "failures": len(failures),
+            "escalation_consecutive": _ralph_escalation_counters.get(counter_key, 0),
+            "escalation_needed": escalation_needed,
+            "ran_at": datetime.now(IST).isoformat(),
+        }
+
+    except Exception as e:
+        logger.error(f"Ralph check failed for {crew_name}: {e}")
+        return {"crew": crew_name, "status": "ERROR", "error": str(e)}
+
+
+def _extract_metric_value(output_str: str, metric_name: str) -> float:
+    """Extract a numeric metric value from crew output text.
+
+    Handles boolean values (True/False) and numeric values.
+    """
+    output_lower = output_str.lower()
+    metric_lower = metric_name.lower()
+
+    # Try boolean extraction first
+    for val, num in [
+        (": true", 1.0),
+        (": false", 0.0),
+        ("= true", 1.0),
+        ("= false", 0.0),
+        (": yes", 1.0),
+        (": no", 0.0),
+    ]:
+        if f"{metric_lower}{val}" in output_lower:
+            return num
+
+    # Try numeric: "metric_name: 0.65" or "metric: 65%"
+    pat = rf"{re.escape(metric_name)}[:\s=]*([0-9.]+)"
+    m = re.search(pat, output_str, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+
+    # Check shorter prefix (first 3 chars of metric name)
+    short = metric_name[:3]
+    if short != metric_name:
+        pat2 = rf"{re.escape(short)}[:\s=]*([0-9.]+)"
+        m2 = re.search(pat2, output_str, re.IGNORECASE)
+        if m2:
+            try:
+                return float(m2.group(1))
+            except ValueError:
+                pass
+
+    # If metric name appears, it's at least present
+    if metric_lower in output_lower:
+        return 1.0
+
+    return 0.0
+
+
+def ralph_check_is_due(crew_name: str, at_time: datetime = None) -> bool:
+    """Check if Ralph PRD verification is due for a crew at the given time.
+
+    Uses PRD frequency schedules. Returns True if within ±2 min window.
+    """
+    if at_time is None:
+        at_time = datetime.now(IST)
+
+    schedules = RALPH_SCHEDULE.get(crew_name, [])
+    if not schedules:
+        return False
+
+    time_str = at_time.strftime("%H:%M")
+    weekday = at_time.strftime("%a").lower()
+
+    for sched in schedules:
+        if sched.startswith("fr:"):
+            check_time = sched[3:]
+            if weekday == "fri" and _time_in_window(check_time, at_time):
+                return True
+        elif _time_in_window(sched, at_time):
+            return True
+
+    return False
+
+
+def _time_in_window(scheduled: str, now: datetime, window: int = 2) -> bool:
+    """Check if now is within ±window minutes of scheduled HH:MM time."""
+    try:
+        h, m = map(int, scheduled.split(":"))
+        scheduled_minutes = h * 60 + m
+        now_minutes = now.hour * 60 + now.minute
+        diff = abs(now_minutes - scheduled_minutes)
+        return diff <= window or diff >= (1440 - window)  # midnight wrap
+    except (ValueError, AttributeError):
+        return False
+
+
+def dispatch_with_ralph(crew_name: str, query: str = "") -> Dict:
+    """Dispatch crew AND run Ralph Loop PRD verification afterward.
+
+    Full pipeline: crew kickoff → Ralph PRD check → escallation check.
+    Use this instead of dispatch_to_crew() for production.
+    """
+    crew_result = dispatch_to_crew(crew_name, query)
+    if crew_result["status"] != "ok":
+        return crew_result
+
+    ralph_result = run_ralph_check(crew_name, crew_result["result"])
+
+    if ralph_result.get("escalation_needed"):
+        logger.warning(
+            f"RALPH ESCALATION: {crew_name} has {ralph_result['escalation_consecutive']} "
+            f"consecutive PRD failures — notifying Chairman"
+        )
+
+    return {**crew_result, "ralph": ralph_result}

@@ -1,0 +1,49 @@
+role: "Trading Analyst"
+mission: "Validate that every trade executed matches PM's strategy spec exactly"
+reports_to: "CEO (compliance), PM (strategy questions), AM (P&L data)"
+frequency:
+  pre_session: "09:18 IST"
+  during_session: "continuous"
+  post_session: "15:35 IST"
+
+metrics:
+  - name: "execution_accuracy"
+    target: "100%"
+    floor: "95%"
+    min_samples: 1
+    description: "% of trades matching PM spec (strikes, lots, wings, SL, TSL)"
+
+  - name: "gate_check_run"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Gate check (VIX, events, window) completed before execution"
+
+  - name: "sl_placed"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Stop-loss placed on every trade per PM spec"
+
+  - name: "tsl_applied"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Trailing stop-loss configured per PM rules"
+
+  - name: "compliance_reported_to_pm"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Compliance report sent to PM after session"
+
+  - name: "execution_data_sent_to_am"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "P&L + broker cost data sent to Asset Manager"
+
+authority:
+  can: ["validate_trade", "block_noncompliant_trade", "pull_strategy_from_pm",
+        "report_violations", "initiate_close_on_target", "alert_sl_proximity"]
+  cannot: ["execute_trades", "modify_strategy", "override_risk_guard"]

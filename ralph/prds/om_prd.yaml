@@ -1,0 +1,50 @@
+role: "Operations Manager"
+mission: "Ensure trading infrastructure is available, healthy, and tested before market open"
+reports_to: "CEO"
+frequency:
+  pre_market: "08:00 IST"  # Full pre-flight before 9:00
+  pre_session: "08:55 IST"
+  continuous: "market hours (9:15-15:30)"
+
+metrics:
+  - name: "pre_flight_pass"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "All 7 pre-market checks pass before 9:00 AM"
+
+  - name: "tokens_refreshed"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Shoonya + Flattrade tokens valid"
+
+  - name: "uptime_pct"
+    target: "100%"
+    floor: "99%"
+    min_samples: 20
+    before_min: "TRACKING"
+    description: "0 unplanned outages"
+
+  - name: "backup_verified"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Daily backup checksum verified"
+
+  - name: "data_capture_running"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Market data recorder active for post-mortem"
+
+  - name: "disk_usage_pct"
+    target: "≤80%"
+    floor: "≤90%"
+    min_samples: 1
+    description: "Disk usage within limits"
+
+authority:
+  can: ["halt_all_on_infra_failure", "restore_from_backup", "failover_broker",
+        "block_new_code_if_broken", "verify_cron_health", "alert_ceo_infra"]
+  cannot: ["trade_directly", "modify_strategy", "override_risk_guard"]

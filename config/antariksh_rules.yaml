@@ -1,0 +1,302 @@
+# Antariksh Constitutional Config — v0 Harness
+#
+# This file is the L3 (Parameters) layer of the three-layer governance model.
+# - L1 (Purpose / Invariants) lives in ../python-trader/varaha/STRATEGY_DESIGN_QUESTIONS.md
+# - L2 (Mechanism existence) lives in CHARTER.md and QUESTIONS.MD
+# - L3 (this file) — specific values within mechanisms
+#
+# WRITE PROTECTION:
+#   No LLM, no agent, no automated process may mutate this file.
+#   Changes require:
+#     1. Explicit git commit by user (Chairman) running `varaha-config-commit`
+#     2. 24-hour cooldown after commit before values take effect
+#     3. Holdout backtest validation for high-risk params
+#     4. Dual confirmation (typed phrase + signed file)
+#   The agent runtime READS this file on startup and on signal SIGHUP.
+#
+# v0 = Phase 1 dress-rehearsal harness. Values seeded from STRATEGY_DESIGN_QUESTIONS.md
+# (canonical) with operational defaults from CrewAI design where QUESTIONS.MD didn't pin them.
+# Future versions evolve via the analyzer pyramid (EOD → weekly → monthly) + HITL approval
+# + 24h cooldown + holdout. Until then, these are the harness defaults.
+
+version: v0
+ratified: "2026-05-08"
+ratified_by: "chairman + interim_ceo (claude)"
+phase: 1
+mode: dry_run
+
+# ─────────────────────────────────────────────────────────────────────
+# Capital
+# ─────────────────────────────────────────────────────────────────────
+capital:
+  total_inr: 500000              # Q5: ₹5L total
+  risk_capital_inr: 250000       # Q5: ₹2.5L (50%) — genuine risk capital
+  trading_capital_inr: 250000    # Q5: preserve-and-grow
+  free_cash_inr_current: 100000  # OA2 — must be raised to ≥250000 before Phase 2 live
+  free_cash_floor_inr: 11000     # Q16 Tier 3: stop trading below this
+
+# ─────────────────────────────────────────────────────────────────────
+# Daily envelopes
+# ─────────────────────────────────────────────────────────────────────
+daily:
+  target_initial_inr: 1000       # Q1
+  target_stretch_inr: 2000       # Q1
+  sl_session_inr: 3500           # Q2 (per-instrument session SL)
+  sl_portfolio_inr: 4500         # Q7 (cumulative across instruments)
+  rolling_30d_dd_inr: 30000      # Q2 (max 30-day drawdown)
+
+# CFO 10-day burn-rate watch (added 2026-05-08, see antariksh memory)
+# 10-day rolling loss > 30% of free cash → post-mortem trigger
+burn_rate_watch:
+  window_days: 10
+  threshold_pct_of_free_cash: 30
+
+# ─────────────────────────────────────────────────────────────────────
+# Strategy (Phase 1: NIFTY-only Iron Fly per DeepSeek MVS)
+# ─────────────────────────────────────────────────────────────────────
+strategy:
+  primary_instrument: NIFTY      # SENSEX joins in Phase 3+, MCX in Phase 4
+  type: iron_butterfly           # Q9: open until evidence; IF is the seed harness
+  lots: 1                        # Phase 1 fixed; scaling per Q3 gate only
+  wing_width_pts: 300            # CrewAI default; harness value
+  wing_width_high_vix_pts: 350   # CrewAI default for VIX > 15
+  strike_grid_nifty: 50          # Q16 Tier 1 #3
+  strike_grid_sensex: 100
+
+# ─────────────────────────────────────────────────────────────────────
+# Entry / Exit Windows (Q14 Policy A — conservative)
+# ─────────────────────────────────────────────────────────────────────
+windows:
+  entry_open_ist: "10:30"        # Q14
+  entry_close_ist: "11:30"       # Q14
+  hard_squareoff_ist: "14:30"    # Q14 (DeepSeek MVS hard exit)
+  llm_cutoff_ist: "15:25"        # CrewAI Risk #2 — no LLM calls after this
+  data_capture_end_ist: "15:31"
+
+# ─────────────────────────────────────────────────────────────────────
+# 3-Layer Gate (Q8)
+# ─────────────────────────────────────────────────────────────────────
+gate:
+  layer1_regime:
+    vix_max: 20.0                # DeepSeek MVS harness; QUESTIONS.MD doesn't pin
+    require_no_event_day: true
+    require_within_entry_window: true
+    gap_pct_max: 0.5             # CrewAI: skip if open gap > 0.5%
+  layer2_primary_signal:
+    indicator: supertrend_1min   # §10.4 Path A — 1-min ST until multi-frame warms up
+    fallback: supertrend_5min    # promoted when 5min ST > 85% population for 5 sessions
+    shadow_log: [supertrend_15min]  # logged but not gating in v0
+  layer3_confirmation:
+    require_n_of_3: 2
+    indicators:
+      - ema_5_20_alignment
+      - smc_bos_alignment
+      - adx_above_20
+
+# ─────────────────────────────────────────────────────────────────────
+# Pre-Trade Sanity Checks (Q16 — 19 checks across 5 tiers, all hard-fail)
+# ─────────────────────────────────────────────────────────────────────
+sanity_checks:
+  hard_fail: true                # Never soft-fail (avoids the override path)
+  tier1_structural:
+    wing_distance_min_pts: 1
+    require_all_legs_present: true   # IF=4, credit spread=2
+    strike_alignment_required: true
+    days_to_expiry_min: 1
+    max_structural_loss_inr: 11000   # Q15 circuit breaker
+    require_integer_lots: true
+  tier2_liquidity:
+    bid_ask_spread_atm_pct_max: 5
+    bid_ask_spread_otm_pct_max: 15
+    oi_atm_min: 10000
+    oi_otm_min: 1000
+    volume_5min_min: 1
+  tier3_account:
+    margin_buffer_multiplier: 1.2    # 20% buffer over required
+    free_cash_min_inr: 11000         # see capital.free_cash_floor_inr
+    one_position_per_instrument_per_day: true
+  tier4_strategy_gate: see_gate_section
+  tier5_system_state:
+    daily_killswitch_pnl_floor_inr: -4500
+    rolling_30d_dd_floor_inr: -30000
+    cooldown_must_be_inactive: true
+
+# ─────────────────────────────────────────────────────────────────────
+# Kill Switches (Q11 mechanism #2 + Q20 hard-kill triggers)
+# ─────────────────────────────────────────────────────────────────────
+kill_switches:
+  daily:
+    trigger_inr: -4500             # Halt all entries, cancel working orders
+    override_allowed: false        # No LLM, no chat, no convincing argument
+  rolling_30d:
+    trigger_inr: -30000            # Halt for the week, manual restart only
+    requires_written_reflection: true
+  hard_kill_triggers:              # Q20 — stop, no resume without rebuild
+    - rolling_30d_dd_breach
+    - two_consecutive_session_sl_breaches
+    - structural_integrity_violation
+    - sanity_check_failure_rate_above_20pct_per_week
+    - operator_override_of_code_halt
+    - pnl_divergence_above_15pct
+  soft_kill_triggers:              # Q20 — pause, evaluate, then iterate or hard-kill
+    - period_end_pnl_negative
+    - three_consecutive_losing_weeks
+    - profit_factor_below_1_over_4_weeks
+    - paper_drawdown_above_50pct_of_window_cap
+
+# ─────────────────────────────────────────────────────────────────────
+# Cooldowns (Q11 mechanism #5)
+# ─────────────────────────────────────────────────────────────────────
+cooldowns:
+  loss_day:
+    require_reflection_log: true
+    duration_hours: 24
+  consecutive_losing_days_2:
+    weekend_pause: true
+    monday_block_if_override_attempted: true
+
+# ─────────────────────────────────────────────────────────────────────
+# Mandatory Skip Conditions (Q11 mechanism #4)
+# ─────────────────────────────────────────────────────────────────────
+skip_conditions:
+  high_vix: see_gate_section
+  event_days_calendar: ../config/event_calendar.json
+  first_minutes_after_open: 15
+  last_minutes_before_close: 15
+
+# ─────────────────────────────────────────────────────────────────────
+# Sentinel TSL (Q9 open; harness from CrewAI)
+# ─────────────────────────────────────────────────────────────────────
+sentinel:
+  tsl_enabled: true
+  tsl_step_inr: 250              # CrewAI harness; Constitution proposed ₹500; defer to evidence
+  monitor_interval_seconds: 2
+  shift_trigger_pct: 0.6         # CrewAI: spot moved >0.6% triggers shift recommendation
+  shift_high_vol_default: reject # Gate 2 timeout = REJECT on VIX spike or fast move
+
+# ─────────────────────────────────────────────────────────────────────
+# Two-Message Protocol (DeepSeek MVS)
+# ─────────────────────────────────────────────────────────────────────
+two_message_protocol:
+  enabled: true
+  start_message_time_ist: "09:30"   # Gate decision + plan
+  end_message_time_ist: "14:35"     # Exit + P&L + MTD + WR + EV + system status
+  intra_session_streaming: false    # No streaming MTM — session-brain has no peek window
+
+# ─────────────────────────────────────────────────────────────────────
+# LLM provisioning — tier-based fallback chains + resilience
+# ─────────────────────────────────────────────────────────────────────
+# Token economics: tokens are cash. CFO (Phase 2+) right-sizes this map.
+# Rate limits and cooldowns are real operational risks — the resilience block
+# below is what keeps the crew from hanging when a provider stalls.
+
+llm_tiers:
+  # Tier definition is "ordered fallback chain". The runtime tries head; on
+  # failure (rate limit / 5xx / timeout) it advances down the chain.
+  critical:
+    # For real-time and safety-critical agents (Strategist, Sentinel, Risk Guard, Orchestrator).
+    # Claude first because Anthropic Pro is a fixed-cost subscription; Minimax second
+    # (also subscription); Haiku as ultra-cheap fallback.
+    - claude_sonnet
+    - minimax
+    - claude_haiku
+  bulk:
+    # For batch / pattern-matching agents (Scanner, Auditor).
+    # DeepSeek primary because it's pay-per-use and cheap; Minimax as resilience
+    # buffer; Haiku as last resort.
+    - deepseek
+    - minimax
+    - claude_haiku
+  cheap:
+    # For low-stakes auxiliary tasks. Reserved.
+    - claude_haiku
+    - minimax
+    - deepseek
+
+llm_assignment:
+  orchestrator: critical
+  scanner: bulk
+  strategist: critical
+  executor: none                   # DETERMINISTIC, no LLM in critical path
+  sentinel: critical
+  risk_guard: critical
+  auditor: bulk
+
+llm_resilience:
+  # Per-call retry policy (within the same provider before falling through chain)
+  max_retries_per_provider: 2
+  retry_backoff_seconds: [2, 5]    # backoff sequence; jitter ±20% applied
+  request_timeout_seconds: 30
+
+  # Circuit breaker — when a provider fails repeatedly, skip it for cooldown_seconds
+  # and try the next in chain. Re-test primary after cooldown expires.
+  circuit_breaker:
+    failure_threshold: 3           # 3 failures within window
+    failure_window_seconds: 60
+    cooldown_seconds: 300          # 5 min before re-trying that provider
+
+  # Token caching (Anthropic prompt caching, 5-min TTL)
+  # For agents with stable system prompts, caching can cut cost ~90%.
+  prompt_caching:
+    enabled: true
+    cache_control_for_agents: [strategist, sentinel, risk_guard, orchestrator]
+
+  # Per-day soft budget per agent (CFO will enforce; Phase 1 logs only, no enforcement)
+  daily_token_soft_budget_per_agent_inr_equiv:
+    default: 50         # Phase 1 dry-run estimate
+    notify_chairman_above_inr: 100   # daily
+
+# Providers known to the system. New providers (e.g., Gemini) are added here,
+# referenced from llm_tiers. Adding Gemini now is deferred — see CEO notes.
+providers:
+  claude_sonnet:
+    type: anthropic
+    model: claude-sonnet-4-6
+    auth: subscription_pro
+  claude_haiku:
+    type: anthropic
+    model: claude-haiku-4-5-20251001
+    auth: subscription_pro
+  deepseek:
+    type: deepseek
+    model: deepseek-chat
+    auth: api_key_topup
+  minimax:
+    type: minimax
+    model: abab6.5
+    auth: subscription
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase advancement gates (Q3) — informational; advancement is human-gated
+# ─────────────────────────────────────────────────────────────────────
+advancement_gates_paper_to_live:
+  min_sessions: 30                 # Q19 — may shrink to 20 if backtest passes
+  period_end_pnl_pct_min: 1        # Q19: ≥1% on ₹5L over 30 sessions
+  profit_factor_min: 1.3
+  max_drawdown_window_inr: 15000
+  single_day_sl_breaches_max: 0
+  structural_violations_max: 0
+  skip_rate_band: [0.30, 0.60]
+  sanity_check_failure_rate_max: 0.05
+
+# ─────────────────────────────────────────────────────────────────────
+# Operator commitments (Q20, logged 2026-05-06) — informational, immutable
+# ─────────────────────────────────────────────────────────────────────
+operator_commitments:
+  no_broker_override: true
+  read_only_llm_on_risk: true
+  filter_three_questions: true       # toward goal? long-term? progressive? all-yes → act
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 1 specifics (dress rehearsal)
+# ─────────────────────────────────────────────────────────────────────
+phase_1:
+  mode: dry_run
+  real_orders: false
+  real_data: optional              # may use live capture in read-only mode
+  duration_min_days: 10            # 1-2 weeks soak
+  success_criterion: |
+    Phase 1 closes when soak completes with zero crashes, zero missed crons,
+    zero handoff failures across N consecutive trading days. Strategy P&L is
+    irrelevant in Phase 1 — only operational stability is tested.
+  # Concrete soak-pass checklist will be defined before step 7 (interim CEO TODO)

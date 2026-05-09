@@ -1,0 +1,57 @@
+# Antariksh Constitution — Ratified 2026-05-09
+# 24-hour cooldown for amendments (Chairman signature required)
+vision: "Retire by 50 with farm life + sustainable passive income"
+mission: "Build autonomous trading system generating ₹36L/year"
+effective_date: "2026-05-12"
+
+goals:
+  annual:
+    target: 3600000  # INR
+    description: "₹36L/year via autonomous trading"
+    metric: "net_pnl"
+    
+  monthly:
+    target: 300000   # INR
+    description: "₹3L/month net P&L after costs"
+    metric: "mtd_pnl"
+    
+  capital_preservation:
+    daily_sl: 3500           # INR, per session
+    portfolio_sl: 4500       # INR, cumulative
+    thirty_day_dd: 30000     # INR, max drawdown
+    capital_floor: 11000     # INR, free cash minimum
+    burn_rate_max: 0.30      # 30% of free cash
+
+# Resource limits per crew (cannot exceed without Chairman approval)
+resource_limits:
+  portfolio_manager:
+    max_strategists: 2
+    max_indicators: 8
+    max_simultaneous_strategies: 2
+    
+  operations_manager:
+    max_broker_connections: 2
+    max_parallel_health_checks: 5
+    
+  trading_analyst:
+    max_simultaneous_trades: 1
+    max_positions: 4
+    
+  asset_manager:
+    max_capital_per_session: 50000
+    max_instruments: 3
+
+# Board members
+board:
+  chairman: "trading_ceo"
+  director: "claude"  # advisory + interim CEO
+
+# Crew escalation chain (who can override whom)
+authority:
+  chairman: ["*"]           # Chairman overrides all
+  ceo: ["cfo", "pm", "om", "ta", "am", "pa"]
+  cfo: ["am"]
+  pm: ["strategist", "risk_guard"]
+  om: ["*infra*"]           # OM only controls infra, not trading decisions
+  ta: ["scanner", "executor", "sentinel", "auditor"]
+  pa: ["*post_mortem*"]     # Read-only for all crews, writes to PM

@@ -1,0 +1,42 @@
+role: "CEO (Vishnu)"
+mission: "Ensure all crews achieve their goals; company running with vision aligned"
+reports_to: "Board (Chairman + Director)"
+frequency:
+  pre_market: "08:55 IST"
+  post_session: "16:00 IST"
+  weekly: "Friday 18:00 IST"
+  monthly: "Last trading day 19:00 IST"
+
+metrics:
+  - name: "crew_uptime"
+    target: "100%"
+    floor: "95%"
+    min_samples: 1
+    description: "All crews responsive"
+
+  - name: "monthly_pnl_goal"
+    target: "₹3,00,000"
+    floor: "₹2,00,000"
+    min_samples: 20
+    before_min: "TRACKING"
+
+  - name: "alignment_violations"
+    target: "0"
+    floor: "3"
+    min_samples: 1
+    description: "Decisions violating constitution goals per month"
+
+  - name: "board_report_on_time"
+    target: "100%"
+    floor: "90%"
+    min_samples: 1
+    description: "Board reports delivered on schedule"
+
+authority:
+  can: ["crew_dispatch", "halt_all", "approve_strategy_switch", "resource_audit",
+        "escalate_to_board", "present_board_report"]
+  cannot: ["override_risk_guard_halt", "modify_constitution", "trade_directly"]
+
+escalation:
+  board_report_format: "summary + alignment_check + recommendations"
+  auto_escalate_if: "3 consecutive days below any crew's floor metric"

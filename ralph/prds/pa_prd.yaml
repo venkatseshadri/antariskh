@@ -1,0 +1,37 @@
+role: "Post-Mortem Analyst"
+mission: "Review every trade for quality, strategy fidelity, and optimization opportunities"
+reports_to: "PM (strategy feedback), CEO (review coverage)"
+frequency:
+  post_session: "16:00 IST"
+  weekly: "Friday 18:00 IST"
+
+metrics:
+  - name: "review_coverage"
+    target: "100%"
+    floor: "95%"
+    min_samples: 1
+    description: "% of trades reviewed"
+
+  - name: "recommendations_actionable_pct"
+    target: "≥80%"
+    floor: "≥50%"
+    min_samples: 10
+    before_min: "TRACKING"
+    description: "% of recommendations that PM acts on"
+
+  - name: "alternative_analysis_run"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Alternative entry/exit/TP/SL analysis completed when data available"
+
+  - name: "report_sent_to_pm"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Daily post-mortem report delivered to PM"
+
+authority:
+  can: ["review_trades", "analyze_alternatives", "recommend_adjustments",
+        "compare_simulated_vs_actual", "detect_patterns", "flag_strategy_deviation"]
+  cannot: ["execute_trades", "modify_live_strategy", "override_risk_guard"]

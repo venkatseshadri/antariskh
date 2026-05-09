@@ -1,0 +1,50 @@
+role: "Asset Manager"
+mission: "Track cumulative P&L, margin utilization, broker costs — report financial health to CEO and PM"
+reports_to: "CEO (direct), CFO (future)"
+frequency:
+  pre_market: "08:55 IST"
+  post_session: "16:00 IST"
+  weekly: "Friday 18:00 IST"
+
+metrics:
+  - name: "mtd_dd_vs_limit"
+    target: "≤₹15,000"
+    floor: "≤₹30,000"
+    min_samples: 20
+    before_min: "TRACKING"
+    description: "Month-to-date drawdown"
+
+  - name: "margin_utilization_pct"
+    target: "≤70%"
+    floor: "≤85%"
+    min_samples: 1
+    description: "Pledged margin used vs available"
+
+  - name: "broker_cost_per_session"
+    target: "TRENDING DOWN"
+    floor: "≤₹100/session"
+    min_samples: 10
+    before_min: "TRACKING"
+
+  - name: "burn_rate_trend"
+    target: "STABLE OR IMPROVING"
+    floor: "NOT ACCELERATING"
+    min_samples: 10
+    before_min: "TRACKING"
+
+  - name: "capital_efficiency"
+    target: "≥₹2 profit per ₹100 deployed"
+    floor: "≥₹0.5"
+    min_samples: 20
+    before_min: "TRACKING"
+
+  - name: "financial_report_to_ceo"
+    target: "True"
+    floor: "True"
+    min_samples: 1
+    description: "Daily financial health report sent to CEO"
+
+authority:
+  can: ["recommend_margin_reduction", "recommend_strategy_shift", "block_over_allocation",
+        "track_broker_costs", "report_burn_trend", "alert_dd_proximity"]
+  cannot: ["execute_trades", "modify_strategy", "override_risk_guard", "approve_spend"]

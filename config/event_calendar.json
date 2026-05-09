@@ -1,0 +1,92 @@
+{
+  "events_2026": {
+    "2026-01-26": {
+      "name": "Republic Day",
+      "skip_trading": true
+    },
+    "2026-01-30": {
+      "name": "Economic Survey",
+      "skip_trading": true
+    },
+    "2026-02-01": {
+      "name": "Union Budget",
+      "skip_trading": true
+    },
+    "2026-02-05": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-03-14": {
+      "name": "Holi",
+      "skip_trading": true
+    },
+    "2026-03-31": {
+      "name": "Annual Closing",
+      "skip_trading": true
+    },
+    "2026-04-08": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-04-14": {
+      "name": "Dr Ambedkar Jayanti",
+      "skip_trading": true
+    },
+    "2026-04-19": {
+      "name": "Mahavir Jayanti",
+      "skip_trading": true
+    },
+    "2026-05-01": {
+      "name": "Maharashtra Day",
+      "skip_trading": true
+    },
+    "2026-05-02": {
+      "name": "State Election Results",
+      "skip_trading": true
+    },
+    "2026-05-07": {
+      "name": "Buddha Purnima",
+      "skip_trading": true
+    },
+    "2026-06-04": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-08-06": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-08-15": {
+      "name": "Independence Day",
+      "skip_trading": true
+    },
+    "2026-09-01": {
+      "name": "Ganesh Chaturthi",
+      "skip_trading": true
+    },
+    "2026-10-01": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-10-02": {
+      "name": "Gandhi Jayanti",
+      "skip_trading": true
+    },
+    "2026-10-19": {
+      "name": "Diwali",
+      "skip_trading": true
+    },
+    "2026-11-01": {
+      "name": "Kannada Rajyotsava",
+      "skip_trading": true
+    },
+    "2026-12-03": {
+      "name": "RBI MPC Decision",
+      "skip_trading": true
+    },
+    "2026-12-25": {
+      "name": "Christmas",
+      "skip_trading": true
+    }
+  }
+}

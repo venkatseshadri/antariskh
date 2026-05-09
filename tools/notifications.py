@@ -82,12 +82,37 @@ def push_info(message: str) -> bool:
 
 
 def _send(message: str, alert_type: str) -> bool:
-    """Send message via TelegramBridge (Phase 1 picoclaw RPC)."""
+    """Send message via TelegramBridge. Falls back to Kubera notification queue."""
+    sent = False
     try:
         from telegram_bridge import TelegramBridge
 
-        return TelegramBridge.send(message, message_type=alert_type)
+        sent = TelegramBridge.send(message, message_type=alert_type)
+    except Exception:
+        pass
+
+    # Always queue to Kubera's notification file as backup
+    # (TelegramBridge may console-log instead of actually sending)
+    import json
+
+    queue_path = "/root/.picoclaw/workspace/state/pending_notifications.json"
+    try:
+        os.makedirs(os.path.dirname(queue_path), exist_ok=True)
+        existing = []
+        if os.path.exists(queue_path):
+            with open(queue_path) as f:
+                existing = json.load(f)
+        existing.append(
+            {
+                "type": alert_type,
+                "message": message,
+                "timestamp": datetime.now(IST).isoformat(),
+            }
+        )
+        with open(queue_path, "w") as f:
+            json.dump(existing, f, indent=2)
+        logger.info(f"Queued notification for Kubera: {alert_type}")
+        return True
     except Exception as e:
-        logger.error(f"Telegram send failed ({alert_type}): {e}")
-        print(f"[NOTIFICATION_WOULD_SEND] {alert_type}: {message[:200]}")
-        return False
+        logger.error(f"Notification queue write failed: {e}")
+        return sent

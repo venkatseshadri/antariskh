@@ -1,14 +1,12 @@
 """Antariksh Notification Layer — pushes reports, alerts, escalations to Chairman.
 
-Wired to TelegramBridge (Phase 1). Called by orchestrator, Ralph Loop,
-OM pre-flight, CEO board report, and emergency handlers.
+Sends directly via Telegram Bot API (token from Picoclaw .security.yml).
 """
 
 import os
 import sys
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -82,37 +80,48 @@ def push_info(message: str) -> bool:
 
 
 def _send(message: str, alert_type: str) -> bool:
-    """Send message via TelegramBridge. Falls back to Kubera notification queue."""
-    sent = False
+    """Send message via Telegram Bot API directly — bypasses Picoclaw."""
+    import yaml
+    import requests
+
+    chat_id = "8317944043"
+    security_path = "/root/.picoclaw/.security.yml"
+
     try:
-        from telegram_bridge import TelegramBridge
+        if os.path.exists(security_path):
+            with open(security_path) as f:
+                security = yaml.safe_load(f)
+            token = (
+                security.get("channel_list", {})
+                .get("telegram", {})
+                .get("settings", {})
+                .get("token", "")
+            )
+        else:
+            token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
-        sent = TelegramBridge.send(message, message_type=alert_type)
-    except Exception:
-        pass
+        if not token:
+            logger.warning("No Telegram bot token found")
+            return False
 
-    # Always queue to Kubera's notification file as backup
-    # (TelegramBridge may console-log instead of actually sending)
-    import json
-
-    queue_path = "/root/.picoclaw/workspace/state/pending_notifications.json"
-    try:
-        os.makedirs(os.path.dirname(queue_path), exist_ok=True)
-        existing = []
-        if os.path.exists(queue_path):
-            with open(queue_path) as f:
-                existing = json.load(f)
-        existing.append(
-            {
-                "type": alert_type,
-                "message": message,
-                "timestamp": datetime.now(IST).isoformat(),
-            }
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
         )
-        with open(queue_path, "w") as f:
-            json.dump(existing, f, indent=2)
-        logger.info(f"Queued notification for Kubera: {alert_type}")
-        return True
+
+        if resp.ok:
+            logger.info(f"Telegram sent: {alert_type} ({len(message)} chars)")
+            return True
+        else:
+            logger.error(f"Telegram API error: {resp.status_code} {resp.text}")
+            return False
+
     except Exception as e:
-        logger.error(f"Notification queue write failed: {e}")
-        return sent
+        logger.error(f"Telegram send failed: {e}")
+        return False

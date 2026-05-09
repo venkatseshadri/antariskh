@@ -7,8 +7,8 @@ See: .paul/PROJECT.md (updated 2026-05-09)
 **Current focus:** Phase 2 — Multi-Crew Ralph Loop Architecture (TDD buildout)
 
 ## Loop Position
-**Phase:** 1 (of 7) — COMPLETE ✅
-**Phase:** 2 (of 7) — Trading Analyst Crew — PLAN
+**Phase:** 2 (of 7) — COMPLETE ✅
+**Next:** Phase 3 — Portfolio Manager Crew
 
 ## Blockers
 - None (01-01 resolved: parsed_value fix + 12 RL tests pass)

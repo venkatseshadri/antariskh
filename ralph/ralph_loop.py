@@ -31,12 +31,14 @@ sys.path.insert(0, str(PROJECT_ROOT / "python-trader"))
 
 try:
     import yaml
+
     _YAML_AVAILABLE = True
 except ImportError:
     _YAML_AVAILABLE = False
 
 try:
     from croniter import croniter
+
     _CRONITER_AVAILABLE = True
 except ImportError:
     _CRONITER_AVAILABLE = False
@@ -54,6 +56,7 @@ class VerificationResult:
 
     complete: bool
     reason: str = ""
+
 
 # ============================================================
 # 2. RalphLoop — Generic Verify-Retry Loop
@@ -135,8 +138,7 @@ class RalphLoop:
                 f"Please address this and try again."
             )
             logger.warning(
-                f"RalphLoop: iteration {iteration_num} failed — "
-                f"{verified.reason}"
+                f"RalphLoop: iteration {iteration_num} failed — {verified.reason}"
             )
 
         logger.error(
@@ -149,6 +151,7 @@ class RalphLoop:
             "reason": f"Failed to verify after {self.max_iterations} iterations",
             "all_results": all_results,
         }
+
 
 # ============================================================
 # 3. CrewAIRalphLoop — Wraps a CrewAI Crew
@@ -183,17 +186,58 @@ class CrewAIRalphLoop(RalphLoop):
             **kwargs,
         )
 
+
 # ============================================================
 # 4. RolePRD — Role Performance Requirements Document
 # ============================================================
 
 
-def _parse_metric_value(raw: Any) -> float:
-    """Parse metric values from YAML strings like '₹3,00,000' or '100%' into float."""
+def _parse_metric_value(raw: Any) -> Any:
+    """Parse metric values from YAML strings into float, bool, or percentage.
+
+    Handles:
+        - Numeric: 0.60, 3500 → float
+        - Currency: '₹3,00,000' → 300000.0
+        - Percentage: '100%', '99%' → 100.0, 99.0
+        - With operator: '≤80%', '≥1.5', '≤₹15,000' → 80.0, 1.5, 15000.0
+        - Boolean: 'True', 'False' → python True, False
+    """
+    if isinstance(raw, bool):
+        return raw
     if isinstance(raw, (int, float)):
         return float(raw)
+    if isinstance(raw, bool):
+        return raw
     s = str(raw).strip()
-    s = s.replace("₹", "").replace(",", "").replace("%", "")
+
+    # Boolean
+    if s.lower() in ("true", "false"):
+        return s.lower() == "true"
+
+    # Strip comparison operators from the beginning
+    operators = ["≤", "≥", "<", ">"]
+    for op in operators:
+        if s.startswith(op):
+            s = s[len(op) :]
+            break
+
+    # Strip currency symbols, commas, and trailing %
+    s = s.replace("₹", "").replace(",", "")
+    s = s.removesuffix("%")
+
+    # If the string still has text after the number, extract leading float
+    # e.g., "2 profit per 100 deployed" → 2.0
+    try:
+        return float(s)
+    except ValueError:
+        import re
+
+        match = re.match(r"([\d.]+)", s)
+        if match:
+            return float(match.group(1))
+        # Qualitative target — return as string for manual evaluation
+        return str(raw).strip()
+
     return float(s)
 
 
@@ -258,6 +302,7 @@ class RolePRD:
             return ("WARNING", f"{name}: {actual} below target {target}, floor {floor}")
 
         return ("FAIL", f"{name}: {actual} < floor {floor} (target {target})")
+
 
 # ============================================================
 # 5. PRDRalphLoop — PRD-Driven Ralph Loop
@@ -349,6 +394,7 @@ class PRDRalphLoop(RalphLoop):
             **kwargs,
         )
 
+
 # ============================================================
 # 6. RalphScheduler — Schedule-Based PRD Loop Runner
 # ============================================================
@@ -401,11 +447,13 @@ class RalphScheduler:
                     )
                 except Exception as e:
                     logger.error(f"[{now}] {role_name} failed: {e}", exc_info=True)
-                    results.append({
-                        "role": role_name,
-                        "error": str(e),
-                        "run_at": now.isoformat(),
-                    })
+                    results.append(
+                        {
+                            "role": role_name,
+                            "error": str(e),
+                            "run_at": now.isoformat(),
+                        }
+                    )
 
         if not results:
             logger.info(f"[{now}] No roles due at this time")
@@ -429,7 +477,9 @@ class RalphScheduler:
         return self._simple_time_match(schedule_str, now)
 
     @staticmethod
-    def _simple_time_match(schedule_str: str, now: datetime, window_minutes: int = 2) -> bool:
+    def _simple_time_match(
+        schedule_str: str, now: datetime, window_minutes: int = 2
+    ) -> bool:
         """
         Simple time-window match for 'HH:MM' format strings.
 
@@ -452,6 +502,7 @@ class RalphScheduler:
         diff = min(raw_diff, wrapped_diff)
 
         return diff <= window_minutes
+
 
 # ============================================================
 # 7. load_prd_yaml — Load PRD from YAML File
@@ -518,6 +569,7 @@ def load_prd_yaml(path: str) -> RolePRD:
         authority_cannot=list(authority_cannot),
     )
 
+
 # ============================================================
 # 8. run_ralph_cycle — Entry Point
 # ============================================================
@@ -543,7 +595,9 @@ def _load_all_prds(prd_dir: str) -> Dict[str, RolePRD]:
     return prds
 
 
-def _extract_schedule_from_prd(prd: RolePRD, raw_yaml: Dict, role_key: str) -> Optional[str]:
+def _extract_schedule_from_prd(
+    prd: RolePRD, raw_yaml: Dict, role_key: str
+) -> Optional[str]:
     """
     Extract a schedule string from a PRD's YAML data.
 
@@ -573,6 +627,7 @@ def _default_crew_factory():
     """
     try:
         from crew_structure import _build_crew
+
         return _build_crew()
     except ImportError:
         logger.error("Cannot import crew_structure._build_crew")
@@ -590,6 +645,7 @@ def _default_metric_evaluator(output: Any) -> Dict[str, float]:
 
     try:
         from crew_structure import market_state
+
         metrics["mtd_pnl"] = float(market_state.get("mtd_pnl", 0.0))
         metrics["session_pnl"] = float(market_state.get("session_pnl", 0.0))
     except ImportError:
@@ -602,9 +658,14 @@ def _default_metric_evaluator(output: Any) -> Dict[str, float]:
         data = {}
 
     known_metrics = [
-        "win_rate", "monthly_pnl_goal", "crew_uptime",
-        "alignment_violations", "board_report_on_time",
-        "profit_factor", "max_drawdown_30d", "capital_floor",
+        "win_rate",
+        "monthly_pnl_goal",
+        "crew_uptime",
+        "alignment_violations",
+        "board_report_on_time",
+        "profit_factor",
+        "max_drawdown_30d",
+        "capital_floor",
     ]
 
     for name in known_metrics:
@@ -703,6 +764,7 @@ def run_ralph_cycle(
                     crew.tasks[0].description = prompt
                 result = crew.kickoff()
                 return str(result)
+
             return agent_fn
 
         ralph_loop = PRDRalphLoop(
@@ -739,7 +801,9 @@ def run_ralph_cycle(
                 f"({r.get('iterations', 0)} iter)"
             )
 
-    summary_str = "; ".join(summary_parts) if summary_parts else "No roles due at this time"
+    summary_str = (
+        "; ".join(summary_parts) if summary_parts else "No roles due at this time"
+    )
 
     logger.info("=" * 60)
     logger.info("RALPH LOOP CYCLE — COMPLETE")

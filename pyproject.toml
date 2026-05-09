@@ -18,6 +18,7 @@ markers = [
     "agentops: AgentOps observability tests",
     "promptfoo: Prompt security/injection eval tests",
     "integration: Cross-crew integration tests",
+    "orchestration: CrewAI orchestration and routing tests",
     "om: Operations Manager crew tests",
     "ta: Trading Analyst crew tests",
     "pm: Portfolio Manager crew tests",
@@ -25,7 +26,7 @@ markers = [
     "pa: Post-Mortem Analyst crew tests",
     "ceo: CEO + Governance crew tests",
     "ralph: Ralph Loop infrastructure tests",
-    "orchestration: Cross-crew orchestration and routing tests",
+    "deployment: Deployment and infrastructure tests",
 ]
 
 # Filter warnings
@@ -33,13 +34,14 @@ filterwarnings = [
     "ignore::DeprecationWarning:crewai.agent.core",
     "ignore::DeprecationWarning:crewai.rag",
     "ignore::DeprecationWarning:agentops.client",
+    "ignore::DeprecationWarning:crewai.telemetry",
+    "ignore::DeprecationWarning:crewai.crew",
     "default::UserWarning",
 ]
 
-# Timeout
-timeout = 120
+# Fast engine-only tests (no LLM): pytest -m engine
+# Full suite (needs API key): DEEPSEEK_API_KEY=sk-... pytest
 
-# Coverage
 addopts = [
     "--strict-markers",
     "--tb=short",

@@ -1,0 +1,35 @@
+[Unit]
+Description=Antariksh Mid-Session Health Watchdog
+After=network.target
+
+[Service]
+Type=simple
+User=trading_ceo
+WorkingDirectory=/home/trading_ceo/antariksh
+EnvironmentFile=-/home/trading_ceo/antariksh/.env
+Environment=ANTARIKSH_MOCK_MODE=0
+
+# Poll broker connectivity and system health every 15 min during trading
+# 9:15 AM - 3:30 PM IST (Indian markets)
+ExecStart=/usr/bin/python3 -c "
+import os,sys,time
+sys.path.insert(0,'/home/trading_ceo/antariksh')
+from tools.om_tools import network_connectivity_check, disk_usage_check, data_capture_health
+
+while True:
+    now = time.localtime()
+    hour = now.tm_hour + 5.5  # UTC to IST approx
+    if 9 <= hour < 16:
+        net = network_connectivity_check()
+        disk = disk_usage_check()
+        data = data_capture_health()
+        if not net.get('ok') or not disk.get('ok'):
+            print(f'[{time.strftime(\"%H:%M\")}] ALERT: network={net.get(\"ok\")} disk={disk.get(\"ok\")}', flush=True)
+    time.sleep(900)  # 15 min
+"
+
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

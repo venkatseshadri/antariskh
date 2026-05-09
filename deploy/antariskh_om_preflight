@@ -1,0 +1,24 @@
+# Antariksh Operations Manager — 8:00 AM IST Pre-Flight Cron
+#
+# Runs OM crew pre-flight checks before 9:30 AM session.
+# Reports GO/NOGO to Chairman via Telegram with evidence.
+# Separate from Phase 1's 9:30 AM / 2:35 PM crons.
+#
+# Install: sudo cp antariskh_om_preflight /etc/cron.d/
+# Verify:  crontab -l | grep om_preflight
+# Logs:   /home/trading_ceo/antariksh/logs/om_preflight.log
+
+MAILTO=""
+
+# Load API keys from environment file
+# Create /home/trading_ceo/antariksh/.env with: DEEPSEEK_API_KEY=sk-your-key
+DEEPSEEK_API_KEY_FILE=/home/trading_ceo/antariksh/.env
+[ -f "$DEEPSEEK_API_KEY_FILE" ] && export $(grep -v '^#' "$DEEPSEEK_API_KEY_FILE" | xargs)
+
+# 8:00 AM IST — Pre-Flight Readiness
+# Runs OM crew: token refresh, code verification, data capture, disk, network, cron checks
+# If OM is down, Phase 1 still runs at 9:30 in legacy mode
+00 08 * * 1-5 trading_ceo cd /home/trading_ceo/antariksh && python3 -c "from crews.om_crew import build_om_crew; c=build_om_crew(); r=c.kickoff(); print(r)" >> /home/trading_ceo/antariksh/logs/om_preflight.log 2>&1
+
+# 17:00 IST — Daily executor report
+00 17 * * 1-5 trading_ceo cd /home/trading_ceo/antariksh && python3 exec_report.py daily >> /home/trading_ceo/antariksh/logs/exec_report.log 2>&1

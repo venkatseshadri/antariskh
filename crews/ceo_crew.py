@@ -26,36 +26,43 @@ manager_llm = LLM(
 
 @tool
 def alignment_check(d: dict, g: list) -> dict:
+    """Check if a crew decision aligns with company goals."""
     return _ac(d, g)
 
 
 @tool
 def aggregate_crew_performance(crews: list) -> dict:
+    """Aggregate performance metrics from all crews."""
     return _acp(crews)
 
 
 @tool
 def enforce_resource_caps(p: int, c: float, s: int) -> dict:
+    """Enforce resource limits: max positions, capital, strategies."""
     return _erc(p, c, s)
 
 
 @tool
 def generate_board_report(summaries: dict) -> dict:
+    """Generate board report from crew summaries."""
     return _gbr(summaries)
 
 
 @tool
 def should_escalate(fh: list, t: int = 3) -> bool:
+    """Check if consecutive failures warrant escalation to Board."""
     return _se(fh, t)
 
 
 @tool
 def check_authority(action: str) -> bool:
+    """Check if CEO can perform a given action."""
     return _ca(action)
 
 
 @tool
 def governance_veto(actor: str, action: str, detail: str) -> dict:
+    """Check governance veto chain for cross-crew decisions."""
     return _gv(actor, action, detail)
 
 

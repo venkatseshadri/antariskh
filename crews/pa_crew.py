@@ -26,6 +26,7 @@ manager_llm = LLM(
 
 @tool
 def review_trade(trade: dict, spec: dict) -> dict:
+    """Review trade quality and strategy fidelity. Returns quality score and issues."""
     return _review_trade(trade, spec)
 
 
@@ -38,6 +39,7 @@ def run_counterfactuals(
     better_tp: float = None,
     hypothetical_entry: float = None,
 ) -> dict:
+    """Run what-if analysis: alternative entry, exit, SL, TP scenarios."""
     return _run_counterfactuals(
         trade, peak_pnl, better_exit, better_sl, better_tp, hypothetical_entry
     )
@@ -45,6 +47,7 @@ def run_counterfactuals(
 
 @tool
 def detect_patterns(trades: list) -> dict:
+    """Detect recurring patterns across trades."""
     return _detect_patterns(trades)
 
 
@@ -52,6 +55,7 @@ def detect_patterns(trades: list) -> dict:
 def generate_post_mortem_report(
     reviews: list, counterfactuals: list, patterns: dict, session: str
 ) -> dict:
+    """Generate post-mortem report for PM with recommendations."""
     return _generate_post_mortem_report(reviews, counterfactuals, patterns, session)
 
 

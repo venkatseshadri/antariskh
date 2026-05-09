@@ -32,11 +32,13 @@ manager_llm = LLM(
 
 @tool
 def track_cumulative_pnl(trades: list, session: str) -> dict:
+    """Track cumulative P&L across all trades in a session."""
     return _track_cumulative_pnl(trades, session)
 
 
 @tool
 def check_margin(used_margin: float, total_margin: float = 250000) -> dict:
+    """Check margin utilization against target percentage."""
     return _check_margin(used_margin, total_margin)
 
 
@@ -44,6 +46,7 @@ def check_margin(used_margin: float, total_margin: float = 250000) -> dict:
 def check_capital_limits(
     day_pnl: float, portfolio_pnl: float, free_cash: float
 ) -> dict:
+    """Enforce hard capital preservation limits (SL, portfolio, free cash floor)."""
     return _check_capital_limits(day_pnl, portfolio_pnl, free_cash)
 
 
@@ -51,6 +54,7 @@ def check_capital_limits(
 def generate_financial_report(
     pnl_data: dict, margin: dict, limits: dict, session: str = None
 ) -> dict:
+    """Generate daily financial health report for CEO."""
     return _generate_financial_report(pnl_data, margin, limits, session)
 
 
@@ -61,6 +65,7 @@ def generate_capital_report(
     free_cash: float,
     burn_rate_daily: float,
 ) -> dict:
+    """Generate capital allocation report for Portfolio Manager."""
     return _generate_capital_report(
         available_margin, used_margin, free_cash, burn_rate_daily
     )

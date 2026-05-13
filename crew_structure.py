@@ -156,20 +156,21 @@ def generate_trade_plan() -> str:
 
     spot = market_state.get("nifty_spot", 24500.0)
     atm_strike = round(spot / 50) * 50
+    wing_width = market_state.get("recommended_wing", 300)
 
     plan = {
         "instrument": "NIFTY",
         "strategy": "Iron Butterfly",
         "spot": spot,
         "atm_strike": atm_strike,
-        "wing_width": 300,
+        "wing_width": wing_width,
         "lots": 1,
         "target_profit": 1000,
         "max_loss": 3500,
         "legs": [
             {
                 "type": "BUY",
-                "strike": atm_strike - 300,
+                "strike": atm_strike - wing_width,
                 "option": "PE",
                 "action": "BUY",
             },
@@ -177,7 +178,7 @@ def generate_trade_plan() -> str:
             {"type": "SELL", "strike": atm_strike, "option": "CE", "action": "SELL"},
             {
                 "type": "BUY",
-                "strike": atm_strike + 300,
+                "strike": atm_strike + wing_width,
                 "option": "CE",
                 "action": "BUY",
             },
@@ -188,7 +189,7 @@ def generate_trade_plan() -> str:
     market_state["atm_strike"] = atm_strike
 
     logger.info(
-        f"generate_trade_plan: ATM={atm_strike}, spot={spot}, wings={plan['wing_width']}"
+        f"generate_trade_plan: ATM={atm_strike}, spot={spot}, wings={wing_width}"
     )
     return json.dumps({"status": "generated", "atm_strike": atm_strike, "legs": 4})
 

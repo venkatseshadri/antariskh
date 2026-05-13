@@ -1,0 +1,93 @@
+{
+  "title": "Strategy Architect Skills — Options Strategies & Strike Selection",
+  "version": "1.0",
+  "description": "Knowledge base for the Strategy Architect: mapping market regimes to optimal options strategies, defining the physical construction of spreads, and applying Greek-based strike selection guardrails. Prioritizes theta-decay and premium collection.",
+  "categories": {
+    "strategy_definitions": {
+      "credit_spreads": {
+        "name": "Credit Spreads (Bull Put / Bear Call)",
+        "construction": "Sell an Out-of-the-Money (OTM) option and Buy a further OTM option of the same type for protection.",
+        "goal": "Collect net premium. You want the market to stay away from your short strike.",
+        "greeks": "Positive Theta (time is your friend). Directional Delta (Bull Put = Positive Delta, Bear Call = Negative Delta)."
+      },
+      "debit_spreads": {
+        "name": "Debit Spreads (Bull Call / Bear Put)",
+        "construction": "Buy an At-the-Money (ATM) or slightly OTM option and Sell a further OTM option.",
+        "goal": "Pay a net debit to capture a strong directional move.",
+        "greeks": "Negative Theta (time hurts you).",
+        "varaha_rule": "Avoid Debit Spreads unless the Scout reports an 'Extreme Trend' (ADX > 50) where theta decay is outweighed by massive directional momentum."
+      },
+      "iron_condor": {
+        "name": "Iron Condor",
+        "construction": "Combine a Bull Put spread and a Bear Call spread. Sell OTM Call + Sell OTM Put, protected by buying further OTM wings.",
+        "goal": "Capture theta decay in a range-bound market.",
+        "greeks": "Highly Positive Theta. Delta Neutral. Negative Vega (benefits from volatility dropping)."
+      },
+      "iron_butterfly": {
+        "name": "Iron Butterfly (Iron Fly)",
+        "construction": "Sell the ATM Call + Sell the ATM Put (a short straddle), protected by buying OTM Call and OTM Put wings.",
+        "goal": "Maximum theta collection and vega crush. Extremely narrow profit tent.",
+        "greeks": "Highest Positive Theta. Delta Neutral. Highly Negative Vega."
+      },
+      "ratio_spreads": {
+        "name": "Ratio Spreads (Front Ratio)",
+        "construction": "Buy 1 ATM option, Sell 2 OTM options (e.g., Buy 1 24000 CE, Sell 2 24200 CE).",
+        "goal": "Finance a directional trade by selling extra premium. Creates a 'trap' where maximum profit is achieved if the price pins exactly at the short strikes.",
+        "risk": "Has naked risk on one side if the market blows past the short strikes. Requires strict Portfolio Manager oversight."
+      },
+      "calendar_spread": {
+        "name": "Calendar Spread (Horizontal / Time Spread)",
+        "construction": "SELL a near-term option + BUY a far-term option at the SAME strike. Uses TWO different expiries (e.g., SELL May 14 weekly CE + BUY May 21 weekly CE at strike 23650).",
+        "goal": "Achieve DOUBLE-POSITIVE Greeks: positive Theta (near-term decays faster) AND positive Vega (far-term is more IV-sensitive).",
+        "greeks": "POSITIVE Theta (short near-term decay > long far-term decay). POSITIVE Vega (far-term vega > near-term vega). Delta near neutral if ATM.",
+        "greek_profile": "DOUBLE_POSITIVE",
+        "expiry_rule": "Librarian MUST resolve TWO different expiries for the SAME strike. Near-term = this week (for SELL), far-term = next week (for BUY). If only one expiry available in scrip_master, flag it.",
+        "risk": "Profits if spot stays near strike and near-term decays faster. Loses if spot moves far from strike or if IV drops (vega loss on far-term). Theta decays both legs — the net decay rate difference is the edge.",
+        "varaha_rule": "Only deploy when VIX is elevated (VIX > 16) and spot is near a round strike. Theta edge shrinks when both expiries are far out."
+      }
+    },
+    "decision_matrix": {
+      "sideways": {
+        "condition": "Regime is SIDEWAYS (ADX < 25)",
+        "primary_strategy": "Iron Condor",
+        "logic": "The market is chopping within a range. Sell the 0.15 Delta strikes on both sides. Let theta decay work its magic safely away from the current spot price."
+      },
+      "choppy": {
+        "condition": "Regime is CHOPPY (ADX < 25, VIX > 20)",
+        "primary_strategy": "Iron Butterfly (Iron Fly)",
+        "logic": "High VIX means premiums are inflated, but ADX < 25 means there is no trend. Sell the ATM straddle to capture massive premium and wait for the 'Vega Crush' when VIX inevitably drops."
+      },
+      "trending_bull": {
+        "condition": "Regime is TRENDING_BULL (ADX > 25, SuperTrend BULLISH)",
+        "primary_strategy": "Put Credit Spread (Bull Put)",
+        "logic": "The trend is up. Sell puts below the market to collect premium, letting the upward momentum and theta decay work together."
+      },
+      "trending_bear": {
+        "condition": "Regime is TRENDING_BEAR (ADX > 25, SuperTrend BEARISH)",
+        "primary_strategy": "Call Credit Spread (Bear Call)",
+        "logic": "The trend is down. Sell calls above the market to generate safe yield as the market falls away from your strikes."
+      },
+      "double_positive": {
+        "condition": "User explicitly requests both Vega-positive and Theta-positive simultaneously",
+        "primary_strategy": "Calendar Spread (Horizontal / Time Spread)",
+        "logic": "SELL near-weekly ATM + BUY far-weekly ATM at the SAME strike. Near-term Theta (positive) decays faster than far-term Theta (negative) bleeds. Far-term Vega (positive) dominates near-term Vega (negative). Requires TWO different expiries. This is the ONLY standard spread that achieves net-positive Vega AND net-positive Theta.",
+        "secondary_strategy": "None — calendar is the only double-positive structure in standard options.",
+        "avoid": "All single-expiry spreads (Iron Condor, Iron Butterfly, Credit/Debit Spreads) — they are always vega/theta inverse."
+      }
+    },
+    "greek_and_strike_rules": {
+      "delta_rule": {
+        "name": "The 0.15 Delta Rule",
+        "rule": "For Iron Condors and Credit Spreads, the short leg must always target a Delta between 0.15 and 0.20. Never sell ATM strikes unless executing an Iron Fly."
+      },
+      "wing_width_sizing": {
+        "name": "Wing Width (Risk Sizing)",
+        "rule": "The protective wings (the bought options) must be placed at a distance greater than the daily_range_estimate calculated by the VIX. For example, if VIX implies a 100-point daily move, the wings must be at least 150 points wide."
+      },
+      "vega_check": {
+        "name": "Vega Check",
+        "rule": "Never deploy an Iron Butterfly if VIX is below 12. You will not collect enough premium to justify the risk of the narrow profit tent."
+      }
+    }
+  }
+}

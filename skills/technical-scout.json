@@ -1,0 +1,109 @@
+{
+  "title": "Technical Scout Skills — Market Regime & Trend Analysis",
+  "version": "1.0",
+  "description": "Knowledge base for the Technical Scout: market regime detection, trend analysis, technical indicators. Eyes of the firm — sees the market, doesn't trade it.",
+  "categories": {
+    "market_regime": {
+      "trending": {
+        "definition": "Price making directional moves with momentum. ADX > 25 confirms trend strength. Higher highs + higher lows = uptrend. Lower highs + lower lows = downtrend.",
+        "options_implication": "Trending market favors Iron Butterfly (sell ATM, wings protect against moderate trend). Strong trend (ADX>35) favors directional Credit Spreads.",
+        "detection": "ADX ≥ 25 + SuperTrend direction confirmed + EMA5/20 aligned"
+      },
+      "sideways": {
+        "definition": "Price oscillating in a range without directional momentum. ADX < 25. Equal highs and lows forming a channel.",
+        "options_implication": "Sideways market is ideal for Iron Condor (sell OTM strikes, wider profit zone). Theta decay works best when spot stays in range.",
+        "detection": "ADX < 25 + SuperTrend neutral/flat + RSI oscillating 40-60"
+      },
+      "choppy": {
+        "definition": "High volatility but no direction. Large daily ranges but no sustained trend. VIX > 20, ADX fluttering 20-30.",
+        "options_implication": "Risky for any strategy. Wings must be wider. Consider sitting out or reducing lot size.",
+        "detection": "VIX > 20 + ADX 20-30 + no sustained SuperTrend direction for >5 bars"
+      }
+    },
+    "indicators": {
+      "adx": {
+        "name": "Average Directional Index",
+        "creator": "J. Welles Wilder",
+        "period": 14,
+        "range": "0-100 (measure of trend STRENGTH, not direction)",
+        "thresholds": {
+          "0-20": "No trend / sideways — options sellers safe",
+          "20-25": "Weak trend developing — be cautious, wait for confirmation",
+          "25-35": "Trending — Iron Butterfly viable, wings at 200-300",
+          "35-50": "Strong trend — Credit Spreads preferred, wider wings",
+          "50+": "Extreme trend — reduce position size, use 350+ wings"
+        },
+        "formula": "ADX = 100 × smoothed average of (+DI - -DI)/(+DI + -DI)",
+        "source": "DuckDB market_data.adx"
+      },
+      "supertrend": {
+        "name": "SuperTrend Indicator",
+        "creator": "Olivier Seban",
+        "parameters": "Period=10, Multiplier=3 (standard)",
+        "values": ["BULLISH: price above SuperTrend line = uptrend", "BEARISH: price below SuperTrend line = downtrend", "NEUTRAL: price oscillating around = no clear direction"],
+        "formula": "Upper Band = (High + Low)/2 + Multiplier × ATR(10). Lower Band = (High + Low)/2 - Multiplier × ATR(10). Direction flips when price closes beyond band.",
+        "use": "Primary direction indicator. Combine with ADX: Bearish ST + ADX>25 = strong downtrend → sell calls (call credit spread). Bullish ST + ADX>25 = strong uptrend → sell puts (put credit spread).",
+        "source": "DuckDB market_data.supertrend_direction"
+      },
+      "rsi": {
+        "name": "Relative Strength Index",
+        "creator": "J. Welles Wilder",
+        "period": 14,
+        "range": "0-100",
+        "thresholds": {
+          "70+": "Overbought — expect pullback. Iron Fly favorable (reversion trade).",
+          "30-": "Oversold — expect bounce. Iron Fly favorable if SuperTrend is bullish.",
+          "40-60": "Neutral zone — no edge from RSI alone."
+        },
+        "warning": "In strong trends, RSI can stay overbought/oversold for extended periods. Always confirm with ADX.",
+        "formula": "RSI = 100 - (100 / (1 + RS)) where RS = avg_gain / avg_loss over 14 periods"
+      },
+      "atr": {
+        "name": "Average True Range",
+        "period": 14,
+        "unit": "price points",
+        "use": "Measures volatility magnitude. ATR × 1.5 ≈ expected daily range. Helps calibrate wing width: wings must exceed daily range.",
+        "formula": "True Range = max(High-Low, |High-PrevClose|, |Low-PrevClose|). ATR = EMA(TR, 14)",
+        "source": "DuckDB market_data.atr"
+      },
+      "vwap": {
+        "name": "Volume-Weighted Average Price",
+        "use": "Institutional benchmark. Spot above VWAP = intraday bullish. Spot below VWAP = intraday bearish. Trade WITH VWAP direction.",
+        "formula": "VWAP = Σ(Price × Volume) / Σ(Volume) — cumulative from session open",
+        "source": "DuckDB market_data.vwap"
+      },
+      "ema_crossover": {
+        "name": "EMA 5/20 Crossover",
+        "use": "Short-term momentum. EMA5 > EMA20 = bullish momentum. EMA5 < EMA20 = bearish momentum. Alignment with SuperTrend = stronger conviction.",
+        "source": "DuckDB market_data.ema_5, ema_20"
+      }
+    },
+    "vix_interpretation": {
+      "definition": "India VIX — NIFTY's 30-day implied volatility. The 'fear index.' Derived from NIFTY option prices using Black-Scholes.",
+      "levels": {
+        "0-12": "Complacency — options are cheap. Iron Butterfly works but premiums are thin. Risk: VIX spike kills position.",
+        "12-16": "Normal — ideal for premium selling. Decent premium, manageable risk. Standard wing widths apply.",
+        "16-20": "Elevated — good premium but wider wings needed. Monitor for event risk.",
+        "20-25": "High — VIX crushing after entry = vega profit. Wider wings (300+) mandatory. Consider credit spreads.",
+        "25+": "Extreme — event unfolding. Reduce size or sit out. If trading, use 400+ wings and half lots."
+      },
+      "daily_range_estimate": "Expected daily move (points) = VIX% × NIFTY_spot ÷ √252. At VIX=15, spot=24500: expected daily move ≈ ₹115 points.",
+      "source": "DuckDB market_data.india_vix"
+    },
+    "decision_framework": {
+      "step_1": "Read ADX from DuckDB. Is it >25? YES → trending. NO → sideways.",
+      "step_2": "Read SuperTrend direction. BULLISH? BEARISH? NEUTRAL?",
+      "step_3": "Check VIX level. Is it in a favorable range for premium selling?",
+      "step_4": "Combine into regime: TRENDING_BULL / TRENDING_BEAR / SIDEWAYS / CHOPPY.",
+      "step_5": "Report suitable strategies: TRENDING → Iron Fly + Credit Spreads. SIDEWAYS → Iron Condor. CHOPPY → Sit out or half size.",
+      "step_6": "NEVER fabricate data. If DuckDB is stale or unavailable, say 'Unable to read market data — DuckDB stream may be down.'"
+    },
+    "edge_cases": {
+      "adx_high_vix_low": "ADX>35 but VIX<12. Strong trend with cheap options. Unusual — possible data issue. Report both readings and let Analyst decide.",
+      "adx_low_vix_high": "ADX<20 but VIX>25. Event-driven volatility without trend. CHOPPY regime. Recommend sitting out.",
+      "supertrend_flat": "SuperTrend flipping frequently (5+ flips in last hour). Market is undecided. Report as 'unstable' regime — caution.",
+      "duckdb_stale": "If last DuckDB row is >5 minutes old, data feed may be down. Report: 'DuckDB data stale (last row: X seconds ago). Reading may not reflect current market.'",
+      "gap_open": "NIFTY opens with >1% gap. Initial ADX/SuperTrend readings may be unreliable. Wait 15 minutes for indicators to settle."
+    }
+  }
+}

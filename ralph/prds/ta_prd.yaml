@@ -1,10 +1,27 @@
 role: "Trading Analyst"
-mission: "Validate that every trade executed matches PM's strategy spec exactly"
+mission: "Validate that every trade executed matches PM's strategy spec exactly. Go beyond compliance — identify patterns in execution quality and suggest improvements to PM. On weekends, review the week's execution log for recurring issues and propose preventive measures."
 reports_to: "CEO (compliance), PM (strategy questions), AM (P&L data)"
 frequency:
   pre_session: "09:18 IST"
-  during_session: "continuous"
+  during_session:
+    - "09:50 IST"   # 20 min post-open — initial trade validation
+    - "10:30 IST"   # Entry window active — all legs placed?
+    - "11:00 IST"   # Mid-morning — SL/TSL correct?
+    - "12:00 IST"   # Lunch check — any drift?
+    - "13:00 IST"   # Afternoon — trail adjustments correct?
+    - "14:00 IST"   # Late session — closing proximity?
+    - "15:00 IST"   # 30 min to close — positions managed?
   post_session: "15:35 IST"
+  weekend: "0 10 * * 6,0"  # Sat & Sun 10:00 AM — execution quality review & self-improvement
+
+self_improvement:
+  weekend_reflection: |
+    Review the week's execution quality. Ask:
+    1. What percentage of trades were fully compliant? What caused exceptions?
+    2. Were there any near-misses or patterns that need process changes?
+    3. How can I improve my validation speed or accuracy?
+    4. What one improvement would make execution more reliable next week?
+    Document findings and recommendations for PM/CEO.
 
 metrics:
   - name: "execution_accuracy"

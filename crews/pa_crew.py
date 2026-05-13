@@ -9,11 +9,15 @@ from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_loader import load_agent_config
 from tools.pa_tools import (
     review_trade as _review_trade,
     run_counterfactuals as _run_counterfactuals,
     detect_patterns as _detect_patterns,
     generate_post_mortem_report as _generate_post_mortem_report,
+    analyze_sl_optimization as _analyze_sl_optimization,
+    analyze_entry_window as _analyze_entry_window,
+    generate_pa_recommendations as _generate_pa_recommendations,
 )
 
 manager_llm = LLM(
@@ -59,21 +63,51 @@ def generate_post_mortem_report(
     return _generate_post_mortem_report(reviews, counterfactuals, patterns, session)
 
 
+@tool
+def analyze_sl_optimization(
+    trades: list, sl_range: tuple = None, step: int = 250
+) -> dict:
+    """Find optimal SL level. Simulates SL from ₹1,500-₹5,000. Returns best SL + PnL improvement."""
+    kwargs = {"trades": trades, "step": step}
+    if sl_range:
+        kwargs["sl_range"] = sl_range
+    return _analyze_sl_optimization(**kwargs)
+
+
+@tool
+def analyze_entry_window(trades: list) -> dict:
+    """Find best 30-min entry window by win rate and avg PnL."""
+    return _analyze_entry_window(trades)
+
+
+@tool
+def generate_pa_recommendations(
+    trades: list,
+    total_margin_available: float = 0,
+    total_margin_used: float = 0,
+) -> dict:
+    """Run ALL PA analyses and return ranked recommendations for PM. Use this as primary tool."""
+    return _generate_pa_recommendations(
+        trades, total_margin_available, total_margin_used
+    )
+
+
 reviewer = Agent(
-    role="Trade Quality Reviewer",
-    goal="Review every trade for spec compliance, SL hits, early exits. Run counterfactuals on alt entry/exit/TP/SL.",
-    backstory="Every trade tells a story. You find the missed opportunities.",
-    tools=[review_trade, run_counterfactuals],
+    **load_agent_config("pa", "reviewer"),
+    tools=[review_trade, run_counterfactuals, generate_pa_recommendations],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 analyst = Agent(
-    role="Pattern & Recommendation Analyst",
-    goal="Detect recurring patterns across trades. Generate actionable PM recommendations.",
-    backstory="Patterns predict future losses. You catch them before they repeat.",
-    tools=[detect_patterns, generate_post_mortem_report],
+    **load_agent_config("pa", "analyst"),
+    tools=[
+        detect_patterns,
+        generate_post_mortem_report,
+        analyze_sl_optimization,
+        analyze_entry_window,
+    ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 review_task = Task(
@@ -94,5 +128,5 @@ def build_pa_crew() -> Crew:
         tasks=[review_task, report_task],
         process=Process.hierarchical,
         manager_llm=manager_llm,
-        verbose=False,
+        verbose=True,
     )

@@ -14,6 +14,7 @@ from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_loader import load_agent_config
 from tools.om_tools import (
     token_refresh_status as _token_refresh_status,
     verify_code_hash as _verify_code_hash,
@@ -88,20 +89,7 @@ def aggregate_health_report(checks: list) -> dict:
 # ============================================================
 
 pre_flight_agent = Agent(
-    role="Operations Pre-Flight Inspector",
-    goal=(
-        "Verify all 5 infrastructure health checks before market open: "
-        "broker token validity, code integrity, market data stream, "
-        "disk space, and network connectivity. Report exact values with timestamps."
-    ),
-    backstory=(
-        "You are the first line of defense ensuring Antariksh's trading "
-        "infrastructure is ready before the 9:30 AM session. Every check "
-        "you run must produce concrete, timestamped evidence — never "
-        "vague affirmations. You flag each check as OK or FAILED with "
-        "specific values. The Chairman relies on your evidence to know "
-        "the system actually ran, not just that an LLM said it did."
-    ),
+    **load_agent_config("om", "pre_flight_agent"),
     tools=[
         token_refresh_status,
         verify_code_hash,
@@ -110,44 +98,21 @@ pre_flight_agent = Agent(
         network_connectivity_check,
     ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 cron_watchdog = Agent(
-    role="Cron Schedule Watchdog",
-    goal=(
-        "Verify all expected cron jobs are active in the system crontab. "
-        "Report exactly which crons are running and which are missing."
-    ),
-    backstory=(
-        "Cron jobs are the heartbeat of Antariksh. Without them, no "
-        "session starts, no tokens refresh, no reports generate. You "
-        "check every expected entry against the live crontab and flag "
-        "any that are missing — with the exact entry that should be there."
-    ),
+    **load_agent_config("om", "cron_watchdog"),
     tools=[cron_health_check],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 reporter = Agent(
-    role="Operations Health Reporter",
-    goal=(
-        "Synthesize all pre-flight and cron health results into a "
-        "clear GO/NOGO decision with an evidence-backed markdown report "
-        "ready for Telegram delivery to the Chairman."
-    ),
-    backstory=(
-        "You are the final checkpoint. You receive raw check results "
-        "from Pre-Flight Inspector and Cron Watchdog. You classify each "
-        "failure as CRITICAL (broker, disk, network — halts trading) or "
-        "WARNING (code changes, data health, cron gaps). You produce the "
-        "Telegram report with timestamps, values, and clear evidence "
-        "that every check was actually run."
-    ),
+    **load_agent_config("om", "reporter"),
     tools=[aggregate_health_report],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 
@@ -235,7 +200,7 @@ def build_om_crew() -> Crew:
         tasks=[pre_flight_task, cron_task, report_task],
         process=Process.hierarchical,
         manager_llm=manager_llm,
-        verbose=False,
+        verbose=True,
     )
     return crew
 

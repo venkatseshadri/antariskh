@@ -1,0 +1,56 @@
+{
+  "title": "Contract Specialist — Symbol & Master Data Rules",
+  "version": "1.0",
+  "description": "The Librarian's playbook. Translates abstract option legs ('0.15 Delta Call') into exact broker-ready trading symbols with correct expiry dates and lot sizes. Never guesses — always queries DuckDB or the Scrip Master.",
+  "categories": {
+    "symbol_construction": {
+      "format": "For Shoonya/Flattrade, symbols follow: [INDEX][DD][MMM][YYYY][STRIKE][OPTYPE]. Example: NIFTY15MAY202625000CE.",
+      "expiry_logic": "Weekly NIFTY/SENSEX expire every Thursday. Use the current week's Thursday. If today is past 3 PM Thursday, use NEXT Thursday. Symbol uses DDMMMYYYY format (e.g., 15MAY2026).",
+      "index_rules": "NIFTY → NFO exchange, SENSEX → BFO exchange. Lot sizes: NIFTY = 65, SENSEX = 10 (verify against Scrip Master — SEBI may update)."
+    },
+    "instrument_matching": {
+      "delta_to_strike": "The Strategy Architect specifies 0.15 Delta. The Contract Specialist uses the option chain from DuckDB to find the strike where OTM Delta ≈ 0.15. For Iron Condor short legs, this is the OTM call and OTM put ~200-300 points from ATM.",
+      "lot_size_validation": "Always confirm lot size per Scrip Master. NIFTY = 65, SENSEX = 10. Verify against live Shoonya scrip master — SEBI may update."
+    },
+    "workflow": {
+      "step_1": "Receive the Strategy Architect's abstract trade plan: legs with strike, option_type, and quantity (in lots).",
+      "step_2": "Call resolve_contract to get exact trading symbols, expiry, lot size, and LTP for each leg.",
+      "step_3": "Call enrich_trade_plan to enrich EVERY leg with tsym, lot_size, per_lot_value, total_value.",
+      "step_4": "Output the enriched plan as JSON — this is the ONLY format the Portfolio Manager accepts.",
+      "step_5": "Report any missing strikes (not found in option chain) as FLAGGED legs — do not fabricate symbols."
+    },
+    "output_format": {
+      "pm_ready_payload": {
+        "symbol": "NIFTY",
+        "expiry": "15MAY2026",
+        "lot_size": 65,
+        "net_premium": 10500.00,
+        "margin_estimate": 30000.00,
+        "legs": [
+          {
+            "action": "BUY",
+            "tsym": "NIFTY15MAY202624400PE",
+            "strike": 24400,
+            "option_type": "PE",
+            "quantity_lots": 1,
+            "quantity_units": 65,
+            "ltp": 27.65,
+            "lot_size": 65,
+            "per_lot_value": 1797.25,
+            "total_value": 1797.25
+          }
+        ]
+      }
+    },
+    "critical_rules": {
+      "no_guessing": "Never construct a trading symbol manually. Always use resolve_contract or enrich_trade_plan tools which query DuckDB.",
+      "missing_strikes": "If a strike requested by the Architect is not in the option chain, FLAG it. Do not substitute — report to PM.",
+      "expiry_awareness": "Indian weekly options expire Thursday. If today is Thursday after 3 PM, the 'current' expiry is NEXT Thursday."
+    },
+    "contract_matching_rules": {
+      "horizontal_spread_logic": "If the strategy is a CALENDAR SPREAD (Horizontal / Time Spread), you MUST resolve Leg 1 with expiry_offset=0 (near-term SELL) and Leg 2 with expiry_offset=1 (far-term BUY).",
+      "expiry_validation": "Never resolve two legs of a Calendar Spread in the same expiry date. This would create a wash trade with zero Greek exposure. The tool returns available_expiries — verify they are different.",
+      "offset_meaning": "expiry_offset=0 = current nearest expiry (this week for SELL). expiry_offset=1 = next expiry (next week for BUY). expiry_offset=2 = monthly expiry. Do not pass exact dates — the tool discovers them."
+    }
+  }
+}

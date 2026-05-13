@@ -8,6 +8,7 @@ import os
 import stat
 import hashlib
 import time
+import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List
@@ -72,22 +73,48 @@ def token_refresh_status() -> Dict:
 
     # Real check — look for token files in sibling project
     cred_path = Path("/home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/cred.yml")
-    fttoken_path = Path("/home/trading_ceo/python-trader/tokens.json")
+    fttoken_paths = [
+        Path("/home/trading_ceo/python-trader/tokens.json"),
+        Path("/home/trading_ceo/python-trader/FlattradeApi/tokens.json"),
+        Path("/home/trading_ceo/python-trader/FlattradeApi-py/tokens.json"),
+    ]
+    fttoken_path = None
+    for p in fttoken_paths:
+        if p.exists():
+            fttoken_path = p
+            break
 
-    shoonya_ok = cred_path.exists() and (
-        time.time() - cred_path.stat().st_mtime < 86400
+    shoonya_age = (
+        time.time() - cred_path.stat().st_mtime if cred_path.exists() else float("inf")
     )
-    flattrade_ok = fttoken_path.exists() and (
-        time.time() - fttoken_path.stat().st_mtime < 86400
+    flattrade_age = (
+        time.time() - fttoken_path.stat().st_mtime
+        if fttoken_path.exists()
+        else float("inf")
     )
+    shoonya_ok = shoonya_age < 86400
+    flattrade_ok = flattrade_age < 86400
+
+    def _age_str(age_sec):
+        if age_sec == float("inf"):
+            return "MISSING"
+        h = age_sec / 3600
+        if h < 1:
+            return f"fresh ({int(age_sec / 60)}m ago)"
+        elif h < 24:
+            return f"ok ({h:.1f}h ago)"
+        else:
+            return f"STALE ({h / 24:.1f}d old)"
 
     return {
         "shoonya": shoonya_ok,
         "flattrade": flattrade_ok,
         "ok": shoonya_ok or flattrade_ok,
+        "shoonya_age_sec": round(shoonya_age),
+        "flattrade_age_sec": round(flattrade_age),
         "evidence": (
-            f"Tokens: Shoonya {'OK' if shoonya_ok else 'FAILED'}, "
-            f"Flattrade {'OK' if flattrade_ok else 'FAILED'} ({_now_ist()})"
+            f"Token freshness: Shoonya {_age_str(shoonya_age)}, "
+            f"Flattrade {_age_str(flattrade_age)} ({_now_ist()})"
         ),
     }
 
@@ -237,11 +264,52 @@ def network_connectivity_check() -> Dict:
             "evidence": f"Broker latency: Shoonya 120ms, Flattrade 85ms. Telegram: reachable ({_now_ist()})",
         }
 
-    # Real check would use requests.get() with timeout. Mock-safe for now.
+    # Real check — ping broker APIs and Telegram
+    import requests
+
+    result = {"shoonya": 0, "flattrade": 0, "telegram": False}
+    ok = True
+
+    # Shoonya API
+    try:
+        r = requests.get("https://api.shoonya.com", timeout=5)
+        result["shoonya"] = 1 if r.status_code < 500 else 0
+    except Exception:
+        result["shoonya"] = 0
+
+    # Flattrade API
+    try:
+        r = requests.get("https://piconnect.flattrade.in", timeout=5)
+        result["flattrade"] = 1 if r.status_code < 500 else 0
+    except Exception:
+        result["flattrade"] = 0
+
+    # Telegram
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if token:
+        try:
+            r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+            result["telegram"] = r.status_code == 200
+        except Exception:
+            result["telegram"] = False
+
+    shoonya_ok = result["shoonya"] == 1
+    flattrade_ok = result["flattrade"] == 1
+    ok = shoonya_ok and flattrade_ok
+
     return {
-        "broker": {"shoonya": 0, "flattrade": 0},
-        "ok": False,
-        "evidence": f"Network check requires broker API keys (not configured for engine tests) ({_now_ist()})",
+        "broker": {
+            "shoonya": "reachable" if shoonya_ok else "UNREACHABLE",
+            "flattrade": "reachable" if flattrade_ok else "UNREACHABLE",
+        },
+        "telegram": "reachable" if result["telegram"] else "UNKNOWN",
+        "ok": ok,
+        "evidence": (
+            f"Network: Shoonya {'✅' if shoonya_ok else '❌'}, "
+            f"Flattrade {'✅' if flattrade_ok else '❌'}, "
+            f"Telegram {'✅' if result['telegram'] else '⚠️'} "
+            f"({_now_ist()})"
+        ),
     }
 
 
@@ -251,7 +319,7 @@ def network_connectivity_check() -> Dict:
 
 
 def cron_health_check() -> Dict:
-    """Verify expected crons are active."""
+    """Verify expected crons are active by reading crontab -l."""
     if _is_mock():
         dead = os.environ.get("ANTARIKSH_MOCK_CRON_DEAD", "0") == "1"
         if dead:
@@ -268,12 +336,44 @@ def cron_health_check() -> Dict:
             "evidence": f"Crons: {len(EXPECTED_CRONS)}/{len(EXPECTED_CRONS)} active ({_now_ist()})",
         }
 
-    # Real check would parse crontab. Safe fallback for now.
+    # Real check — run crontab -l
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True, timeout=10
+        )
+        crontab_text = result.stdout if result.returncode == 0 else ""
+    except Exception:
+        crontab_text = ""
+
+    if not crontab_text.strip():
+        return {
+            "active": [],
+            "missing": list(EXPECTED_CRONS.values()),
+            "ok": False,
+            "evidence": f"crontab empty or unreadable — 0/{len(EXPECTED_CRONS)} expected crons found ({_now_ist()})",
+        }
+
+    # Parse each expected cron entry against the crontab content
+    active = []
+    missing = []
+    for time_spec, job_name in EXPECTED_CRONS.items():
+        # Match by the script/command name in the crontab entry
+        keyword = job_name.split("/")[-1].split(".")[0]  # e.g., "token_refresh_dual"
+        if keyword in crontab_text or job_name in crontab_text:
+            active.append(job_name)
+        else:
+            missing.append(job_name)
+
+    all_present = len(missing) == 0
     return {
-        "active": [],
-        "missing": [],
-        "ok": True,
-        "evidence": f"Cron health check requires crontab access ({_now_ist()})",
+        "active": active,
+        "missing": missing,
+        "ok": all_present,
+        "evidence": (
+            f"Crons: {len(active)}/{len(EXPECTED_CRONS)} active"
+            + (f", missing: {', '.join(missing)}" if missing else "")
+            + f" ({_now_ist()})"
+        ),
     }
 
 

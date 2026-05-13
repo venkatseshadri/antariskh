@@ -17,7 +17,7 @@ Usage:
 
 from dataclasses import dataclass, field
 from typing import Callable, Any, Optional, List, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import json
 import os
@@ -460,21 +460,26 @@ class RalphScheduler:
 
         return results
 
-    def _schedule_matches(self, schedule_str: str, now: datetime) -> bool:
+    @staticmethod
+    def _schedule_matches(schedule_str: str, now: datetime) -> bool:
         """
         Check if a schedule string matches the current time.
 
         Tries croniter first, falls back to simple HH:MM matching.
+        The cron check uses a lookback approach: finds the next matching time
+        within the last 2 minutes, which correctly handles day-of-week restrictions.
         """
-        if _CRONITER_AVAILABLE and self._CRON_RE.match(schedule_str):
+        if _CRONITER_AVAILABLE and RalphScheduler._CRON_RE.match(schedule_str):
             try:
-                cron = croniter(schedule_str, now)
-                prev_time = cron.get_prev(datetime)
-                return prev_time == cron.get_current(datetime)
+                lookback = now - timedelta(seconds=120)
+                cron = croniter(schedule_str, lookback)
+                next_match = cron.get_next(datetime)
+                diff = abs((next_match - now).total_seconds())
+                return diff <= 120
             except (ValueError, KeyError):
                 pass
 
-        return self._simple_time_match(schedule_str, now)
+        return RalphScheduler._simple_time_match(schedule_str, now)
 
     @staticmethod
     def _simple_time_match(
@@ -597,41 +602,105 @@ def _load_all_prds(prd_dir: str) -> Dict[str, RolePRD]:
 
 def _extract_schedule_from_prd(
     prd: RolePRD, raw_yaml: Dict, role_key: str
-) -> Optional[str]:
+) -> List[str]:
     """
-    Extract a schedule string from a PRD's YAML data.
+    Extract schedule strings from a PRD's YAML data.
+    Returns a LIST of schedule strings (can be multiple).
 
     Priority:
-        1. Explicit 'schedule' field (cron or HH:MM)
-        2. frequency.pre_market (sample frequency): maps to a simple HH:MM
-        3. Default based on role_key conventions
+        1. Explicit 'schedule' field (cron or HH:MM, can be string or list)
+        2. frequency.during_session (list of times — intraday)
+        3. frequency.pre_market / pre_session / post_session (single time)
+        4. Empty list if no schedule found
     """
+    # 1. Explicit schedule field
     if "schedule" in raw_yaml:
-        return str(raw_yaml["schedule"])
+        sched = raw_yaml["schedule"]
+        if isinstance(sched, list):
+            return [str(s) for s in sched]
+        return [str(sched)]
 
     frequency = raw_yaml.get("frequency", {})
-    if frequency:
-        for key, time_str in frequency.items():
-            time_str = str(time_str).replace(" IST", "").replace(" IST", "").strip()
-            m = re.match(r"^(\d{1,2}):(\d{2})$", time_str)
-            if m:
-                return time_str
+    schedules = []
 
-    return None
+    # 2. during_session list (intraday checks)
+    during = frequency.get("during_session", [])
+    if isinstance(during, list):
+        schedules.extend(str(t).replace(" IST", "").strip() for t in during)
+    elif isinstance(during, str) and during != "continuous":
+        schedules.append(during.replace(" IST", "").strip())
+
+    # 3. Pre-session (pre_market or pre_session)
+    for key in ("pre_market", "pre_session"):
+        if key in frequency:
+            schedules.append(str(frequency[key]).replace(" IST", "").strip())
+            break  # only one pre-session time
+
+    # 4. Post-session
+    for key in ("post_session", "post_market"):
+        if key in frequency:
+            schedules.append(str(frequency[key]).replace(" IST", "").strip())
+            break
+
+    # 5. Weekend self-improvement (Sat/Sun)
+    weekend = frequency.get("weekend", [])
+    if isinstance(weekend, list):
+        schedules.extend(str(t).replace(" IST", "").strip() for t in weekend)
+    elif isinstance(weekend, str):
+        schedules.append(weekend.replace(" IST", "").strip())
+
+    # 6. Weekly (single day, e.g. "Friday 18:00") — convert to cron
+    weekly = frequency.get("weekly", None)
+    if weekly and isinstance(weekly, str):
+        weekly_clean = weekly.replace(" IST", "").strip()
+        # If it's already a cron expression, use as-is
+        if re.match(r"^\S+\s+\S+\s+\S+\s+\S+\s+\S+$", weekly_clean):
+            schedules.append(weekly_clean)
+
+    return schedules
 
 
 def _default_crew_factory():
     """
-    Create the default Antariksh crew for PRD evaluation.
-    Uses the crew from crew_structure module.
+    Create a default crew for PRD evaluation.
+    Uses om_crew as fallback since it has the health check tools.
     """
     try:
-        from crew_structure import _build_crew
+        from crews.om_crew import build_om_crew
 
-        return _build_crew()
-    except ImportError:
-        logger.error("Cannot import crew_structure._build_crew")
+        return build_om_crew()
+    except Exception as e:
+        logger.error(f"Cannot create crew: {e}")
         return None
+
+
+CREW_BUILDER_MAP = {
+    "om": "crews.om_crew.build_om_crew",
+    "ta": "crews.ta_crew.build_ta_crew",
+    "pm": "crews.pm_crew.build_pm_crew",
+    "am": "crews.am_crew.build_am_crew",
+    "pa": "crews.pa_crew.build_pa_crew",
+    "ceo": "crews.ceo_crew.build_ceo_crew",
+}
+
+
+def _get_crew_for_role(role_key: str):
+    """
+    Instantiate the correct crew for a given PRD role.
+    Falls back to OM crew if specific builder fails.
+    """
+    import importlib
+
+    builder_path = CREW_BUILDER_MAP.get(role_key)
+    if builder_path:
+        try:
+            mod_name, fn_name = builder_path.rsplit(".", 1)
+            mod = importlib.import_module(mod_name)
+            builder = getattr(mod, fn_name)
+            return builder()
+        except Exception as e:
+            logger.warning(f"Cannot build {role_key} crew ({e}), falling back to OM")
+    return _default_crew_factory()
 
 
 def _default_metric_evaluator(output: Any) -> Dict[str, float]:
@@ -730,16 +799,7 @@ def run_ralph_cycle(
             "summary": "No PRDs found",
         }
 
-    crew = _default_crew_factory()
-    if crew is None:
-        logger.error("Cannot create crew — aborting cycle")
-        return {
-            "ran_at": datetime.now().isoformat(),
-            "roles_loaded": len(prds),
-            "roles_run": 0,
-            "results": [],
-            "summary": "Crew factory unavailable",
-        }
+    crew = None  # lazy — build per role
 
     roles_with_schedules: List[Tuple[PRDRalphLoop, str]] = []
 
@@ -753,29 +813,33 @@ def run_ralph_cycle(
             except Exception:
                 pass
 
-        schedule_str = _extract_schedule_from_prd(prd, raw_yaml, role_key)
-        if schedule_str is None:
+        schedule_strs = _extract_schedule_from_prd(prd, raw_yaml, role_key)
+        if not schedule_strs:
             logger.warning(f"No schedule found for {prd.name} ({role_key}) — skipping")
             continue
 
-        def make_agent_fn(role_name, role_mission):
+        def make_agent_fn(role_name, role_mission, rkey):
             def agent_fn(prompt: str) -> str:
-                if crew.tasks:
-                    crew.tasks[0].description = prompt
-                result = crew.kickoff()
+                role_crew = _get_crew_for_role(rkey)
+                if role_crew is None:
+                    return "Error: Cannot create crew"
+                if role_crew.tasks:
+                    role_crew.tasks[0].description = prompt
+                result = role_crew.kickoff()
                 return str(result)
 
             return agent_fn
 
-        ralph_loop = PRDRalphLoop(
-            agent_fn=make_agent_fn(prd.name, prd.mission),
-            prd=prd,
-            metric_evaluator=_default_metric_evaluator,
-            max_iterations=max_iterations,
-        )
-
-        roles_with_schedules.append((ralph_loop, schedule_str))
-        logger.info(f"Scheduled: {prd.name} at '{schedule_str}'")
+        # Create one RalphLoop per schedule time (allows intraday repeats)
+        for schedule_str in schedule_strs:
+            ralph_loop = PRDRalphLoop(
+                agent_fn=make_agent_fn(prd.name, prd.mission, role_key),
+                prd=prd,
+                metric_evaluator=_default_metric_evaluator,
+                max_iterations=max_iterations,
+            )
+            roles_with_schedules.append((ralph_loop, schedule_str))
+            logger.info(f"Scheduled: {prd.name} at '{schedule_str}'")
 
     if not roles_with_schedules:
         logger.warning("No roles with valid schedules")

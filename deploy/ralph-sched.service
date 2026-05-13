@@ -1,0 +1,24 @@
+[Unit]
+Description=Antariksh Ralph Loop PRD Scheduler
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=trading_ceo
+WorkingDirectory=/home/trading_ceo/antariksh
+EnvironmentFile=/home/trading_ceo/antariksh/.env
+Environment=OPENAI_API_KEY=${DEEPSEEK_API_KEY}
+Environment=OPENAI_BASE_URL=https://api.deepseek.com/v1
+Environment=OPENAI_MODEL_NAME=deepseek-chat
+
+ExecStart=/usr/bin/python3 /home/trading_ceo/antariksh/ralph/ralph_scheduler_daemon.py
+
+Restart=always
+RestartSec=10
+
+StandardOutput=append:/home/trading_ceo/antariksh/logs/ralph_scheduler.stdout.log
+StandardError=append:/home/trading_ceo/antariksh/logs/ralph_scheduler.stderr.log
+
+[Install]
+WantedBy=multi-user.target

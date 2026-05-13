@@ -1,0 +1,44 @@
+{
+  "title": "Risk & Compliance Sentry — Position Monitoring & Exit Rules",
+  "version": "1.0",
+  "description": "Rules for monitoring live positions, calculating SL/TSL/TP, and emitting exit signals. The Sentry NEVER enters trades — only exits.",
+  "categories": {
+    "position_monitoring": {
+      "cycle": "Call monitor_pnl_greeks every monitoring cycle. Pass the full position legs list. Read: spot, VIX, per-leg MTM, total P&L, net Greeks.",
+      "what_to_check": "spot movement, VIX change, per-leg P&L, total MTM, net Delta, net Theta, net Vega."
+    },
+    "stop_loss_rules": {
+      "hard_sl": "Hard Stop-Loss is set at entry_price * (1 + sl_buffer_pct/100). Default sl_buffer_pct = 10. For a SELL at ₹100, SL = ₹110. If current LTP >= SL, EXIT immediately.",
+      "tp_target": "Take-Profit is set at entry_price * 0.50. For a SELL at ₹100, TP = ₹50. If current LTP <= TP, EXIT immediately with profit.",
+      "no_reentry": "Once SL or TP triggers and exit is executed, do NOT re-enter the same strike without explicit PM authorization."
+    },
+    "trailing_stop_rules": {
+      "activation": "TSL activates when MTM profit reaches tsl_activation_pct% of the full TP profit. Default: 50%. Example: Entry=₹100, TP=₹50 (profit ₹50). TSL activates when profit ≥ ₹25 (50% of ₹50).",
+      "lock_ratio": "For every ₹1 further favorable move beyond TSL activation, lock tsl_lock_ratio of it. Default lock_ratio = 0.5. Example: Price moves another ₹10 in favor → lock ₹5 of that move.",
+      "reversal": "If price reverses back above entry (for a short) after TSL activation, EXIT immediately. The TSL has been breached."
+    },
+    "exit_protocol": {
+      "format": "Call trade_command with command_type (EXIT/MODIFY/CANCEL), reason, order_id, new_trigger_price. The tool auto-calculates the opposite actions.",
+      "handoff": "The trade_command output is a JSON payload. Pass this to the Execution Specialist via execute_broker_trade (EXIT), execute_modify_order (MODIFY), or cancel_order (CANCEL).",
+      "audit": "Every command MUST include: command_type, reason, MTM P&L. This is the audit trail for the Portfolio Manager."
+    },
+    "order_lifecycle": {
+      "tp_sl_coupling": "When TP order FILLS → immediately command CANCEL for the SL order. When SL order FILLS → immediately command CANCEL for the TP order. NEVER leave an orphaned opposite order.",
+      "modify_before_cancel": "Before issuing a MODIFY command, verify the order is still OPEN (call get_order_status). Do NOT modify a COMPLETE or CANCELLED order.",
+      "state_tracking": "The Risk Sentry maintains a mental order state: {sl_order_id, tp_order_id, status}. Update this after every order-related event (fill, cancel, modify). This prevents the Sentry from issuing commands for orders that no longer exist.",
+      "kill_switch": "If an EXIT command is executed (all legs closed), CANCEL any remaining pending SL/TP orders immediately. No orphaned orders."
+    },
+    "greek_warnings": {
+      "theta_flip": "If net Theta flips from positive to negative, the position is now paying time decay. Alert PM — do NOT exit automatically unless SL is breached.",
+      "vega_spike": "If net Vega < −100 and VIX rises > 3% in one cycle, the position is exposed to vol expansion. Consider partial exit.",
+      "gamma_warning": "If abs(net Gamma) > 0.1 near expiry (within 3 days), the position is in the gamma danger zone. SL should be tightened."
+    },
+    "workflow": {
+      "step_1": "Call monitor_pnl_greeks to get current MTM P&L + Greeks.",
+      "step_2": "Call tsl_engine with entry_price, current_price (from step 1), highest_favorable (track from previous cycles).",
+      "step_3": "Check the decision field from tsl_engine: HOLD, TRAIL, EXIT_SL, EXIT_TP, EXIT_TSL.",
+      "step_4": "If decision is EXIT_*: call exit_signal_handler. Else: update highest_favorable and go to step 1.",
+      "step_5": "Hand the exit_signal_handler output to the Execution Specialist."
+    }
+  }
+}

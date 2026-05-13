@@ -1,0 +1,84 @@
+
+======================================================================
+🚀  ANTARIKSH END-TO-END INTEGRATION TEST
+======================================================================
+
+━ PHASE 1: PREPARATION (Scout → Researcher)
+
+2026-05-12 14:11:33,206 | INFO     | TradingDesk        | DESK PHASE: preparation → preparation
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | SCOUT → Regime: SIDEWAYS | VIX=18.5 | NIFTY=24500
+  ✅ Scout returned MarketRegime
+  ✅ Regime type is SIDEWAYS (VIX 18.5 < 20)
+  ✅ VIX stored correctly
+  ✅ NIFTY spot stored correctly
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | RESEARCHER → Setup: ATM=24500 | Wings=300 | Exp Profit=₹1000
+  ✅ Researcher returned ProposedSetup
+  ✅ Strategy is IRON_BUTTERFLY
+  ✅ ATM strike on 50-pt grid: 24500
+  ✅ Wing width = 300 (normal VIX)
+  ✅ 4 legs in setup
+  ✅ Leg 0 is LONG_PUT_WING (BUY PE)
+  ✅ Leg 1 is SHORT_PUT_BODY (SELL PE)
+  ✅ Leg 2 is SHORT_CALL_BODY (SELL CE)
+  ✅ Leg 3 is LONG_CALL_WING (BUY CE)
+
+━ PHASE 2: VALIDATION (PM capital check)
+
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | DESK PHASE: preparation → validation
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | PM AUTHORIZED: 1 lots | Margin ₹150000.0
+  ✅ PM returned AuthorizedOrder
+  ✅ PM AUTHORIZED (margin ₹150k < 85% of ₹200k)
+  ✅ 1 lot authorized
+  ✅ Max margin set
+  ✅ Spec contains legs
+  ✅ Phase is VALIDATION
+2026-05-12 14:11:33,207 | WARNING  | TradingDesk        | PM REJECTED: margin ₹150000.0 > 85% of ₹50000
+  ✅ PM REJECTS when margin > 85% of balance
+
+━ PHASE 3: ACTION (Executioner places orders)
+
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | DESK PHASE: validation → action
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | EXECUTIONER → Handoff: 4 legs filled | Orders: ['SIM-NIFTY14MAY202624200PE-001', 'SIM-NIFTY14MAY202624500PE-002', 'SIM-NIFTY14MAY202624500CE-003', 'SIM-NIFTY14MAY202624800CE-004']
+  ✅ Executioner returned HandoffReport
+  ✅ All 4 legs filled
+  ✅ Order IDs populated
+  ✅ Entry prices populated
+  ✅ TSYMs populated
+  ✅ Wings count = 2
+  ✅ Center count = 2
+  ✅ Positions marked open
+  ✅ Phase is ACTION
+  ✅ Active SL orders exist
+  ✅ Active TP orders exist
+    Fill details:
+      PE_24200_BUY              | filled | SIM-NIFTY14MAY202624200PE-001
+      PE_24500_SELL             | filled | SIM-NIFTY14MAY202624500PE-002
+      CE_24500_SELL             | filled | SIM-NIFTY14MAY202624500CE-003
+      CE_24800_BUY              | filled | SIM-NIFTY14MAY202624800CE-004
+
+━ PHASE 4: MAINTENANCE (Risk Agent listen triggers)
+
+    Mock TP order: SIM-NIFTY14MAY202624500CE-003 (NIFTY14MAY202624500CE)
+
+    Test 4a: TP order fills → OCO logic (cancel all SLs)
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | ORDER COMPLETE: TP SIM-NIFTY14MAY202624500CE-003
+2026-05-12 14:11:33,207 | INFO     | TradingDesk        | RISK TRIGGER: TP SIM-NIFTY14MAY202624500CE-003 COMPLETE → Kill SLs: ['SIM-NIFTY14MAY202624500PE-002', 'SIM-NIFTY14MAY202624500CE-003']
+  ✅ TP_COMPLETE trigger fired
+  ✅ Command = CANCEL
+  ✅ Action = CANCEL_ALL_SL
+  ✅ Cancelled orders list not empty
+  ✅ Cancelled orders contain SL order IDs
+  ✅ Positions marked closed after TP fill
+  ✅ Active SL orders cleared
+
+    Test 4b: Feed update with closed positions → ignored
+  ✅ Feed ignored (no positions)
+
+======================================================================
+RESULTS: 39/39 PASSED, 0/39 FAILED
+======================================================================
+
+🏁  SUCCESS: System is End-to-End Functional.
+    The 'Conveyor Belt' flows correctly from Scout → Risk Agent.
+    OCO (One-Cancels-Other) logic verified.
+    Ready for next level: Leg Shifter + live WebSocket.

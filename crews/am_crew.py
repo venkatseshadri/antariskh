@@ -13,12 +13,14 @@ from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_loader import load_agent_config
 from tools.am_tools import (
     track_cumulative_pnl as _track_cumulative_pnl,
     check_margin as _check_margin,
     check_capital_limits as _check_capital_limits,
     generate_financial_report as _generate_financial_report,
     generate_capital_report as _generate_capital_report,
+    query_broker_margin as _query_broker_margin,
 )
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -29,8 +31,9 @@ manager_llm = LLM(
     temperature=0.3,
     api_key=DS_KEY,
 )
-# Suppress CrewAI telemetry: also set OPENAI_API_KEY for internal client
+# Route CrewAI default client to DeepSeek
 os.environ.setdefault("OPENAI_API_KEY", DS_KEY)
+os.environ.setdefault("OPENAI_BASE_URL", DEEPSEEK_BASE)
 
 
 @tool
@@ -74,27 +77,42 @@ def generate_capital_report(
     )
 
 
+@tool
+def query_broker_margin() -> dict:
+    """Query LIVE broker margin from Shoonya and Flattrade APIs.
+    Returns actual cash, collateral, and margin used — NOT estimates.
+    Use this FIRST before reporting any margin numbers. DO NOT guess.
+    """
+    return _query_broker_margin()
+
+
 financial_tracker = Agent(
-    role="Financial Performance Tracker",
-    goal="Track every rupee — P&L, margin utilization, capital limits, burn rate. Hard-fail any breach.",
-    backstory="You are the financial conscience. ₹3,500 daily SL breached? Halt. Free cash below ₹11,000? Halt. No exceptions, no judgment softening.",
-    tools=[track_cumulative_pnl, check_margin, check_capital_limits],
+    **load_agent_config("am", "financial_tracker"),
+    tools=[
+        track_cumulative_pnl,
+        check_margin,
+        check_capital_limits,
+        query_broker_margin,
+    ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 financial_reporter = Agent(
-    role="Financial Health Reporter",
-    goal="Generate CEO financial report and PM capital allocation report with precise numbers.",
-    backstory="The Board needs numbers, not narrative. You deliver exact P&L, margin %, and limit status.",
+    **load_agent_config("am", "financial_reporter"),
     tools=[generate_financial_report, generate_capital_report],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 track_task = Task(
-    description="Track session P&L, check margin, enforce capital limits.",
-    expected_output="P&L dict, margin dict, limits dict",
+    description=(
+        "Call query_broker_margin() to get LIVE margin from both brokers. "
+        "This returns raw data AND pre-computed margin/capital checks. "
+        "DO NOT guess margin numbers — only use what query_broker_margin() returns. "
+        "If it fails or returns zeros, say 'UNABLE TO QUERY BROKER' — never fabricate."
+    ),
+    expected_output="Real margin data from broker APIs with utilization % and limit checks",
     agent=financial_tracker,
 )
 report_task = Task(
@@ -110,5 +128,5 @@ def build_am_crew() -> Crew:
         tasks=[track_task, report_task],
         process=Process.hierarchical,
         manager_llm=manager_llm,
-        verbose=False,
+        verbose=True,
     )

@@ -19,11 +19,16 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     handlers=[
-        logging.FileHandler(Path(__file__).parent / "logs" / f"token_refresh_{datetime.now().strftime('%Y%m%d')}.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
+        logging.FileHandler(
+            Path(__file__).parent
+            / "logs"
+            / f"token_refresh_{datetime.now().strftime('%Y%m%d')}.log"
+        ),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 logger = logging.getLogger("TokenRefresh")
+
 
 def refresh_flattrade():
     """Refresh Flattrade token via auto-OAuth script"""
@@ -43,7 +48,7 @@ def refresh_flattrade():
             cwd=str(PYTHON_TRADER),
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
         )
 
         logger.info(f"Exit code: {result.returncode}")
@@ -55,15 +60,18 @@ def refresh_flattrade():
             logger.warning(result.stderr[:500])
 
         if result.returncode == 0:
-            # Check if token was written
+            # Check if token was written (new format: access_token, auth_code)
             token_file = PYTHON_TRADER / "tokens.json"
             if token_file.exists():
-                with open(token_file, 'r') as f:
+                with open(token_file, "r") as f:
                     tokens = json.load(f)
-                    if "token" in tokens and "client" in tokens:
-                        logger.info(f"✅ Flattrade token refreshed: {tokens['client']}")
+                    if "access_token" in tokens and "auth_code" in tokens:
+                        logger.info(
+                            f"✅ Flattrade token refreshed: {tokens.get('user_id', 'FT055702')} "
+                            f"(exchange: {'OK' if tokens.get('exchange_ok') else tokens.get('exchange_error', 'N/A')})"
+                        )
                         return True
-            logger.warning("Token file not updated")
+            logger.warning("Token file not updated or new format missing")
             return False
         else:
             logger.error(f"Script failed with exit code {result.returncode}")
@@ -75,6 +83,7 @@ def refresh_flattrade():
     except Exception as e:
         logger.error(f"Flattrade refresh error: {e}")
         return False
+
 
 def refresh_shoonya():
     """Refresh Shoonya token via GetAuthcode.py"""
@@ -94,7 +103,7 @@ def refresh_shoonya():
             cwd=str(PYTHON_TRADER / "Shoonya_oAuthAPI-py"),
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
         )
 
         logger.info(f"Exit code: {result.returncode}")
@@ -127,6 +136,7 @@ def refresh_shoonya():
         logger.error(f"Shoonya refresh error: {e}")
         return False
 
+
 def main():
     logger.info("TOKEN REFRESH JOB — START")
     logger.info(f"Timestamp: {datetime.now().isoformat()}")
@@ -147,6 +157,7 @@ def main():
 
     # Exit with code 0 if at least one broker succeeded
     sys.exit(0 if any(results.values()) else 1)
+
 
 if __name__ == "__main__":
     main()

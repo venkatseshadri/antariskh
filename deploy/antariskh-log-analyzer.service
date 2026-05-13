@@ -1,0 +1,21 @@
+[Unit]
+Description=Antariksh Log Analyzer — scans logs & pushes health reports to Telegram
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=trading_ceo
+WorkingDirectory=/home/trading_ceo/antariksh
+EnvironmentFile=/home/trading_ceo/antariksh/.env
+
+ExecStart=/usr/bin/python3 tools/log_analyzer.py
+
+Restart=always
+RestartSec=15
+
+StandardOutput=append:/home/trading_ceo/antariksh/logs/log_analyzer.stdout.log
+StandardError=append:/home/trading_ceo/antariksh/logs/log_analyzer.stderr.log
+
+[Install]
+WantedBy=multi-user.target

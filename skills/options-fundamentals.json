@@ -1,0 +1,133 @@
+{
+  "title": "Options Fundamentals — Quantitative Analyst Skill Registry",
+  "version": "1.0",
+  "description": "Knowledge base for quantitative options analysis: greeks, strategies, indicators, terminology.",
+  "categories": {
+    "greeks": {
+      "delta": {
+        "name": "Delta (Δ)",
+        "range": "0 to 1 (calls), -1 to 0 (puts)",
+        "interpretation": "Rate of option price change per ₹1 spot move. ATM ≈ 0.5, deep OTM ≈ 0.1.",
+        "use": "Iron Butterfly: sell ATM (delta ~0.5). Buy wings at 0.15-0.20 delta. Net delta should approach zero.",
+        "formula": "Δ = N(d₁) for calls, N(d₁) - 1 for puts"
+      },
+      "gamma": {
+        "name": "Gamma (Γ)",
+        "range": "positive, peaks at ATM",
+        "interpretation": "Rate of delta change per ₹1 spot move. High near expiry.",
+        "use": "Daily P&L swing ≈ γ × (ΔS)² ÷ 2 × lot_size. Used to calibrate stop-loss for delta-neutral positions.",
+        "formula": "Γ = N'(d₁) / (S × σ × √T)"
+      },
+      "theta": {
+        "name": "Theta (Θ)",
+        "range": "negative for buyers, positive for sellers",
+        "interpretation": "Time decay per day. ATM options decay fastest in final week.",
+        "use": "Iron Butterfly/condor are theta-positive. Near expiry (~3 days), theta accelerates — best entry window.",
+        "formula": "Θ = -(S × N'(d₁) × σ) / (2 × √T) - r × K × e^(-rT) × N(d₂)"
+      },
+      "vega": {
+        "name": "Vega (ν)",
+        "range": "positive, peaks at ATM",
+        "interpretation": "Option price change per 1% VIX change.",
+        "use": "Entry at high VIX → VIX crush → vega profit. Entry at low VIX → VIX spike → vega loss.",
+        "formula": "ν = S × √T × N'(d₁)"
+      }
+    },
+    "strategies": {
+      "iron_butterfly": {
+        "name": "Iron Butterfly",
+        "regime": "Trending (ADX > 25) or Sideways",
+        "structure": "Sell ATM CE + ATM PE, buy OTM CE + OTM PE at ±wing",
+        "profit_mechanism": "Premium decay if spot stays near ATM strike",
+        "max_loss": "wing_width × lot_size - premium_received",
+        "greeks_profile": "Theta-positive, delta-neutral at entry, gamma-negative near expiry",
+        "best_conditions": "VIX 12-18, 3 days to expiry, SuperTrend direction confirmed, no event day",
+        "lot_size": "NIFTY=75, SENSEX=10, BANKNIFTY=30"
+      },
+      "iron_condor": {
+        "name": "Iron Condor",
+        "regime": "Sideways (ADX < 25)",
+        "structure": "Sell OTM CE + OTM PE, buy further OTM CE + further OTM PE",
+        "profit_mechanism": "Premium decay if spot stays within range",
+        "max_loss": "wing_width × lot_size - premium_received",
+        "greeks_profile": "Theta-positive, delta-neutral, lower gamma than Iron Butterfly",
+        "best_conditions": "VIX 15-22, range-bound market, no breakout catalyst expected"
+      },
+      "credit_spread": {
+        "name": "Credit Spread (Put/Call)",
+        "regime": "Trending Bear (Put spread) / Trending Bull (Call spread)",
+        "structure": "Sell OTM option, buy further OTM (directional bet)",
+        "profit_mechanism": "Premium decay + directional move in your favor",
+        "max_loss": "spread_width × lot_size - premium_received",
+        "greeks_profile": "Theta-positive, delta-directional (~0.3 net delta)",
+        "best_conditions": "VIX > 18, event day, trend confirmed by SuperTrend + ADX"
+      }
+    },
+    "indicators": {
+      "adx": {
+        "name": "Average Directional Index",
+        "range": "0-100",
+        "thresholds": ">25 trending, >35 strong trend, <20 no trend",
+        "use": "Primary regime detector. ADX<25 = options sellers safe (range-bound). ADX>35 = credit spreads preferred.",
+        "source": "DuckDB market_data.adx"
+      },
+      "supertrend": {
+        "name": "SuperTrend",
+        "values": "BULLISH / BEARISH / NEUTRAL",
+        "use": "Confirms ADX direction. Bearish ST + high ADX = sell calls. Bullish ST + high ADX = sell puts.",
+        "source": "DuckDB market_data.supertrend_direction"
+      },
+      "rsi": {
+        "name": "Relative Strength Index",
+        "range": "0-100",
+        "thresholds": ">70 overbought (expect pullback), <30 oversold (expect bounce)",
+        "use": "Overbought + high ADX = Iron Fly reversion trade. Oversold + bearish ST = avoid bullish plays."
+      },
+      "atr": {
+        "name": "Average True Range",
+        "unit": "points",
+        "use": "Expected daily range ≈ ATR × 1.5. Calibrate wing width: wings should exceed daily range.",
+        "source": "DuckDB market_data.atr"
+      },
+      "vwap": {
+        "name": "Volume-Weighted Average Price",
+        "use": "Intraday bias: spot > VWAP = bullish bias. Spot < VWAP = bearish bias. Trade WITH VWAP.",
+        "source": "DuckDB market_data.vwap"
+      }
+    },
+    "risk_management": {
+      "stop_loss": {
+        "principle": "SL must exceed daily expected P&L swing × 1.5",
+        "iron_butterfly_sl": "Gamma-driven: SL ≥ 1.5 × γ × (day_range)² ÷ 2 × lot_size",
+        "credit_spread_sl": "Delta-driven: SL ≥ 1.5 × |δ| × day_range_pts × lot_size",
+        "default_nifty_sl": "₹3,500 per session (hard stop)"
+      },
+      "wing_width_vs_vix": {
+        "vix_10_13": "minimum wing = 100-150 points",
+        "vix_14_17": "minimum wing = 200 points",
+        "vix_18_22": "minimum wing = 250-300 points",
+        "vix_23_plus": "minimum wing = 350-400 points"
+      },
+      "margin_utilization": {
+        "target": "<85% of total margin",
+        "free_cash_floor": "₹11,000 minimum free after position",
+        "span_calculator": "Use broker span_calculator for pre-trade margin estimation"
+      },
+      "entry_window": {
+        "nifty": "10:30-11:30 IST (first hour of settled trading)",
+        "reason": "Opening auction volatility settles. ORB (opening range breakout) confirmed or rejected.",
+        "exit_time": "On target hit, SL hit, or 14:35 IST (hard close)"
+      }
+    },
+    "terminology": {
+      "vix": "India VIX — fear gauge. Daily expected move ≈ VIX% × spot ÷ √252. VIX>20 = caution.",
+      "atm_strike": "Round(current_spot / 50) × 50. The strike closest to spot.",
+      "strike_grid": "NIFTY: 50-point grid. SENSEX: 100-point grid. BANKNIFTY: 100-point grid.",
+      "wing_width": "Distance in points from ATM sell to OTM buy (hedge). Wider = safer, more capital. Narrow = cheaper, higher breach risk.",
+      "expiry_selection": "Weekly expiry (Thursday) at 3 DTE = peak theta. 0 DTE = high gamma risk, avoid.",
+      "lot_size": "NIFTY = 75, SENSEX = 10, BANKNIFTY = 30. Always multiply by lot_size for margin.",
+      "premium_decay": "Theta accelerates in final 5 days. Best entry: Tuesday/Wednesday for Thursday expiry.",
+      "bid_ask_spread": "Liquid strikes have spread ≤ ₹2-3. Wide spread (>₹10) = illiquid, avoid."
+    }
+  }
+}

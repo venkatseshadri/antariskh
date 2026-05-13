@@ -1,17 +1,171 @@
 """Chairman Orchestrator — query routing, crew dispatch, Ralph Loop PRD verification.
 
 Routes natural language Chairman queries, dispatches to crews via CrewAI,
-and runs Ralph Loop PRD verification after every crew execution.
+runs Ralph Loop PRD verification after every crew execution, and passes
+inter-crew learnings so findings from one crew reach another directly.
 """
 
 import os, sys, re, logging
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 IST = timezone(timedelta(hours=5, minutes=30))
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# TRADE MODE — Paper vs Live (CEO-enforced safety gate)
+# ============================================================
+# PAPER: All trades are simulated. No real orders. Safe default.
+# LIVE:  Real money. Requires BOTH flags: TRADE_MODE=LIVE AND LIVE_KEY set.
+# Only CEO can approve switching to LIVE.
+
+TRADE_MODE = os.environ.get("TRADE_MODE", "PAPER").upper()
+LIVE_KEY = os.environ.get("LIVE_KEY", "")  # must be set to switch LIVE
+LIVE_KEY_REQUIRED = "antariskh-1ive-2026"  # shared secret to authorize live
+
+if TRADE_MODE == "LIVE" and LIVE_KEY != LIVE_KEY_REQUIRED:
+    TRADE_MODE = "PAPER"
+    logger.warning("LIVE_KEY missing or incorrect — forcing PAPER mode")
+
+
+def is_paper_mode() -> bool:
+    return TRADE_MODE != "LIVE"
+
+
+def get_trade_mode_banner() -> str:
+    if TRADE_MODE == "LIVE":
+        return "⚠️ LIVE TRADING MODE — REAL ORDERS ACTIVE ⚠️"
+    return "📄 PAPER MODE — no real orders, no real money"
+
+
+def switch_to_live(key: str) -> bool:
+    """CEO-only: switch to LIVE trading mode with verification key."""
+    if key != LIVE_KEY_REQUIRED:
+        return False
+    os.environ["TRADE_MODE"] = "LIVE"
+    os.environ["LIVE_KEY"] = key
+    global TRADE_MODE
+    TRADE_MODE = "LIVE"
+    logger.warning("TRADE MODE SWITCHED TO LIVE — REAL ORDERS ENABLED")
+    return True
+
+
+# ============================================================
+# Inter-Crew Learnings — PA → PM, TA → PM, CEO → all, etc.
+# ============================================================
+# In-memory session cache — findings from one crew are passed
+# to subsequent crew dispatches. Resets on restart (fresh each day).
+
+_intercrew_findings: Dict[str, List[str]] = {}
+
+# Who shares findings with whom
+LEARNING_PIPELINES = {
+    "pa": ["pm", "am", "ceo"],  # PA findings → PM, AM, CEO
+    "ta": ["pm", "am", "pa"],  # TA findings → PM, AM, PA
+    "om": ["pm", "am", "ceo"],  # OM findings → PM, AM, CEO
+    "am": ["pm", "ceo"],  # AM findings → PM, CEO
+    "pm": ["am", "ceo"],  # PM findings → AM, CEO
+    "ceo": ["pm", "am", "om"],  # CEO directives → all crews
+}
+
+# Regex patterns to parse actionable findings from crew output
+FINDING_PATTERNS = [
+    # Strategy adjustments: "reduce SL", "tighten trailing", "increase lots"
+    (
+        r"(reduce|increase|adjust|tighten|widen|narrow)\s+(?:the\s+)?(?:SL|stop.loss|trailing|TSL|position|lot|wing|margin|risk)",
+        "strategy_adjustment",
+    ),
+    # SL misconfiguration: "SL too wide", "stop loss way too tight"
+    (
+        r"(?:SL|stop[\s_-]*loss)\s+.*?(?:too|overly|way\s+too)\s+(wide|tight|loose|lax)",
+        "sl_misconfigured",
+    ),
+    # Compliance: "violation", "non-compliant", "breach"
+    (
+        r"(?:violation|non.compliant|breach|out[\s_-]of[\s_-]spec|does.not.match|mismatch)",
+        "compliance_violation",
+    ),
+    # PnL anomalies — only negative/unexpected, not "fine"
+    (
+        r"(?:P&L|pnl|profit|loss|drawdown|mtm).*?(?:[-]\s*[\u20B9]?\s*[\d,]+|exceeded|breach|violation|spike|crash)",
+        "pnl_anomaly",
+    ),
+    # Broker issues
+    (
+        r"(?:broker|Shoonya|Flattrade).*?(?:blocked|down|error|fail|offline|latency|reject)",
+        "broker_issue",
+    ),
+    # CEO directives: "tighten risk by 15%", "crew directive"
+    (
+        r"(?:directive|tighten\s+risk|reduce\s+risk|increase\s+risk|all\s+crews?\s+\w+)",
+        "ceo_directive",
+    ),
+    # Metric breaches / PRD floor violations
+    (
+        r"(?:below|at|approaching)\s+(?:floor|target|threshold).*?(?:of\s+)?(\d+)",
+        "metric_warning",
+    ),
+    # Percent adjustments anywhere
+    (
+        r"(?:reduce|increase|cut|raise|tighten)\s+.*?(?:by\s+)?(\d{1,3}\s*%)",
+        "pct_adjustment",
+    ),
+    # P&L data for AM: "session P&L: ₹1,200", "broker cost: ₹55", "MTM: -₹800"
+    (
+        r"(?:session|daily|today).*?(?:P&L|pnl|profit|mtm)\s*[:=]?\s*[\u20B9]?\s*([-]?\s*[\d,]+)",
+        "session_pnl",
+    ),
+    (
+        r"(?:broker|execution)\s*(?:cost|fee|charge)s?\s*[:=]?\s*[\u20B9]?\s*([\d,]+)",
+        "broker_cost",
+    ),
+    (
+        r"(?:margin|capital)\s*(?:utilization|used|available)\s*[:=]?\s*[\u20B9]?\s*([\d,]+)",
+        "margin_data",
+    ),
+]
+
+
+def ingest_learnings(crew_name: str, output: str):
+    """Extract actionable findings from crew output and store for other crews."""
+    findings = []
+    for pattern, label in FINDING_PATTERNS:
+        for match in re.finditer(pattern, output, re.IGNORECASE):
+            text = match.group(0).strip()[:200]
+            findings.append(f"[{label}] {text}")
+
+    if findings:
+        _intercrew_findings[crew_name] = findings
+        logger.info(f"Inter-crew: {crew_name} produced {len(findings)} learnings")
+        for target in LEARNING_PIPELINES.get(crew_name, []):
+            logger.info(f"  → will reach {target} on next dispatch")
+
+
+def get_learnings_for(crew_name: str) -> List[str]:
+    """Get learnings from other crews relevant to this crew."""
+    relevant = []
+    for source, targets in LEARNING_PIPELINES.items():
+        if crew_name in targets and source in _intercrew_findings:
+            findings = _intercrew_findings[source]
+            relevant.extend(f"  [from {source.upper()}]: {f}" for f in findings)
+    return relevant
+
+
+def inject_learnings(crew_name: str, task_description: str) -> str:
+    """Inject relevant inter-crew learnings into a task description."""
+    learnings = get_learnings_for(crew_name)
+    if not learnings:
+        return task_description
+
+    context = "\n\n## Cross-Crew Learnings (from other analysts)\n"
+    context += "These findings were discovered by other crews. Consider them.\n"
+    context += "If actionable, apply adjustments to your parameters.\n\n"
+    context += "\n".join(learnings[:6])  # max 6 to avoid bloat
+
+    return context + "\n\n" + task_description
+
 
 # Keyword-to-crew routing table
 ROUTING_TABLE = {
@@ -216,14 +370,24 @@ def dispatch_to_crew(crew_name: str, query: str = "") -> Dict:
         builder = getattr(mod, config["crew_builder"])
         crew = builder()
 
-        # If query provided, inject it into the first task description
+        # Inject inter-crew learnings + trade mode banner into the task
+        mode_banner = f"## {get_trade_mode_banner()}\n"
+        if is_paper_mode():
+            mode_banner += "Do NOT place real orders. All trades are simulated.\n"
+        mode_banner += "\n"
+
+        base_task = crew.tasks[0].description
         if query:
-            crew.tasks[
-                0
-            ].description = f"Chairman query: {query}\n\n{crew.tasks[0].description}"
+            base_task = f"Chairman query: {query}\n\n{base_task}"
+        crew.tasks[0].description = inject_learnings(crew_name, mode_banner + base_task)
 
         result = crew.kickoff()
-        return {"crew": crew_name, "result": str(result), "status": "ok", "error": None}
+        output_str = str(result)
+
+        # Extract learnings for other crews
+        ingest_learnings(crew_name, output_str)
+
+        return {"crew": crew_name, "result": output_str, "status": "ok", "error": None}
 
     except Exception as e:
         return {"crew": crew_name, "result": None, "status": "error", "error": str(e)}
@@ -301,10 +465,20 @@ def handle_query(query: str) -> Dict:
 RALPH_SCHEDULE = {
     "om": ["08:00", "08:55"],
     "pm": ["08:55", "16:00"],
-    "ta": ["09:18", "15:35"],
+    "ta": [
+        "09:18",
+        "09:50",
+        "10:30",
+        "11:00",
+        "12:00",
+        "13:00",
+        "14:00",
+        "15:00",
+        "15:35",
+    ],
     "am": ["08:55", "16:00", "fr:18:00"],
     "pa": ["16:00", "fr:18:00"],
-    "ceo": ["08:55", "16:00", "fr:18:00"],
+    "ceo": ["07:55", "16:00", "fr:18:00"],
 }
 
 _ralph_escalation_counters: Dict[str, int] = {}

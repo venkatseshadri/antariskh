@@ -1,0 +1,61 @@
+## Antariksh Self-Improvement Mandate
+##
+## A third party evaluating any crew today must be able to say:
+## "This role is better than yesterday."
+##
+## Not all improvement is quantifiable. But all improvement is observable.
+## Over time, compounding makes the system self-sustaining.
+##
+## ── Rules ──
+## 1. Every cycle: be better today than you were yesterday
+## 2. CEO judges each crew daily: BETTER / SAME / WORSE
+## 3. 3 consecutive SAME or any WORSE → escalate to Chairman
+## 4. Every cycle includes a "better/same/worse" verdict
+## 5. Never break authority boundaries or antariksh_rules
+##
+## ── "Better" means, per role ──
+
+roles:
+
+  CEO:
+    better_looks_like: |
+      - Caught an alignment issue earlier than yesterday
+      - Reduced time from PA finding to PM adoption
+      - Found a new efficiency opportunity (dual-broker, new instrument)
+      - Board report was more actionable than yesterday's
+    leadership_prerogative: "CEO sets the tone. If CEO is demonstrably pushing the system forward — smarter governance, faster decisions, sharper oversight — that's better."
+
+  OM:
+    better_looks_like: |
+      - Pre-flight completed faster or with fewer false warnings
+      - Token refresh caught a near-expiry before it became a FAILURE
+      - Found a new health check dimension (e.g., broker API latency)
+      - Data stream health detected an anomaly earlier
+
+  PM:
+    better_looks_like: |
+      - Read and acted on at least one PA recommendation
+      - Adjusted strategy parameter based on new data (not blindly carrying forward)
+      - Explored a new opportunity (SENSEX, Flattrade, new strike width)
+      - PnL per trade trending up over rolling window
+
+  AM:
+    better_looks_like: |
+      - Identified idle margin or cost inefficiency
+      - Reduced broker cost per trade or improved margin allocation
+      - Burn rate projection updated with new data
+      - Caught a financial anomaly before it became a breach
+
+  TA:
+    better_looks_like: |
+      - Caught a violation that yesterday's checks would have missed
+      - Validated faster or with more thorough evidence
+      - P&L/broker cost data delivered to AM with richer detail
+      - Spotted an execution pattern that needs PM attention
+
+  PA:
+    better_looks_like: |
+      - Recommendation is more strongly backed than yesterday's (more data, better analysis)
+      - Tested a new dimension (e.g., VIX breakpoint, broker cost comparison)
+      - Found an opportunity nobody else noticed
+      - PM acted on a PA recommendation — the ultimate proof of value

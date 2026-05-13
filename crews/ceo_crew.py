@@ -6,6 +6,7 @@ from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_loader import load_agent_config
 from tools.ceo_tools import (
     alignment_check as _ac,
     aggregate_crew_performance as _acp,
@@ -14,6 +15,9 @@ from tools.ceo_tools import (
     should_escalate as _se,
     check_authority as _ca,
     governance_veto as _gv,
+    scout_growth_opportunity as _sgo,
+    market_research as _mr,
+    explore_opportunity as _eo,
 )
 
 manager_llm = LLM(
@@ -66,18 +70,51 @@ def governance_veto(actor: str, action: str, detail: str) -> dict:
     return _gv(actor, action, detail)
 
 
+@tool
+def scout_growth_opportunity(
+    current_pnl_trajectory: float = 0,
+    current_margin_available: float = 0,
+    crew_skills: list = None,
+    days_clean_execution: int = 0,
+) -> dict:
+    """Scout new business opportunities: crypto, MCX, new strategies. Use this to plan growth."""
+    if crew_skills is None:
+        crew_skills = ["trading", "automation", "api_integration"]
+    return _sgo(
+        current_pnl_trajectory,
+        current_margin_available,
+        crew_skills,
+        days_clean_execution,
+    )
+
+
+@tool
+def market_research() -> dict:
+    """Scan external environment: VIX, market hours, upcoming events, expiry weeks."""
+    return _mr()
+
+
+@tool
+def explore_opportunity(domain: str = "") -> dict:
+    """Deep-dive a growth opportunity. Pass 'crypto', 'mcx', 'condor', 'sensex', 'banknifty', 'flattrade', or '' for all."""
+    return _eo(domain)
+
+
 guardian = Agent(
-    role="Alignment Guardian",
-    goal="Verify every crew decision against vision/goals. Enforce resource caps. Escalate violations.",
-    backstory="Vishnu, the preserver. You ensure Antariksh stays true to its purpose.",
-    tools=[alignment_check, enforce_resource_caps, should_escalate],
+    **load_agent_config("ceo", "guardian"),
+    tools=[
+        alignment_check,
+        enforce_resource_caps,
+        should_escalate,
+        scout_growth_opportunity,
+        market_research,
+        explore_opportunity,
+    ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 reporter = Agent(
-    role="Board Reporter",
-    goal="Aggregate crew performance. Generate board report. Track authority chain.",
-    backstory="The Board's window into operations. Your report is the single source of truth.",
+    **load_agent_config("ceo", "reporter"),
     tools=[
         aggregate_crew_performance,
         generate_board_report,
@@ -85,12 +122,19 @@ reporter = Agent(
         governance_veto,
     ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 t1 = Task(
-    description="Check alignment, enforce caps, check escalation.",
-    expected_output="Alignment results + caps + escalation flag",
+    description=(
+        "Answer the Chairman's query honestly. If asked about plans or opportunities, "
+        "explain your Phase 1/2/3 strategy. If asked about live trading, explain what "
+        "conditions must be met first (30 days clean execution, PnL trajectory). "
+        "Use real data from tools — alignment_check with actual decisions, "
+        "enforce_resource_caps with actual counts, should_escalate with actual history. "
+        "NEVER fabricate numbers. If you don't have real data, say so."
+    ),
+    expected_output="Honest assessment of company state + CEO plan + conditions for live trading",
     agent=guardian,
 )
 t2 = Task(
@@ -106,5 +150,5 @@ def build_ceo_crew() -> Crew:
         tasks=[t1, t2],
         process=Process.hierarchical,
         manager_llm=manager_llm,
-        verbose=False,
+        verbose=True,
     )

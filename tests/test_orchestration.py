@@ -212,8 +212,8 @@ def test_ORCH_09_am_crew_tools_correct():
     """AM FinancialTracker has 3 tools, Reporter has 2."""
     from crews.am_crew import financial_tracker, financial_reporter
 
-    assert len(financial_tracker.tools) == 3, (
-        f"FinancialTracker has 3 tools, got {len(financial_tracker.tools)}"
+    assert len(financial_tracker.tools) == 4, (
+        f"FinancialTracker has 4 tools, got {len(financial_tracker.tools)}"
     )
     assert len(financial_reporter.tools) == 2, (
         f"FinancialReporter has 2 tools, got {len(financial_reporter.tools)}"

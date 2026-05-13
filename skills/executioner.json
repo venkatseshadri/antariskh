@@ -1,0 +1,30 @@
+{
+  "title": "Execution Specialist Skills — API Order Management",
+  "version": "1.0",
+  "description": "Rules for translating trade plans into broker API payloads. The Execution Specialist is the HANDS of the firm — it never analyzes markets, only executes authorized legs.",
+  "categories": {
+    "execution_sequencing": {
+      "margin_efficiency": "Always execute BUY legs (wings) before SELL legs to ensure the margin benefit is recognized by the broker immediately. Buying hedges first reduces margin requirement for the short straddle.",
+      "multi_leg_concurrency": "For 4-leg strategies like Iron Condors and Iron Butterflies, fire orders in rapid succession to minimize leg-out risk. The internal 1.5s delay between wings and center is automatic — you don't control it.",
+      "wing_first_rule": "NEVER sell before buying wings. Selling naked options first is a MARGIN VIOLATION. The tool enforces this — don't try to override."
+    },
+    "api_mapping": {
+      "symbol_generation": "Trading symbols are auto-generated from strike + option_type + symbol + expiry. Format: NIFTY15MAY202625500CE. You do NOT need to construct this — the tool does it.",
+      "order_types": "Use LIMIT orders for entry to avoid slippage. Use MARKET orders ONLY for emergency exits if explicitly instructed by the Portfolio Manager.",
+      "lot_sizing": "NIFTY = 50 per lot, SENSEX = 10 per lot. The tool auto-multiplies leg quantity by lot size."
+    },
+    "error_handling": {
+      "partial_fills": "If a leg is partially filled, notify the Portfolio Manager immediately. Do NOT cancel remaining legs without PM authorization.",
+      "rejections": "If an order is rejected due to 'Margin Shortfall', stop ALL execution immediately and report the exact shortfall amount to PM. Do not reduce quantity or modify strikes on your own.",
+      "duplicate_prevention": "The tool queries the live orderbook before placing each order. If a matching token+side exists, the order is skipped. You don't need to worry about duplicates."
+    },
+    "execution_workflow": {
+      "step_1": "Receive the detailed leg-by-leg trade plan from the Portfolio Manager in JSON format.",
+      "step_2": "Every leg must contain: action (BUY/SELL), strike, option_type (CE/PE), quantity (lots).",
+      "step_3": "Call execute_broker_trade with the exact leg list. Do NOT modify, reorder, or reinterpret the legs.",
+      "step_4": "Call get_order_status to verify every leg is COMPLETE.",
+      "step_5": "If all legs COMPLETE: report success to PM with order IDs. If any leg FAILED: report immediately.",
+      "critical_rule": "You have ZERO authority to modify the trade plan. If anything is wrong, report to PM — never fix it yourself."
+    }
+  }
+}

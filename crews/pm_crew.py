@@ -14,10 +14,13 @@ from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_loader import load_agent_config
 from tools.pm_tools import (
     select_strategy as _select_strategy,
     calculate_strikes as _calculate_strikes,
     build_strategy_spec as _build_strategy_spec,
+    analyze_wing_margins as _analyze_wing_margins,
+    recommend_optimal_wing as _recommend_optimal_wing,
     generate_strategy_summary as _generate_strategy_summary,
 )
 
@@ -56,6 +59,29 @@ def build_strategy_spec(strategy_type: str, market_state: dict) -> dict:
 
 
 @tool
+def analyze_wing_margins(
+    nifty_spot: float, lots: int = 1, expiry: str = None, dry_run: bool = False
+) -> list:
+    """Query broker SPAN calculator for all wing widths 50→500. Returns comparison."""
+    return _analyze_wing_margins(nifty_spot, lots, expiry, dry_run=dry_run)
+
+
+@tool
+def recommend_optimal_wing(
+    nifty_spot: float,
+    vix: float,
+    free_cash: float,
+    lots: int = 1,
+    expiry: str = None,
+    dry_run: bool = False,
+) -> dict:
+    """Recommend optimal wing width balancing margin, breach risk, and free cash."""
+    return _recommend_optimal_wing(
+        nifty_spot, vix, free_cash, lots, expiry, dry_run=dry_run
+    )
+
+
+@tool
 def generate_strategy_summary(
     specs: list, win_rate: float, profit_factor: float, pa_actions_taken: int = 0
 ) -> dict:
@@ -68,40 +94,23 @@ def generate_strategy_summary(
 # ============================================================
 
 strategist = Agent(
-    role="Lead Portfolio Strategist",
-    goal=(
-        "Analyze market conditions and determine the optimal strategy. "
-        "Select Iron Butterfly in normal conditions, Credit Spread in "
-        "high VIX/bearish markets. Calculate strikes, respect resource "
-        "limits (max 2 lots, 8 indicators), and publish the strategy spec "
-        "for Trading Analyst validation."
-    ),
-    backstory=(
-        "You are the strategy brain of Antariksh. Every morning at 08:55 IST "
-        "you evaluate VIX, indicator alignment, sentiment, and events to "
-        "pick the right weapon for the day's market. Your spec becomes the "
-        "blueprint TA validates against. You don't execute — you define."
-    ),
-    tools=[select_strategy, calculate_strikes, build_strategy_spec],
+    **load_agent_config("pm", "strategist"),
+    tools=[
+        select_strategy,
+        calculate_strikes,
+        build_strategy_spec,
+        analyze_wing_margins,
+        recommend_optimal_wing,
+    ],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 strategy_reporter = Agent(
-    role="Strategy Performance Reporter",
-    goal=(
-        "Generate the CEO strategy summary — win rate, profit factor, "
-        "active strategy specs, and PA recommendation adoption rate."
-    ),
-    backstory=(
-        "The Board sees your report. You distill PM's performance into "
-        "a clear verdict: green (above target), yellow (near floor), or "
-        "red (below floor). You track how many PA recommendations were "
-        "acted on. Your report is the single source of truth for strategy health."
-    ),
+    **load_agent_config("pm", "strategy_reporter"),
     tools=[generate_strategy_summary],
     allow_delegation=False,
-    verbose=False,
+    verbose=True,
 )
 
 
@@ -111,14 +120,16 @@ strategy_reporter = Agent(
 
 strategy_task = Task(
     description=(
-        "Analyze market conditions and produce a strategy spec:\n"
+        "Analyze market conditions and produce an optimized strategy spec:\n"
         "1. Select strategy type (IRON_FLY or CREDIT_SPREAD)\n"
-        "2. Calculate strikes on the 50-point grid\n"
-        "3. Build complete spec with strikes, wings, lots, SL, TSL, indicators\n"
-        "4. Respect resource limits (max 2 lots, 8 indicators)\n\n"
-        "Output the complete strategy spec dict."
+        "2. Call recommend_optimal_wing() with spot, VIX, and AM's free_cash\n"
+        "   to compare margin across wing widths [50, 100, ..., 500]\n"
+        "3. Calculate strikes using the recommended wing width\n"
+        "4. Build complete spec with strikes, wings, lots, SL, TSL, indicators\n"
+        "5. Respect resource limits (max 2 lots, 8 indicators)\n\n"
+        "Output the complete strategy spec dict with margin optimization rationale."
     ),
-    expected_output="Strategy spec dict with type, strikes, wings, lots, sl, tsl, indicators",
+    expected_output="Strategy spec dict with type, strikes, wings, lots, sl, tsl, indicators, margin_analysis",
     agent=strategist,
 )
 
@@ -145,7 +156,7 @@ def build_pm_crew() -> Crew:
         tasks=[strategy_task, report_task],
         process=Process.hierarchical,
         manager_llm=manager_llm,
-        verbose=False,
+        verbose=True,
     )
 
 

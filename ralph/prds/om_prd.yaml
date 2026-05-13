@@ -1,10 +1,20 @@
 role: "Operations Manager"
-mission: "Ensure trading infrastructure is available, healthy, and tested before market open"
+mission: "Ensure trading infrastructure is available, healthy, and tested before market open. Continuously improve ops excellence — every cycle, identify one infrastructure risk that was previously unknown and propose a mitigation. On weekends, audit the system for latent issues: disk trends, log bloat, dependency drift, backup freshness."
 reports_to: "CEO"
 frequency:
   pre_market: "08:00 IST"  # Full pre-flight before 9:00
   pre_session: "08:55 IST"
   continuous: "market hours (9:15-15:30)"
+  weekend: "0 10 * * 6,0"  # Sat & Sun 10:00 AM — infra audit & self-improvement
+
+self_improvement:
+  weekend_reflection: |
+    Audit the infrastructure. Ask:
+    1. What nearly broke this week that didn't?
+    2. Are there disk/log/memory trends that need attention?
+    3. Is the backup strategy still adequate?
+    4. What one ops improvement would make Monday smoother?
+    Document findings and action items.
 
 metrics:
   - name: "pre_flight_pass"

@@ -1,6 +1,7 @@
-# SESSION CONTEXT — Paste into new session
+# SESSION CONTEXT — Updated 2026-05-13 09:16
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
+Branch: `master` | Live data: VIX=18.64, NIFTY=23625.1, Regime=SIDEWAYS
 
 ## Locations
 ```
@@ -8,29 +9,40 @@ Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
 /home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB capture)
 /home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/  ← Shoonya API
 ```
-GitHub: `github.com/venkatseshadri/antariskh` (master, pushed)
+GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-`trading_desk.py` (1702 lines) — 6-agent desk with state machine, ListenTriggers (OCO + TSL), Leg Shifter loop. Live DuckDB injection works. `tests/test_integration_end_to_end.py` → 39/39 PASSED.
+Created auto-update script + CLAUDE.md session rules
+
+## Priority Queue
+Phase A: Wire broker API into engine_execute_basket
 
 ## What's Where (read on demand)
-| File | Contents |
-|------|----------|
-| `trading_desk.py` | Full desk: agents, engine functions, ListenTriggers, shifter, DESkState, CLI |
-| `tests/test_integration_end_to_end.py` | 39 E2E checks (Scout→RiskAgent) |
-| `ARCHITECTURE.md` | All 10 crews, 60+ tools, shared data, minute-by-minute flow |
-| `GAPS_AND_ROADMAP.md` | 11 mock gaps, 6 phases A→F, test coverage |
-| `TRADING_DESK_VALIDATION.md` | Flow diagrams, trigger tables, verification commands |
+  `trading_desk.py` (1702 lines)
+  `tests/test_integration_end_to_end.py` (263 lines)
+  `ARCHITECTURE.md` (416 lines)
+  `GAPS_AND_ROADMAP.md` (169 lines)
+  `TRADING_DESK_VALIDATION.md` (443 lines)
+  `crews/ta_crew.py` (424 lines)
+  `crews/pm_crew.py` (167 lines)
+  `tools/risk_tools.py` (606 lines)
+  `tools/execution_tools.py` (621 lines)
+  `tools/contract_tools.py` (533 lines)
 
 ## Verify State
 ```bash
-cd /home/trading_ceo/antariksh && git log --oneline -3
-python3 tests/test_integration_end_to_end.py   # 39/39
+cd /home/trading_ceo/antariksh
+git log --oneline -3
+python3 tests/test_integration_end_to_end.py   # integration suite
 python3 trading_desk.py --test-triggers        # 4 trigger tests
 python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_desk import engine_scout_regime; r=engine_scout_regime(); print(f'Live: VIX={r.vix} Regime={r.regime}')"
 ```
 
-## Priority Queue
-1. Phase A: Wire broker API (order placement, fill prices, WebSocket callbacks)
-2. Phase B: Live theta + fund balance from DuckDB/broker
-3. Phase C: LLM-driven crew execution (needs `DEEPSEEK_API_KEY`)
+## Recent Commits
+```
+919dafd docs: slim CONTEXT to lightweight index
+08548ef docs: add project file paths for Antariksh + Varaha + Shoonya
+854618c docs: session context for fast resume
+187aa31 docs: master architecture + gaps/roadmap for Antariksh trading desk
+f9c0abf feat(trading_desk): unified multi-agent options trading system
+```

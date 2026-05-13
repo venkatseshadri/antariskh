@@ -1,9 +1,21 @@
 # ANTARIKSH SESSION CONTEXT — Paste into new Claude session
 
-Project: /home/trading_ceo/antariksh
+## PROJECT LOCATIONS
+```
+/home/trading_ceo/antariksh/              ← Antariksh (CrewAI trading desk)
+/home/trading_ceo/python-trader/varaha/   ← Varaha (data capture, DuckDB)
+/home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/ ← Shoonya broker API
+```
+
+Project: Antariksh (/home/trading_ceo/antariksh)
 GitHub: github.com/venkatseshadri/antariskh (master, fully pushed)
 Type: CrewAI role-based options trading system (NIFTY Iron Butterfly)
 Broker: Shoonya (primary) + Flattrade (secondary)
+
+Dependency: Varaha (/home/trading_ceo/python-trader/varaha/)
+  data_capture_v3_duckdb.py — 1-min REST poll loop → varaha_data.duckdb
+  run_data_capture.sh / watchdog_capture.sh — cron-managed
+  varaha_auth.py — Shoonya + Flattrade authentication (VarahaConnect)
 
 ## LAST SESSION BUILT
 trading_desk.py (1702 lines) — full multi-agent options trading desk:

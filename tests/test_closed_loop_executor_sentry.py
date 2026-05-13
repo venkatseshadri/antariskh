@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from crewai import Agent, Task, Crew
 from crewai.llm import LLM
 from tools.execution_tools import ExecuteTradeTool, GetOrderStatusTool
-from tools.risk_tools import MonitorPnLGreeksTool, TSLEngineTool, ExitSignalHandlerTool
+from tools.risk_tools import MonitorPnLGreeksTool, TSLEngineTool, TradeCommandHandlerTool
 from crews.ta_crew import load_skill_file
 
 ds_llm = LLM(
@@ -56,7 +56,7 @@ sentry = Agent(
     tools=[
         MonitorPnLGreeksTool(),
         TSLEngineTool(),
-        ExitSignalHandlerTool(),
+        TradeCommandHandlerTool(),
         load_skill_file,
     ],
     llm=ds_llm,

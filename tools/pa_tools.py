@@ -312,6 +312,91 @@ def analyze_entry_window(trades: List[Dict]) -> Dict:
     }
 
 
+def analyze_strategy_selection(
+    trades: List[Dict],
+    market_regime: str = "UNKNOWN",
+    current_vix: float = 18.0,
+    trend_strength: float = 0.5,
+) -> Dict:
+    """Recommend strategy (Iron Fly vs Credit Spread) based on regime + historical performance.
+
+    Iron Fly: best in sideways/low-VIX markets. Credit Spread: better in trending/high-VIX.
+
+    Returns: {recommended_strategy, score, rationale, evidence}
+    """
+    if not trades:
+        return {
+            "recommended_strategy": "IRON_FLY",  # default conservative
+            "confidence": 0.5,
+            "evidence": "No trade history",
+        }
+
+    # Categorize past trades by strategy type (assume Iron Fly by default if not specified)
+    iron_fly_trades = [t for t in trades if t.get("strategy", "IRON_FLY") == "IRON_FLY"]
+    credit_spread_trades = [t for t in trades if t.get("strategy") == "CREDIT_SPREAD"]
+
+    # Calculate win rates by strategy
+    if iron_fly_trades:
+        if_win_rate = sum(1 for t in iron_fly_trades if t.get("pnl", 0) > 0) / len(
+            iron_fly_trades
+        )
+        if_avg_pnl = sum(t.get("pnl", 0) for t in iron_fly_trades) / len(iron_fly_trades)
+    else:
+        if_win_rate, if_avg_pnl = 0.0, 0.0
+
+    if credit_spread_trades:
+        cs_win_rate = sum(1 for t in credit_spread_trades if t.get("pnl", 0) > 0) / len(
+            credit_spread_trades
+        )
+        cs_avg_pnl = sum(t.get("pnl", 0) for t in credit_spread_trades) / len(
+            credit_spread_trades
+        )
+    else:
+        cs_win_rate, cs_avg_pnl = 0.0, 0.0
+
+    # Score based on regime + performance
+    if_score = 0.0
+    cs_score = 0.0
+
+    # Regime signal
+    if market_regime == "SIDEWAYS" or (current_vix >= 15 and current_vix <= 22):
+        if_score += 60  # Iron Fly thrives in low-volatility, sideways
+    elif market_regime == "TRENDING" or current_vix > 25:
+        cs_score += 60  # Credit Spread better in trending, high-vol
+
+    # Historical performance
+    if if_win_rate > cs_win_rate:
+        if_score += 20
+    elif cs_win_rate > if_win_rate:
+        cs_score += 20
+
+    if if_avg_pnl > cs_avg_pnl:
+        if_score += 20
+    elif cs_avg_pnl > if_avg_pnl:
+        cs_score += 20
+
+    recommended = "IRON_FLY" if if_score >= cs_score else "CREDIT_SPREAD"
+    confidence = abs(if_score - cs_score) / max(100, if_score + cs_score)
+    confidence = min(1.0, max(0.0, confidence))
+
+    return {
+        "recommended_strategy": recommended,
+        "confidence": round(confidence, 3),
+        "iron_fly_score": round(if_score, 1),
+        "credit_spread_score": round(cs_score, 1),
+        "iron_fly_wr": round(if_win_rate, 3) if iron_fly_trades else None,
+        "credit_spread_wr": round(cs_win_rate, 3) if credit_spread_trades else None,
+        "iron_fly_avg_pnl": round(if_avg_pnl, 1),
+        "credit_spread_avg_pnl": round(cs_avg_pnl, 1),
+        "evidence": (
+            f"Market regime: {market_regime} (VIX={current_vix}). "
+            f"{recommended} recommended ({confidence:.0%} confidence). "
+            f"IF: {if_win_rate:.0%} WR, ₹{if_avg_pnl:+,.0f} avg. "
+            f"CS: {cs_win_rate:.0%} WR, ₹{cs_avg_pnl:+,.0f} avg."
+        ),
+    }
+
+
 def analyze_vix_threshold(trades: List[Dict]) -> Dict:
     """Find VIX breakpoint where Iron Fly stops working."""
     if not trades:
@@ -379,12 +464,16 @@ def generate_pa_recommendations(
     trades: List[Dict],
     total_margin_available: float = 0,
     total_margin_used: float = 0,
+    market_regime: str = "UNKNOWN",
+    current_vix: float = 18.0,
 ) -> Dict:
     """Run ALL PA analyses and return ranked recommendations for PM.
 
     This is the ONE function the PA crew task calls.
+    Includes: strategy selection, entry window, SL optimization, lot scaling, VIX ceiling.
     """
     recommendations = []
+    strategy_analysis = analyze_strategy_selection(trades, market_regime, current_vix)
     sl_analysis = analyze_sl_optimization(trades)
     window_analysis = analyze_entry_window(trades)
     vix_analysis = analyze_vix_threshold(trades)
@@ -392,30 +481,38 @@ def generate_pa_recommendations(
         total_margin_available, total_margin_used, sum(t.get("pnl", 0) for t in trades)
     )
 
-    # Rank recommendations by impact
+    # Rank recommendations by impact (strategy first, then entry, then risk/sizing)
+    if strategy_analysis.get("confidence", 0) > 0.5:
+        recommendations.append(
+            f"STRATEGY: Use {strategy_analysis['recommended_strategy']} "
+            f"({strategy_analysis['confidence']:.0%} confidence). "
+            f"IF WR: {strategy_analysis.get('iron_fly_wr', '?')}, "
+            f"CS WR: {strategy_analysis.get('credit_spread_wr', '?')}"
+        )
+    if window_analysis.get("improvement", 0) > 0.02:
+        recommendations.append(
+            f"ENTRY: Shift from current to {window_analysis['best_window']} "
+            f"(+{window_analysis['improvement']:+.1%} win rate)"
+        )
     if sl_analysis.get("improvement", 0) > 0:
         recommendations.append(
             f"SL: Change from ₹{sl_analysis['current_sl']} to ₹{sl_analysis['recommended_sl']} "
             f"(+₹{sl_analysis['improvement']:+,} PnL)"
         )
-    if window_analysis.get("improvement", 0) > 0.02:
-        recommendations.append(
-            f"Entry window: Shift from current to {window_analysis['best_window']} "
-            f"(+{window_analysis['improvement']:+.1%} win rate)"
-        )
     if vix_analysis.get("vix_ceiling", 20) < 20:
         recommendations.append(
-            f"VIX ceiling: Lower from 20 to {vix_analysis['vix_ceiling']} "
+            f"VIX: Lower ceiling from 20 to {vix_analysis['vix_ceiling']} "
             f"(avoid low-probability trades)"
         )
     if lot_analysis.get("recommended_lots", 1) > 1:
         recommendations.append(
-            f"Lot scaling: Increase from 1 to {lot_analysis['recommended_lots']} lots "
+            f"SCALING: Increase from 1 to {lot_analysis['recommended_lots']} lots "
             f"(₹{lot_analysis['free_cash']:,.0f} free cash)"
         )
 
     return {
         "recommendations": recommendations,
+        "strategy_analysis": strategy_analysis,
         "sl_analysis": sl_analysis,
         "window_analysis": window_analysis,
         "vix_analysis": vix_analysis,

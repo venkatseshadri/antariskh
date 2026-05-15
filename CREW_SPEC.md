@@ -1,9 +1,8 @@
-# Antariksh Phase 2 — CrewAI Agent Role Specs & Task Flow
+# Antariksh Phase 2 — CrewAI Agent Role Specs & Task Flow — SUPERSEDED
 
-**Date:** 2026-05-08  
-**Framework:** CrewAI 1.14.4 (Hierarchical Process)  
-**LLM:** DeepSeek (`deepseek-chat`) for all agents  
-**Manager:** Orchestrator coordinates task sequencing  
+> **Status:** ARCHIVED — superseded by 10-crew system  
+> **Date:** 2026-05-08 (original) / 2026-05-15 (archived)  
+> **Reason:** This 7-agent spec (Orchestrator, Scanner, Strategist, Executor, Sentinel, Risk Guard, Auditor) was the Phase 2 design. The project has since evolved into 10 specialized crews (OM, TA, PM, PA, AM, CEO, CTO, Dev, QA, TelegramReporter) with Chairman orchestrator dispatch, Ralph Loop PRD verification, and self-improvement mandate. See `ARCHITECTURE.md` for current state.
 
 ---
 

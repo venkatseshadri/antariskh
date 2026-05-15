@@ -26,23 +26,33 @@ sys.path.insert(0, str(PROJECT_ROOT / "antariksh"))
 
 from crew_structure import (
     _build_crew,
-    orchestrator, run_session_task,
-    scan_market, generate_trade_plan, check_risk,
-    execute_trade, monitor_positions, log_audit,
-    market_state, run_full_session, run_risk_halt_test,
-    RiskGuardEngine, AuditorEngine,
+    orchestrator,
+    run_session_task,
+    scan_market,
+    generate_trade_plan,
+    check_risk,
+    execute_trade,
+    monitor_positions,
+    log_audit,
+    market_state,
+    run_full_session,
+    run_risk_halt_test,
+    run_trial_session,
+    RiskGuardEngine,
+    AuditorEngine,
 )
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | TEST | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("crew_test")
 
 
-def test_1_mock_crew_dryrun(vix: float = 18.5, nifty: float = 24500.0,
-                            time_str: str = "10:30") -> Dict:
+def test_1_mock_crew_dryrun(
+    vix: float = 18.5, nifty: float = 24500.0, time_str: str = "10:30"
+) -> Dict:
     """
     Test 1: Mock Crew Dry-Run
     Set VIX=18.5 (below 20) → gate should PASS → trade plan generated → audit logged.
@@ -58,8 +68,14 @@ def test_1_mock_crew_dryrun(vix: float = 18.5, nifty: float = 24500.0,
     os.environ["ANTARIKSH_MOCK_TIME"] = time_str
 
     # Verify agent and tools are defined
-    tools = [scan_market, generate_trade_plan, check_risk,
-             execute_trade, monitor_positions, log_audit]
+    tools = [
+        scan_market,
+        generate_trade_plan,
+        check_risk,
+        execute_trade,
+        monitor_positions,
+        log_audit,
+    ]
     logger.info(f"Orchestrator agent: {orchestrator.role}")
     logger.info(f"Tools attached: {len(tools)}")
 
@@ -67,8 +83,9 @@ def test_1_mock_crew_dryrun(vix: float = 18.5, nifty: float = 24500.0,
     logger.info(f"Session task defined: {run_session_task is not None}")
 
     # Run entry session
-    result = run_full_session(mock_mode=True, mock_vix=vix,
-                             mock_nifty=nifty, mock_time=time_str)
+    result = run_full_session(
+        mock_mode=True, mock_vix=vix, mock_nifty=nifty, mock_time=time_str
+    )
 
     gate_pass = result.get("entry", {}).get("gate_pass", False)
     session_pnl = result.get("exit", {}).get("session_pnl", 0.0)
@@ -123,8 +140,9 @@ def test_2_task_dependencies() -> Dict:
     logger.info(f"Test 2 checks: {checks}")
 
     # Run a quick entry-only test
-    result = run_full_session(mock_mode=True, mock_vix=18.5, mock_nifty=24500,
-                             mock_time="10:30")
+    result = run_full_session(
+        mock_mode=True, mock_vix=18.5, mock_nifty=24500, mock_time="10:30"
+    )
 
     return {"checks": checks, "result": result}
 
@@ -163,7 +181,9 @@ def test_3_risk_guard_halt() -> Dict:
 
     logger.info(f"Daily SL check triggered: {daily_sl_check}")
     logger.info(f"Portfolio cumulative check triggered: {cumulative_check}")
-    logger.info(f"Hard rule summary: daily={daily_sl_check}, cumulative={cumulative_check}")
+    logger.info(
+        f"Hard rule summary: daily={daily_sl_check}, cumulative={cumulative_check}"
+    )
 
     logger.info(f"Test 3 checks: {checks}")
     return {
@@ -188,8 +208,9 @@ def test_4_gate_skip_high_vix() -> Dict:
     os.environ["ANTARIKSH_MOCK_NIFTY"] = "24500"
     os.environ["ANTARIKSH_MOCK_TIME"] = "10:30"
 
-    result = run_full_session(mock_mode=True, mock_vix=22.0, mock_nifty=24500,
-                             mock_time="10:30")
+    result = run_full_session(
+        mock_mode=True, mock_vix=22.0, mock_nifty=24500, mock_time="10:30"
+    )
 
     gate_pass = result.get("entry", {}).get("gate_pass", False)
     trade_plan = result.get("entry", {}).get("trade_plan")
@@ -206,6 +227,42 @@ def test_4_gate_skip_high_vix() -> Dict:
     return {"gate_pass": gate_pass, "checks": checks}
 
 
+def test_5_trial_run() -> Dict:
+    """
+    Test 5: Trial Run v1 — Live DuckDB data + paper trading.
+    No mock env vars. Reads real VIX, NIFTY, regime from DuckDB.
+    """
+    logger.info("=" * 70)
+    logger.info("TEST 5: Trial Run v1 (Live DuckDB + paper trading)")
+    logger.info("=" * 70)
+
+    os.environ.pop("ANTARIKSH_MOCK_MODE", None)
+
+    result = run_trial_session()
+
+    gate_pass = result.get("entry", {}).get("gate_pass", False)
+    trade_plan = result.get("entry", {}).get("trade_plan")
+    session_pnl = result.get("exit", {}).get("session_pnl", 0.0)
+
+    vix = market_state.get("vix", 0)
+    nifty = market_state.get("nifty_spot", 0)
+    regime = market_state.get("regime", "UNKNOWN")
+
+    logger.info(f"Live data: VIX={vix}, NIFTY={nifty}, Regime={regime}")
+    logger.info(f"Gate result: {'PASS' if gate_pass else 'SKIP'}")
+    logger.info(f"Trade plan: {'Generated' if trade_plan else 'None'}")
+    logger.info(f"Session P&L: ₹{session_pnl}")
+
+    return {
+        "vix": vix,
+        "nifty": nifty,
+        "regime": regime,
+        "gate_pass": gate_pass,
+        "has_trade_plan": trade_plan is not None,
+        "session_pnl": session_pnl,
+    }
+
+
 def print_results_summary(results: Dict):
     """Print formatted test results summary."""
     print("\n" + "=" * 70)
@@ -214,6 +271,16 @@ def print_results_summary(results: Dict):
 
     for test_name, result in results.items():
         checks = result.get("checks", {})
+        if not checks and "vix" in result:
+            # Trial run — operational, not test
+            print(f"\n{test_name}: ✅ COMPLETE")
+            print(
+                f"  VIX={result['vix']} NIFTY={result['nifty']} Regime={result['regime']}"
+            )
+            print(
+                f"  gate_pass={result['gate_pass']} plan={result['has_trade_plan']} P&L=₹{result['session_pnl']}"
+            )
+            continue
         all_pass = all(checks.values()) if checks else False
         status = "✅ PASS" if all_pass else "❌ FAIL"
         print(f"\n{test_name}: {status}")
@@ -232,9 +299,19 @@ if __name__ == "__main__":
     parser.add_argument("--nifty", type=float, default=24500.0, help="Mock NIFTY value")
     parser.add_argument("--time", type=str, default="10:30", help="Mock time (HH:MM)")
     parser.add_argument("--trace", action="store_true", help="Enable verbose tracing")
-    parser.add_argument("--capital-floor-breach", action="store_true",
-                        help="Test Risk Guard halt on capital breach")
-    parser.add_argument("--high-vix", action="store_true", help="Test gate SKIP on VIX > 20")
+    parser.add_argument(
+        "--capital-floor-breach",
+        action="store_true",
+        help="Test Risk Guard halt on capital breach",
+    )
+    parser.add_argument(
+        "--high-vix", action="store_true", help="Test gate SKIP on VIX > 20"
+    )
+    parser.add_argument(
+        "--trial",
+        action="store_true",
+        help="Trial run v1: live DuckDB data, paper trading",
+    )
     parser.add_argument("--all", action="store_true", help="Run all tests")
     args = parser.parse_args()
 
@@ -247,15 +324,21 @@ if __name__ == "__main__":
         results["risk_guard_halt"] = test_3_risk_guard_halt()
     elif args.high_vix:
         results["gate_skip_high_vix"] = test_4_gate_skip_high_vix()
+    elif args.trial:
+        results["trial_run"] = test_5_trial_run()
     elif args.trace:
         results["task_dependencies"] = test_2_task_dependencies()
     elif args.all:
-        results["mock_dryrun"] = test_1_mock_crew_dryrun(args.vix, args.nifty, args.time)
+        results["mock_dryrun"] = test_1_mock_crew_dryrun(
+            args.vix, args.nifty, args.time
+        )
         results["task_dependencies"] = test_2_task_dependencies()
         results["risk_guard_halt"] = test_3_risk_guard_halt()
         results["gate_skip_high_vix"] = test_4_gate_skip_high_vix()
     else:
         # Default: mock dry-run
-        results["mock_dryrun"] = test_1_mock_crew_dryrun(args.vix, args.nifty, args.time)
+        results["mock_dryrun"] = test_1_mock_crew_dryrun(
+            args.vix, args.nifty, args.time
+        )
 
     print_results_summary(results)

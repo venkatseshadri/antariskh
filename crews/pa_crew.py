@@ -17,6 +17,7 @@ from tools.pa_tools import (
     generate_post_mortem_report as _generate_post_mortem_report,
     analyze_sl_optimization as _analyze_sl_optimization,
     analyze_entry_window as _analyze_entry_window,
+    analyze_strategy_selection as _analyze_strategy_selection,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
 
@@ -81,6 +82,14 @@ def analyze_entry_window(trades: list) -> dict:
 
 
 @tool
+def analyze_strategy_selection(
+    trades: list, market_regime: str = "UNKNOWN", current_vix: float = 18.0
+) -> dict:
+    """Recommend strategy (Iron Fly vs Credit Spread) based on market regime + performance."""
+    return _analyze_strategy_selection(trades, market_regime, current_vix)
+
+
+@tool
 def generate_pa_recommendations(
     trades: list,
     total_margin_available: float = 0,
@@ -105,6 +114,7 @@ analyst = Agent(
         generate_post_mortem_report,
         analyze_sl_optimization,
         analyze_entry_window,
+        analyze_strategy_selection,
     ],
     allow_delegation=False,
     verbose=True,

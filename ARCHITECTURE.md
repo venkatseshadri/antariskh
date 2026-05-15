@@ -1,6 +1,23 @@
 # Antariksh — Master System Architecture
 
-**Commit:** f9c0abf | **Date:** 2026-05-12
+**Last Updated:** 2026-05-15 | **Status:** Production-ready dry-run
+
+---
+
+## 0. SYSTEM OVERVIEW
+
+Antariksh is a multi-layer autonomous options trading system for NIFTY Iron Butterfly. It has **4 layers**:
+
+| Layer | Name | Purpose |
+|-------|------|---------|
+| **L0** | Config & Constitution | `antariksh_rules.yaml`, `constitution.yaml`, `self_improve.yaml`, `agents.json` — immutable rules |
+| **L1** | CrewAI Crews (10) | Tactical execution — market scanning, strategy, trading, P&L, post-mortem |
+| **L2** | Chairman Orchestrator | Query routing, cross-crew learning injection, crew dispatch |
+| **L3** | Ralph Loop (meta) | PRD-driven verify-retry loop, scheduled oversight, self-improvement escalations |
+
+**Workspace:** `PAUL` — Plan → Apply → Unify → Loop (no longer GSD `.planning/`)
+
+**Trade Mode:** Dual-gate safety — `TRADE_MODE=LIVE` + `LIVE_KEY` secret required for real orders. Defaults to `PAPER` (simulated). Dry-run via `ANTARIKSH_MOCK_MODE=1`.
 
 ---
 
@@ -389,7 +406,259 @@ Shoonya (primary)                    Flattrade (secondary)
 
 ---
 
-## 7. QUICK START
+## 7. CHAIRMAN ORCHESTRATOR — Central Dispatch Hub
+
+**File:** `tools/orchestrator.py` (705 lines)
+
+The Chairman Orchestrator is the central dispatch hub connecting all 10 crews.
+
+### 7.1 Trade Mode Gate
+
+```python
+TRADE_MODE = env("TRADE_MODE", "PAPER")  # Dual-gate: both must match
+LIVE_KEY   = env("LIVE_KEY", "")           # Secret "antariskh-1ive-2026"
+```
+
+Dual-layer safety: both `TRADE_MODE=LIVE` AND correct `LIVE_KEY` required. Default `PAPER`.
+
+### 7.2 Query Routing
+
+Natural-language Chairman queries are keyword-matched against 6 crew domains:
+
+| Crew Key | Keyword Examples | Builder |
+|----------|-----------------|---------|
+| `am` | "pnl", "margin", "capital", "balance" | `build_am_crew()` |
+| `pm` | "strategy", "strike", "iron fly", "lot" | `build_pm_crew()` |
+| `ta` | "market", "vix", "adx", "greeks", "regime" | `build_ta_crew()` |
+| `om` | "health", "token", "pre-flight", "cron" | `build_om_crew()` |
+| `pa` | "review", "counterfactual", "lesson" | `build_pa_crew()` |
+| `ceo` | "governance", "escalate", "board" | `build_ceo_crew()` |
+
+Unknown queries fallback to CEO.
+
+### 7.3 Inter-Crew Learnings Pipeline
+
+After every crew execution, findings are extracted via 12 regex patterns and routed to downstream crews via `LEARNING_PIPELINES`:
+
+```
+PA findings → PM, AM, CEO
+TA findings → PM, AM, PA
+OM findings → PM, AM, CEO
+AM findings → PM, CEO
+PM findings → AM, CEO
+CEO directives → PM, AM, OM
+```
+
+Injected into the next crew's task description (max 6 findings to avoid context bloat).
+
+---
+
+## 8. RALPH LOOP — PRD-Driven Verification Meta-Layer
+
+**File:** `ralph/ralph_loop.py` (893 lines) | **Daemon:** `ralph/ralph_scheduler_daemon.py`
+
+The Ralph Loop is Antariksh's goal-oriented oversight layer. Invented by Geoffrey Huntley at Vercel Labs.
+
+### 8.1 Core Pattern
+
+```
+while not done:
+    result = agent.run(task)
+    done, feedback = verify(result)
+    if not done:
+        task += feedback
+```
+
+### 8.2 CrewAI Ralph Loop
+
+Each crew's output is evaluated against its **PRD** (Product Requirements Document) — a YAML file defining measurable metrics with targets and floors:
+
+| PRD File | Crew | Metrics |
+|----------|------|---------|
+| `ralph/prds/om_prd.yaml` | Operations | Uptime, pre-flight pass rate, token freshness, broker cost |
+| `ralph/prds/pm_prd.yaml` | Portfolio | Win rate, profit factor, strategy adoption rate |
+| `ralph/prds/ta_prd.yaml` | Trading Analyst | Compliance %, validation accuracy, execution patterns |
+| `ralph/prds/am_prd.yaml` | Asset Manager | P&L tracking, margin utilization, cost efficiency |
+| `ralph/prds/pa_prd.yaml` | Performance Analyst | Recommendation quality, adoption rate |
+| `ralph/prds/ceo_prd.yaml` | CEO | Board report timeliness, crew performance, opportunity scouting |
+
+### 8.3 Metric Evaluation
+
+Each metric returns one of: `PASS` (at/above target), `WARNING` (below target, above floor), `FAIL` (below floor), `DATA_IMMATURE` (insufficient samples).
+
+3 consecutive FAILs → escalation pushed to Chairman via Telegram.
+
+### 8.4 Weekend Self-Improvement Cycles
+
+The Ralph scheduler runs the self-improvement mandate on Sat/Sun. Each role has a `better_looks_like` definition (`config/self_improve.yaml`). CEO judges each crew daily: BETTER / SAME / WORSE. 3 SAME or any WORSE → escalate.
+
+---
+
+## 9. CTO → DEV → QA — Engineering Pipeline
+
+**File:** `pipeline_orchestrator.py` (521 lines)
+
+Self-modifying autonomous code pipeline:
+
+```
+Change Request → CTO (risk assessment, diff preview, signoff)
+                     ↓
+                  Dev (apply edit, auto-rollback on syntax error, commit)
+                     ↓
+                  QA (run test suite, check regression, produce PASS/FAIL)
+                     ↓
+                  CTO (final signoff or rollback)
+```
+
+The pipeline can be invoked deterministically via `process_change_request(change_spec)` — no LLM required for the core workflow. CTO uses LLM only for architecture judgment calls.
+
+### 9.1 CTO Authorities
+- Gatekeeps ALL source code changes (blast radius, risk, signoff)
+- Scouts new tools/frameworks to reduce cost/maintenance
+- Delegates implementation to Dev, validation to QA
+- Reports directly to CEO
+- CANNOT override Risk Guard halts or modify constitution
+
+---
+
+## 10. LEARNING & FEEDBACK SYSTEMS
+
+Three distinct loops operate at different timescales:
+
+### 10.1 Inter-Crew Learnings (Real-time, per session)
+After each crew kickoff, `orchestrator.py` parses output for actionable findings via 12 regex patterns and routes them to downstream crews.
+
+### 10.2 Ralph PRD Verification (Scheduled, 9x per trading day per crew)
+Each crew's PRD metrics are evaluated post-execution. FAIL triggers retry with feedback. 3 consecutive FAILs trigger Chairman alert via Telegram.
+
+### 10.3 PA Post-Mortem (End-of-session, per day)
+`crews/pa_crew.py` + `tools/pa_tools.py` run after market close. Trade quality review, counterfactuals, pattern detection, SL optimization, entry window analysis. PM is expected to act on PA recommendations (adoption rate tracked by Ralph Loop).
+
+### 10.4 Self-Improvement Mandate (Weekly, weekends)
+Every cycle: "be better today than yesterday." CEO judges each crew. Compounding improvements make the system self-sustaining over time.
+
+---
+
+## 11. TEST INFRASTRUCTURE
+
+### 11.1 Test Files
+
+| File | Tests | What |
+|------|-------|------|
+| `tests/test_integration_end_to_end.py` | 39 assertions | Full conveyor belt: Scout→Researcher→PM→Executioner→RiskAgent (4 phases) |
+| `tests/test_orchestration.py` | ORCH-01 → ORCH-20 | Query routing, delegation, mock/real LLM orchestration, 6-crew pipeline |
+| `tests/test_ralph_loop.py` | RL-01 → RL-04 | Scheduler, YAML loading, escalation counters, PRD metric status |
+| `tests/test_om_crew.py` | 17 tests | OM pre-flight checks, token refresh, health reports |
+| `tests/test_ta_crew.py` | Multiple | Trade validation, slippage, duplicate detection |
+| `tests/test_pm_crew.py` | Multiple | Strategy selection, strike calculation, wing margins |
+| `tests/test_am_crew.py` | Multiple | P&L tracking, margin checks, capital limits |
+| `tests/test_pa_crew.py` | Multiple | Trade review, counterfactuals, pattern detection |
+| `tests/test_ceo_crew.py` | Multiple | Governance, alignment, escalation |
+| `tests/test_agentops.py` | 20 tests | AgentOps observability, 6-crew tracing |
+| `tests/test_promptfoo.py` | 22 tests | LLM prompt security eval |
+| `tests/test_integration.py` | Additional | Integration coverage |
+| `tests/test_risk_sentry.py` | Risk guard | TSL engine, kill switches, OCO logic |
+| `tests/test_risk_sentry_mock.py` | Mock broker | Risk sentry with simulated broker |
+| `tests/test_closed_loop_executor_sentry.py` | Closed loop | Executor ↔ Sentry feedback loop |
+| `tests/test_technical_scout.py` | Regime | Market regime detection |
+| `tests/test_strategy_architect.py` | Strategy | Strategy design and leg selection |
+| `tests/test_contract_specialist.py` | Contracts | Symbol resolution, expiry, lot sizes |
+| `tests/test_execution_specialist.py` | Execution | Order placement and fills |
+| `tests/test_chain_librarian_executioner.py` | Chain | Contract resolution → execution |
+| `tests/test_architect_iron_condor.py` | Iron Condor | Non-Iron Fly strategy variants |
+| `tests/test_delta_neutral_monday.py` | Delta neutral | Delta-neutral strategies |
+| `tests/test_vega_positive_atm2.py` | Vega positive | Vega-positive ATM strategies |
+| `tests/test_vega_theta_positive.py` | Vega+Theta | Vega+Theta positive strategies |
+| `tests/test_scenarios.py` | Scenarios | Scenario runner with fixtures |
+
+**Total: ~150+ tests across 29 test files**
+
+### 11.2 Dry-Run / Mock Mode
+
+All tests and development run via `ANTARIKSH_MOCK_MODE=1`:
+- Mock VIX, NIFTY spot, time, event calendar
+- Mock P&L simulation
+- Mock broker fills (stubbed order IDs)
+- No live broker connection needed
+- Entry point: `python3 crew_structure.py --mock --vix 18.5 --nifty 24500 --time 10:30`
+
+### 11.3 Trial Run v1 (Live DuckDB + Paper Trading)
+
+New execution mode that reads real market data from DuckDB but keeps orders simulated:
+
+```bash
+python3 crew_structure.py --trial     # Full pipeline with live data
+python3 crew_test.py --trial          # Test harness version
+```
+
+Flow: 6 deterministic tools run sequentially (no LLM needed):
+```
+scan_market(DuckDB) → generate_trade_plan → check_risk → execute_trade → monitor_positions → log_audit
+```
+
+Difference from mock mode:
+- Mock: hardcoded VIX=18.5, NIFTY=24500, fake time
+- Trial: reads VIX, NIFTY, ADX, SuperTrend from DuckDB `market_data` table, IST system time
+
+Difference from production:
+- Trial: `execute_trade` still stubbed (SIM- order IDs), `monitor_positions` still simulated P&L
+- Production: real Shoonya `place_order`, live WebSocket P&L
+
+### 11.4 Scenario Runner
+
+**File:** `tests/scenario_runner.py` — programmatic test harness that patches datetime, VIX, NIFTY, and runs crew sessions with assertions.
+
+---
+
+## 12. CONFIG & CONSTITUTION
+
+### 12.1 Rule Files (Immutable — no agent may modify)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `config/antariksh_rules.yaml` | 302 | Capital params, daily envelopes, 3-layer gate, 19 pre-trade sanity checks, LLM provisioning tiers, kill switches, cooldowns |
+| `ralph/constitution.yaml` | 57 | Vision ("retire by 50, ₹36L/year"), goals, resource limits per crew, authority chain, board members |
+| `config/self_improve.yaml` | 61 | What "better" means for each role, escalation rules |
+| `config/agents.json` | — | Role names, goals, and backstories for all agents across all crews |
+| `config/event_calendar.json` | — | Market holidays, expiry days |
+
+### 12.2 Authority Chain (from constitution.yaml)
+
+```
+Chairman → CEO → {CFO, PM, OM, TA, AM, PA}
+Chairman → ALL (absolute override)
+CEO → CFO → AM
+CEO → PM → {strategist, risk_guard}
+CEO → OM → {*infra only*}
+CEO → TA → {scanner, executor, sentinel, auditor}
+CEO → PA → {*read-only post-mortem*}
+```
+
+Risk Guard's HALT is absolute — neither CEO nor Chairman override at runtime (only Chairman via Telegram post-session).
+
+---
+
+## 13. NOTIFICATIONS — Telegram Bridge
+
+**File:** `tools/notifications.py` | Legacy: `telegram_bridge.py`
+
+Dual-channel notification layer:
+
+| Channel | Purpose |
+|---------|---------|
+| **Direct Telegram Bot API** | Entry gate reports, exit P&L summaries, Board reports |
+| **Kubera Queue** (fallback) | Resiliency — messages queue if Telegram unavailable |
+
+Alert types:
+- Pre-flight GO/NOGO reports
+- Risk Guard halt alerts (SL breached, capital floor breach)
+- Ralph escalation alerts (3 consecutive PRD failures)
+- CEO board reports
+- Session entry/exit summaries (two-message protocol)
+
+---
+
+## 14. QUICK START
 
 ```bash
 cd /home/trading_ceo/antariksh
@@ -397,10 +666,19 @@ cd /home/trading_ceo/antariksh
 # See the full architecture
 python3 trading_desk.py --show-flows
 
+# Trial run v1: live DuckDB data, paper trading (no API key needed)
+python3 crew_structure.py --trial
+python3 crew_test.py --trial
+
+# Dry-run session (no API key needed)
+python3 crew_structure.py --mock --vix 18.5 --nifty 24500 --time 10:30
+
 # Run all deterministic tests (no API key needed)
 python3 trading_desk.py --test-triggers
 python3 trading_desk.py --mock --maintenance-cycle
 python3 tests/test_integration_end_to_end.py
+python3 tests/test_orchestration.py -v
+python3 tests/test_ralph_loop.py -v
 
 # Read live market data from DuckDB
 python3 -c "
@@ -413,4 +691,7 @@ print(f'Live: VIX={r.vix} NIFTY={r.nifty_spot} Regime={r.regime}')
 # Full session with LLM (requires DEEPSEEK_API_KEY)
 export DEEPSEEK_API_KEY="sk-..."
 python3 trading_desk.py --mock --full-session --vix 18.5 --nifty 24500
+
+# Run Ralph Loop scheduler (PRD verification)
+python3 -m ralph.ralph_loop
 ```

@@ -2,79 +2,119 @@
 
 ## What This Is
 
-Antariksh is a multi-crew, multi-agent autonomous intraday options trading system implementing the Varaha Iron Butterfly + Credit Spread strategies on NIFTY via Shoonya/Flattrade brokers. Built with CrewAI hierarchical governance under Ralph Loop PRD-driven verification. Goal: generate ₹36L/year passive income for retirement at 50.
+Antariksh is a self-learning, autonomous multi-agent intraday options trading system implementing the Brahmand architecture: CrewAI agents with Pydantic schemas, SQLite persistence, ChromaDB RAG memory, Agent/Tool registries, and a circadian self-improvement rhythm. Primary strategy: NIFTY Iron Butterfly + Credit Spreads via Shoonya/Flattrade brokers. Goal: ₹36L/year passive income for retirement at 50.
 
-## Core Value
+## Brahmand Architecture
 
-Don't burn capital. Every trade decision passes through hard runtime risk gates (₹3,500 daily SL, ₹4,500 portfolio SL, VIX<20 skip) enforced in code, not agent judgment.
+```
+                     ┌─────────────────────────────────┐
+                     │     CIRCADIAN RHYTHM            │
+                     │                                  │
+                     │  08:45 → daily_config.json read  │
+                     │  09:15 → 3-agent CrewAI kicks    │
+                     │  15:30 → Post-Mortem reviews     │
+                     │  15:45 → ChromaDB + config write │
+                     └─────────────────────────────────┘
+
+   MARKET HOURS:                          POST-MARKET:
+   ┌──────────┐    ┌──────────┐          ┌───────────────┐
+   │Execution │ →  │  Risk    │          │ Post-Mortem   │
+   │  Agent   │    │  Agent   │          │   Agent       │
+   │ Iron     │    │ Mock SL  │          │ state.db read │
+   │ Butterfly│    │ RiskLimits│         │ ChromaDB RAG  │
+   └──────────┘    └──────────┘          │ → config.json │
+         ↓               ↓               └───────────────┘
+   ┌──────────────────────────┐
+   │   PERSISTENCE LAYER      │
+   │  state.db │ ChromaDB     │
+   │  daily_config.json       │
+   └──────────────────────────┘
+```
+
+**Three-tier persistence:** state.db (what happened) → ChromaDB (what we learned) → daily_config.json (what changes tomorrow)
+
+**Expansion path:** Execution + Risk → Post-Mortem → Regime → Architect → PM + Margin → Multi-market → Full autonomy
+
+## Existing Codebase Inventory
+
+**24 agents across 10 crews already built:**
+
+| Crew | Agents | File | Status |
+|------|--------|------|--------|
+| Trading Desk | 6 (Scout, Researcher, PM, Executioner, Risk Sentry, Leg Shifter) | `trading_desk.py` | Built, mock mode functional |
+| TA (Trading Analyst) | 4 (Scout, Validator, Analyst, Compliance) | `crews/ta_crew.py` | Built |
+| PM (Portfolio Manager) | 2 (Strategist, Reporter) | `crews/pm_crew.py` | Built |
+| AM (Asset Manager) | 2 (P&L Tracker, Reporter) | `crews/am_crew.py` | Built |
+| PA (Post-Mortem) | 2 (Reviewer, Pattern Detector) | `crews/pa_crew.py` | Built |
+| OM (Operations) | 3 (Pre-flight, Cron, GO/NOGO) | `crews/om_crew.py` | Built |
+| CEO (Governance) | 2 (Guardian, Reporter) | `crews/ceo_crew.py` | Built |
+| CTO (Tech) | 1 | `crews/cto_crew.py` | Built |
+| Dev (Engineer) | 1 | `crews/dev_crew.py` | Built |
+| QA (Quality) | 1 | `crews/qa_crew.py` | Built |
+
+**Test coverage:** `tests/test_integration_end_to_end.py` at 39/39. Mock mode functional. No production broker wiring yet.
 
 ## Requirements
 
-### Validated
+### Phase 1: Dress Rehearsal (Brahmand MVC) — Active
 
-- ✓ Session orchestrator with 9:30 AM / 2:35 PM cron — Phase 1, operational
-- ✓ Event calendar (22 NSE holiday/RBI dates, 2 scheduled shutdowns) — Phase 1
-- ✓ Token refresh (Shoonya + Flattrade dual-broker) — Phase 1
-- ✓ Telegram bridge (PicoClaw: Kubera/Minimax) with HITL gates — Phase 1
-- ✓ Executor reports (JSON) with Two-Message Protocol — Phase 1
-- ✓ 32/32 scenario tests passing (engine-only, mock LLM/market) — Phase 1
-- ✓ Ralph Loop constitution (vision, mission, goals, resource limits, authority) — Phase 2 foundations
-- ✓ 6 PRDs (CEO, PM, OM, TA, AM, PA) with min_samples conditions — Phase 2 foundations
-- ✓ Ralph Loop engine (8 classes: RalphLoop, CrewAIRalphLoop, PRDRalphLoop, RalphScheduler, etc.) — Phase 2 foundations
-- ✓ GSD codebase map (7 docs: STACK, ARCHITECTURE, STRUCTURE, CONVENTIONS, TESTING, INTEGRATIONS, CONCERNS) — Phase 2
+See `.planning/phases/01-dress-rehearsal/01-CONTEXT.md` for 28 implementation decisions.
 
-### Active
+- [ ] 3-agent CrewAI system (Execution + Risk + Post-Mortem)
+- [ ] Pydantic schemas (TradeSignal, RiskLimits, FlowState, ExecutionReport, ResearchNote)
+- [ ] SQLite state.db persistence
+- [ ] ChromaDB RAG (research_notes, failure_patterns, improvement_actions collections)
+- [ ] Agent Registry (YAML) + Tool Registry (YAML)
+- [ ] Agent Factory + Tool Factory patterns
+- [ ] daily_config.json circadian rhythm
+- [ ] Two-Message Telegram protocol (09:30 + 14:35)
+- [ ] Mock mode for all broker calls
 
-- [ ] OPS-01: Operations Manager crew (infra health: token refresh, code verification, data capture, disk, network, crons) with 17 tests
-- [ ] TRA-01: Trading Analyst crew (execution validation: every trade matches PM spec) with 15 tests
-- [ ] PM-01: Portfolio Manager crew (strategy: IB/Credit Spread selection, indicator weights, ATM rules) with 12 tests
-- [ ] AM-01: Asset Manager crew (financials: cumulative P&L, margin, broker costs, burn trends) with 11 tests
-- [ ] PA-01: Post-Mortem Analyst crew (trade reviews, counterfactuals, improvement recommendations) with 14 tests
-- [ ] CEO-01: CEO crew (alignment guardian, crew performance oversight, board reporting) with 20 tests
-- [ ] GA-01: Governance & Alignment tests (15 tests)
-- [ ] INT-01: Inter-crew communication (design decision pending: file-based vs shared state vs call chain) with 12 tests
-- [ ] RL-01 to RL-04: Ralph Loop infrastructure tests (scheduled PRD check, YAML loading, auto-escalation, PRD evolution)
+### Phase 2: Live Broker + Regime — Deferred
 
-### Out of Scope
+- [ ] Live broker order placement (Shoonya/Flattrade)
+- [ ] Live SL/TP placement
+- [ ] WebSocket LTP feed
+- [ ] TSL engine with real prices
+- [ ] Regime Agent (ADX/SuperTrend)
 
-- MCX evening trading — deferred to Phase 3-4
-- SENSEX instruments — deferred to Phase 3
-- Full autonomy (L4 trust ladder) — deferred to Phase 4
-- Multi-strategy simultaneous execution — resource limit caps at 2 strategies
-- Live money — Phase 2 is shadow/dry-run parallel to Phase 1
+### Validated (Old Phase 1 Monolith — reference)
+
+- ✓ Session orchestrator with cron
+- ✓ Event calendar (22 dates)
+- ✓ Token refresh (dual broker)
+- ✓ Telegram bridge (PicoClaw)
+- ✓ 32/32 scenario tests
 
 ## Context
 
-**Technical environment:** Python 3.9+, CrewAI multi-agent framework, DeepSeek LLM for agent cognition, Shoonya + Flattrade broker APIs, DuckDB for market data storage, PicoClaw for Telegram integration, systemd cron scheduling.
+**Technical environment:** Python 3.12+, CrewAI multi-agent framework with Flows, DeepSeek LLM for agent cognition, Shoonya + Flattrade broker APIs, DuckDB for market data, ChromaDB for semantic memory, SQLite for operational state, PicoClaw for Telegram integration.
 
-**Architecture:** 4-crew hierarchical organization under CEO governance + Ralph Loop PRD verification layer. Portfolio Manager (strategy) → Trading Analyst (execution validation) → Asset Manager (financials). Operations Manager (infra watchdog). Post-Mortem Analyst (trade review feedback to PM). CEO + Ralph Loop provide governance overlay.
+**Design philosophy:** Deterministic tools for risk/execution decisions. LLM cognition only for decisions requiring judgment. Mock mode for all broker calls until production wiring. TDD for new Brahmand components.
 
-**Design philosophy:** TDD mandatory. Write tests first, get user review, then build. Do not move to next step without passing tests. Deterministic code in tools, LLM cognition only for decisions requiring judgment. PRD min_samples pattern prevents false FAIL on immature metrics.
-
-**Prior work:** Phase 1 collapsed 7-agent design into 1 agent + 6 deterministic tools (reduced LLM calls by 90%). User criticized as "trivial" — Phase 2 corrects this with proper multi-crew architecture.
+**Canonical design:** `/opt/hayagreeva/cloud_sync/CrewAI_Export` — Full Brahmand architecture (5-phase evolution, Agent/Factory + Tool Registry, Communication Schema, Circadian Rhythm, Maintenance Window).
 
 ## Constraints
 
-- **Tech stack:** Python 3.9+, CrewAI, DeepSeek LLM, YAML configs, pytest — Must run on existing Ubuntu server
-- **Timeline:** Phase 1 live Monday (dry-run); Phase 2 timeline TBD
+- **Tech stack:** Python 3.12+, CrewAI, DeepSeek LLM, YAML configs, ChromaDB, SQLite
 - **Budget:** DeepSeek API costs (LLM calls), Shoonya/Flattrade broker APIs (free), Telegram (free via PicoClaw)
-- **Dependencies:** Broker APIs must be reachable; DeepSeek API key must be valid; cron must be running
-- **Performance:** LLM context windows must stay under limits (subagent parallel execution preserves context)
-- **Security:** API keys must never be hardcoded (env vars only); repo is private on GitHub
-- **Compatibility:** Must coexist with Phase 1 (parallel run: Phase 1 = live, Phase 2 = shadow)
+- **Security:** API keys via env vars only; ChromaDB runs locally; repo is private on GitHub
+- **Performance:** Parallel CrewAI agent execution; LLM context windows must stay under limits
+- **Compatibility:** Phase 1 Brahmand coexists with existing codebase; no breaking changes to tested components
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| 4-crew hierarchy + CEO (not 7-agent flat) | Proper separation of concerns; PM owns strategy, TA validates execution, AM owns financials | — Pending |
-| Ralph Loop PRD verification (not inside any crew) | Meta-governance layer above CrewAI; each crew maintains separate memory | — Pending |
-| TDD with 120 tests before any crew code | Enforces "don't burn capital" at architectural level; catches design flaws early | — Pending |
-| Start with OM + TA first | Immediate needs: infra health + trade validation; PM/AM/PA/CEO follow | — Pending |
-| Inter-crew comms deferred | "Figure out separately, finish tests first" | — Pending |
-| min_samples pattern for PRD verification | ~75% of PRDs Day-1 verifiable; immature metrics get DATA_IMMATURE status | — Pending |
-| Dual-broker (Shoonya + Flattrade) | Redundancy; Shoonya primary, Flattrade backup | — Pending |
-| DeepSeek LLM over GPT-4 | Cost efficiency for 90% reduced LLM calls | ✓ Good |
+| Brahmand architecture over monolith | Self-learning circadian rhythm, multi-market expansion, A2A protocol — impossible in monolith | Chosen |
+| 3-agent MVC (Execution + Risk + Post-Mortem) first | Prove RAG + self-learning loop end-to-end before adding complexity | Chosen |
+| Pydantic over Python dataclasses | Validation, serialization, Brahmand's universal language contract | Chosen |
+| Custom SQLite over CrewAI built-in persistence | Full control over schema for self-learning; matches Brahmand's daily_config.json pattern | Chosen |
+| ChromaDB over CrewAI built-in knowledge_sources | Metadata filtering (date ranges, strategy types, tickers) that built-in can't provide | Chosen |
+| YAML for registries | CrewAI documentation uses YAML; Brahmand spec specifies YAML; existing config uses YAML | Chosen |
+| Agent Factory over static agents | Enable dynamic agent spawning and multi-market expansion without code changes | Chosen |
+| Post-Mortem Agent as self-learning bridge | Owns the full maintenance window: read state.db → query ChromaDB → write config | Chosen |
+| Work on existing codebase (not greenfield) | 24 agents, 10 crews, 39/39 integration tests already built — evolve, don't replace | Chosen |
 
 ## Evolution
 
@@ -87,11 +127,6 @@ This document evolves at phase transitions and milestone boundaries.
 4. Decisions to log? → Add to Key Decisions
 5. "What This Is" still accurate? → Update if drifted
 
-**After each milestone:**
-1. Full review of all sections
-2. Core Value check — still the right priority?
-3. Audit Out of Scope — reasons still valid?
-4. Update Context with current state (users, feedback, metrics)
-
 ---
-*Last updated: 2026-05-09 after GSD initialization*
+
+*Last updated: 2026-05-13 — Brahmand architecture pivot*

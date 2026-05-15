@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-05-13 21:17
+# SESSION CONTEXT — Updated 2026-05-15 09:00
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=18.64, NIFTY=23625.1, Regime=SIDEWAYS
+Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
 
 ## Locations
 ```
@@ -12,25 +12,16 @@ Branch: `master` | Live data: VIX=18.64, NIFTY=23625.1, Regime=SIDEWAYS
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Brahmand MVP specification complete: 3-agent Flow system (Executor, Risk Agent, Post-Mortem) with RAG-only learning via ChromaDB. Ready for DeepSeek implementation. Fixed test import errors (ExitSignalHandlerTool → TradeCommandHandlerTool).
-
-## Status
-✅ Core tests: 54+ passing (integration 39/39, TA 19/19, PM 18/18, PA 17/17)
-✅ BRAHMAND_MVP_SPEC.md created (complete blueprint)
-✅ Memory system initialized with Brahmand decisions
-🔴 2 LLM-driven tests fixed (test_closed_loop_executor_sentry, test_risk_sentry)
-⏭️ Next: DeepSeek implements `/brahmand/` module from BRAHMAND_MVP_SPEC.md
+Wire trial run v1 with DuckDB live data + cron scheduler (trial_runner.py, scheduler scripts). Updated all docs (ARCHITECTURE.md 671 lines, BRAHMAND/CREW_SPEC archived).
 
 ## Priority Queue
-1. DeepSeek: Build `/brahmand/` module (1-hour test run)
-2. After MVP works: Add Regime Agent, Strategy Architect, Margin Agent
-3. Then: Agent/Tool registries for multi-market expansion
+Test at 10:30 AM IST with cron, wire real broker
 
 ## What's Where (read on demand)
   `trading_desk.py` (1702 lines)
   `tests/test_integration_end_to_end.py` (263 lines)
-  `ARCHITECTURE.md` (416 lines)
-  `GAPS_AND_ROADMAP.md` (169 lines)
+  `ARCHITECTURE.md` (697 lines)
+  `GAPS_AND_ROADMAP.md` (178 lines)
   `TRADING_DESK_VALIDATION.md` (443 lines)
   `crews/ta_crew.py` (424 lines)
   `crews/pm_crew.py` (167 lines)
@@ -49,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+8d306fe chore: update context with Brahmand MVP status
+1ddd6ba fix: replace missing ExitSignalHandlerTool with TradeCommandHandlerTool
+c9de340 docs(01): research phase domain — CrewAI Flow + Pydantic + ChromaDB + SQLite
 585c69f chore: auto-update session context + CLAUDE.md rules
 919dafd docs: slim CONTEXT to lightweight index
-08548ef docs: add project file paths for Antariksh + Varaha + Shoonya
-854618c docs: session context for fast resume
-187aa31 docs: master architecture + gaps/roadmap for Antariksh trading desk
 ```

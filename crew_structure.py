@@ -35,12 +35,20 @@ from crewai.tools import tool
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
-deepseek_llm = LLM(
-    model="deepseek/deepseek-chat",
-    base_url=DEEPSEEK_BASE,
-    api_key=DEEPSEEK_API_KEY,
-    temperature=0.3,
-)
+_lazy_llm = None
+
+
+def _get_llm():
+    global _lazy_llm
+    if _lazy_llm is None:
+        _lazy_llm = LLM(
+            model="deepseek/deepseek-chat",
+            base_url=DEEPSEEK_BASE,
+            api_key=DEEPSEEK_API_KEY,
+            temperature=0.3,
+        )
+    return _lazy_llm
+
 
 # ============================================================
 # Logging
@@ -103,10 +111,26 @@ def scan_market() -> str:
     mock_event = os.environ.get("ANTARIKSH_MOCK_EVENT_DAY", "0") == "1"
     mock_event_name = os.environ.get("ANTARIKSH_MOCK_EVENT_NAME", "")
 
-    vix = market_state.get("vix") or float(os.environ.get("ANTARIKSH_MOCK_VIX", 18.5))
-    nifty = market_state.get("nifty_spot") or float(
-        os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0)
-    )
+    if mock_mode:
+        vix = market_state.get("vix") or float(
+            os.environ.get("ANTARIKSH_MOCK_VIX", 18.5)
+        )
+        nifty = market_state.get("nifty_spot") or float(
+            os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0)
+        )
+    else:
+        from trading_desk import engine_scout_regime
+
+        regime = engine_scout_regime()
+        vix = regime.vix
+        nifty = regime.nifty_spot
+        market_state["regime"] = regime.regime
+        market_state["adx"] = regime.adx
+        market_state["supertrend"] = regime.supertrend
+        logger.info(
+            f"scan_market: LIVE DuckDB → VIX={vix} NIFTY={nifty} "
+            f"ADX={regime.adx} ST={regime.supertrend} Regime={regime.regime}"
+        )
 
     market_state["vix"] = vix
     market_state["nifty_spot"] = nifty
@@ -336,61 +360,79 @@ def log_audit() -> str:
 
 
 # ============================================================
-# AGENT — Orchestrator only (LLM-backed coordination)
+# AGENT + TASK — Lazy (no LLM on import)
 # ============================================================
 
-orchestrator = Agent(
-    role="Orchestrator",
-    goal="Coordinate the daily trading session by calling tools in strict sequence: "
-    "scan → plan → risk → execute → monitor → audit. "
-    "Skip execution on gate fail or halt. Never skip risk check before trade.",
-    backstory=(
-        "You are the master coordinator of Antariksh. You run the daily "
-        "rhythm: 9:30 AM entry gate check, 10:30 AM entry window, 2:35 PM exit. "
-        "All trading logic is in deterministic tools — you only coordinate them. "
-        "Sequence: scan_market → generate_trade_plan → check_risk → execute_trade "
-        "→ monitor_positions → log_audit. "
-        "When scan_market returns gate_pass=False, skip to log_audit. "
-        "When check_risk returns halt=True, stop — do NOT execute. "
-        "You never override Risk Guard's hard capital limits. "
-        "When check_risk says 'halt', you halt — no exceptions."
-    ),
-    llm=deepseek_llm,
-    tools=[
-        scan_market,
-        generate_trade_plan,
-        check_risk,
-        execute_trade,
-        monitor_positions,
-        log_audit,
-    ],
-    verbose=True,
-    allow_delegation=False,
-)
+_orchestrator = None
+_session_task = None
 
 
-# ============================================================
-# TASK
-# ============================================================
+def _get_orchestrator():
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = Agent(
+            role="Orchestrator",
+            goal="Coordinate the daily trading session by calling tools in strict sequence: "
+            "scan → plan → risk → execute → monitor → audit. "
+            "Skip execution on gate fail or halt. Never skip risk check before trade.",
+            backstory=(
+                "You are the master coordinator of Antariksh. You run the daily "
+                "rhythm: 9:30 AM entry gate check, 10:30 AM entry window, 2:35 PM exit. "
+                "All trading logic is in deterministic tools — you only coordinate them. "
+                "Sequence: scan_market → generate_trade_plan → check_risk → execute_trade "
+                "→ monitor_positions → log_audit. "
+                "When scan_market returns gate_pass=False, skip to log_audit. "
+                "When check_risk returns halt=True, stop — do NOT execute. "
+                "You never override Risk Guard's hard capital limits. "
+                "When check_risk says 'halt', you halt — no exceptions."
+            ),
+            llm=_get_llm(),
+            tools=[
+                scan_market,
+                generate_trade_plan,
+                check_risk,
+                execute_trade,
+                monitor_positions,
+                log_audit,
+            ],
+            verbose=True,
+            allow_delegation=False,
+        )
+    return _orchestrator
 
-run_session_task = Task(
-    description=(
-        "Run a complete Antariksh trading session. Follow this EXACT sequence:\n"
-        "1. Call scan_market tool — fetch VIX/NIFTY, set gate_pass.\n"
-        "2. Call generate_trade_plan tool — generate Iron Fly basket.\n"
-        "3. Call check_risk tool — run L1 capital checks (RiskGuardEngine).\n"
-        "   If halt=True, skip to step 6.\n"
-        "4. Call execute_trade tool — place orders only if risk_ok.\n"
-        "5. Call monitor_positions tool — calculate session P&L.\n"
-        "6. Call log_audit tool — append to immutable audit trail.\n"
-        f"Session type: {{session_type}}. Mock mode: {{mock_mode}}."
-    ),
-    expected_output=(
-        "Session report JSON: gate_pass, trade_plan status, risk_verdict, "
-        "execution status, session_pnl, audit summary"
-    ),
-    agent=orchestrator,
-)
+
+def _get_session_task():
+    global _session_task
+    if _session_task is None:
+        _session_task = Task(
+            description=(
+                "Run a complete Antariksh trading session. Follow this EXACT sequence:\n"
+                "1. Call scan_market tool — fetch VIX/NIFTY, set gate_pass.\n"
+                "2. Call generate_trade_plan tool — generate Iron Fly basket.\n"
+                "3. Call check_risk tool — run L1 capital checks (RiskGuardEngine).\n"
+                "   If halt=True, skip to step 6.\n"
+                "4. Call execute_trade tool — place orders only if risk_ok.\n"
+                "5. Call monitor_positions tool — calculate session P&L.\n"
+                "6. Call log_audit tool — append to immutable audit trail.\n"
+                f"Session type: {{session_type}}. Mock mode: {{mock_mode}}."
+            ),
+            expected_output=(
+                "Session report JSON: gate_pass, trade_plan status, risk_verdict, "
+                "execution status, session_pnl, audit summary"
+            ),
+            agent=_get_orchestrator(),
+        )
+    return _session_task
+
+
+# Module-level aliases for test imports (lazy — resolve on first access)
+class _LazyOrchestrator:
+    def __getattr__(self, name):
+        return getattr(_get_orchestrator(), name)
+
+
+orchestrator = _LazyOrchestrator()
+run_session_task = property(lambda _: _get_session_task())
 
 
 # ============================================================
@@ -772,8 +814,8 @@ def _build_crew():
     global _crew_cache
     if _crew_cache is None:
         _crew_cache = Crew(
-            agents=[orchestrator],
-            tasks=[run_session_task],
+            agents=[_get_orchestrator()],
+            tasks=[_get_session_task()],
             process=Process.sequential,
             verbose=True,
         )
@@ -905,6 +947,67 @@ def run_full_session(
     }
 
 
+def run_trial_session() -> Dict:
+    """Trial Run v1: Deterministic pipeline with live DuckDB data. No LLM, no real orders."""
+    os.environ.pop("ANTARIKSH_MOCK_MODE", None)
+
+    logger.info("=" * 60)
+    logger.info("ANTARIKSH TRIAL RUN v1 — Live DuckDB + Paper Trading")
+    logger.info("=" * 60)
+
+    # Step 1: Scan market from DuckDB
+    scan_market.run()
+    logger.info(
+        f"Step 1: VIX={market_state['vix']} NIFTY={market_state['nifty_spot']} gate={market_state['gate_pass']}"
+    )
+
+    # Step 2: Generate trade plan
+    generate_trade_plan.run()
+    logger.info(
+        f"Step 2: plan={'generated' if market_state.get('trade_plan') else 'skipped'}"
+    )
+
+    # Step 3: Check risk
+    check_risk.run()
+    logger.info(
+        f"Step 3: risk_ok={market_state['risk_ok']} halt={market_state['halt']}"
+    )
+
+    # Step 4: Execute (skip if halted)
+    if market_state.get("halt") or not market_state.get("risk_ok"):
+        logger.info("Step 4: SKIPPED (halt/risk fail)")
+    else:
+        execute_trade.run()
+        logger.info(
+            f"Step 4: positions={len(market_state.get('positions', {}).get('legs', []))} legs"
+        )
+
+    # Step 5: Monitor positions
+    monitor_positions.run()
+    logger.info(f"Step 5: P&L=₹{market_state['session_pnl']}")
+
+    # Step 6: Audit log
+    log_audit.run()
+    logger.info(f"Step 6: MTD P&L=₹{market_state['mtd_pnl']}")
+
+    logger.info("=" * 60)
+    logger.info("TRIAL RUN COMPLETE")
+    logger.info("=" * 60)
+
+    return {
+        "entry": {
+            "gate_pass": market_state.get("gate_pass", False),
+            "trade_plan": market_state.get("trade_plan"),
+            "risk_verdict": market_state.get("risk_ok", False),
+        },
+        "exit": {
+            "session_pnl": market_state.get("session_pnl", 0.0),
+            "mtd_pnl": market_state.get("mtd_pnl", 0.0),
+            "audit_verdict": {},
+        },
+    }
+
+
 def run_risk_halt_test() -> Dict:
     """Test Risk Guard autonomous halt on capital breach."""
     os.environ["ANTARIKSH_MOCK_MODE"] = "1"
@@ -934,6 +1037,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Antariksh Phase 2 CrewAI")
     parser.add_argument("--mock", action="store_true", help="Enable mock mode")
+    parser.add_argument(
+        "--trial",
+        action="store_true",
+        help="Trial run v1: live DuckDB data, paper trading (no real orders)",
+    )
     parser.add_argument("--vix", type=float, default=18.5, help="Mock VIX")
     parser.add_argument("--nifty", type=float, default=24500.0, help="Mock NIFTY")
     parser.add_argument("--time", type=str, default="10:30", help="Mock time (HH:MM)")
@@ -953,6 +1061,12 @@ if __name__ == "__main__":
         print(
             f"\nRisk Halt Test: halt_issued={result['halt_issued']}, "
             f"risk_ok={result['risk_verdict']}"
+        )
+    elif args.trial:
+        result = run_trial_session()
+        print(
+            f"\nTrial Run v1: gate_pass={result['entry']['gate_pass']}, "
+            f"pnl={result['exit']['session_pnl']}"
         )
     else:
         result = run_full_session(

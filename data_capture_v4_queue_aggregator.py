@@ -255,29 +255,47 @@ class MultiTFAggregatorQueue:
         return aggregated
 
     def _aggregate_fixed_tf_bars(self, bars: list, timeframe_min: int) -> list:
-        """Aggregate to fixed timeframe bars (5/15/30/240 min)."""
+        """Aggregate to fixed timeframe bars (5/15/30/240 min) with rolling windows."""
+        if not bars:
+            return []
+
         aggregated = []
-        i = 0
+        current_bucket_start = None
+        current_bucket = None
 
-        while i < len(bars):
-            bucket = []
-            start_time = datetime.fromisoformat(bars[i]["timestamp"])
+        for bar in bars:
+            bar_time = datetime.fromisoformat(bar["timestamp"])
 
-            # Collect bars for this timeframe bucket
-            while i < len(bars):
-                bar_time = datetime.fromisoformat(bars[i]["timestamp"])
-                minutes_since_start = (bar_time - start_time).total_seconds() / 60
+            # Determine which bucket this bar belongs to
+            # Find the start of the timeframe bucket (align to market open 9:15)
+            market_open = bar_time.replace(hour=9, minute=15, second=0, microsecond=0)
+            if bar_time < market_open:
+                # Before market open, shouldn't happen but handle gracefully
+                bucket_start = bar_time.replace(second=0, microsecond=0)
+            else:
+                # Minutes elapsed since market open
+                minutes_elapsed = int((bar_time - market_open).total_seconds() / 60)
+                # Which bucket does this fall into?
+                bucket_number = minutes_elapsed // timeframe_min
+                bucket_start = market_open + timedelta(minutes=bucket_number * timeframe_min)
 
-                if minutes_since_start < timeframe_min:
-                    bucket.append(bars[i])
-                    i += 1
-                else:
-                    break
+            # New bucket - finalize previous bucket if it exists
+            if bucket_start != current_bucket_start:
+                if current_bucket:
+                    agg_bar = self._aggregate_bucket(current_bucket, timeframe_min)
+                    if agg_bar:
+                        aggregated.append(agg_bar)
+                current_bucket_start = bucket_start
+                current_bucket = [bar]
+            else:
+                # Same bucket - add to current bucket (updates H/L/C)
+                current_bucket.append(bar)
 
-            if bucket:
-                agg_bar = self._aggregate_bucket(bucket, timeframe_min)
-                if agg_bar:
-                    aggregated.append(agg_bar)
+        # Finalize last bucket (still open/in-progress for current timeframe)
+        if current_bucket:
+            agg_bar = self._aggregate_bucket(current_bucket, timeframe_min)
+            if agg_bar:
+                aggregated.append(agg_bar)
 
         return aggregated
 

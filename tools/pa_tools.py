@@ -1277,3 +1277,287 @@ def generate_pa_recommendations(
         if recommendations
         else "No improvements found — current strategy is optimal",
     }
+
+
+# ============================================================
+# Multi-TF OHLC Analysis Tools — For Phase Detection
+# ============================================================
+
+
+def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
+    """Get raw OHLCV across all timeframes at a specific moment.
+
+    Used for analyzing market structure across timeframes.
+    PA researcher reads raw data and reasons about PHASES.
+
+    Reads from market_data_multitf (v4 aggregated rolling bars).
+
+    Args:
+        timestamp: ISO timestamp (e.g., "2026-05-15 12:30:00")
+        index_name: NIFTY or SENSEX
+
+    Returns:
+        {
+            "success": True,
+            "timestamp": "2026-05-15 12:30:00",
+            "multitf": {
+                "5min": {"open": 25280, "high": 25320, "low": 25275, "close": 25300, "volume": 9000, "adx": 35, "rsi": 72, "st": "BULLISH"},
+                "15min": {...},
+                "30min": {...},
+                "60min": {...},
+                "240min": {...},
+                "1440min": {...}
+            }
+        }
+    """
+    try:
+        import duckdb
+        from pathlib import Path
+
+        # Use v4 database with rolling multi-TF aggregates
+        db_path = Path("/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb")
+        if not db_path.exists():
+            return {"success": False, "message": f"V4 multi-TF database not found at {db_path}"}
+
+        db = duckdb.connect(str(db_path), read_only=True)
+
+        timeframes = [5, 15, 30, 60, 240, 1440]
+        multitf = {}
+
+        for tf_min in timeframes:
+            # Query for bars where timestamp is <= query timestamp, order by descending
+            # Gets the latest bar up to the query timestamp
+            result = db.execute(
+                f"""
+                SELECT timestamp, open, high, low, close, volume, adx, rsi, st_consensus
+                FROM market_data_multitf
+                WHERE timeframe_min = ? AND index_name = ? AND timestamp <= ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,
+                (tf_min, index_name, timestamp),
+            ).fetchone()
+
+            if result:
+                multitf[f"{tf_min}min"] = {
+                    "timestamp": result[0],
+                    "open": result[1],
+                    "high": result[2],
+                    "low": result[3],
+                    "close": result[4],
+                    "volume": result[5],
+                    "adx": result[6],
+                    "rsi": result[7],
+                    "st": result[8],
+                }
+            else:
+                multitf[f"{tf_min}min"] = {
+                    "timestamp": timestamp,
+                    "open": None,
+                    "high": None,
+                    "low": None,
+                    "close": None,
+                    "volume": None,
+                    "adx": None,
+                    "rsi": None,
+                    "st": None,
+                }
+
+        db.close()
+
+        return {
+            "success": True,
+            "timestamp": timestamp,
+            "index": index_name,
+            "multitf": multitf,
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to snapshot multi-TF: {str(e)}"}
+
+
+def analyze_ohlc_shape(ohlc: Dict) -> Dict:
+    """Analyze OHLC to extract shape characteristics.
+
+    PA researcher uses this to understand OHLC patterns:
+    - Where did price close? (top/middle/bottom)
+    - What was the range? (expanding/contracting)
+    - Body size? (strong conviction or weak)
+
+    Args:
+        ohlc: {open, high, low, close, adx}
+
+    Returns:
+        {
+            "close_position": 0.92,  # 0=low, 0.5=mid, 1=high
+            "range_pct": 0.17,       # (high-low)/open * 100
+            "body_pct": 0.70,        # |close-open|/range * 100
+            "wick_ratio": 0.3,       # (smaller_wick / larger_wick)
+            "hl_range": 43,          # (high - low) in points
+            "adx_interpretation": "STRONG" or "WEAK"
+        }
+    """
+    try:
+        open_price = float(ohlc.get("open", 0))
+        high = float(ohlc.get("high", 0))
+        low = float(ohlc.get("low", 0))
+        close = float(ohlc.get("close", 0))
+        adx = float(ohlc.get("adx", 0))
+
+        if open_price == 0 or high == 0 or low == 0:
+            return {"success": False, "message": "Invalid OHLC"}
+
+        # Range calculations
+        hl_range = high - low
+        range_pct = (hl_range / open_price) * 100
+
+        # Close position (0=near low, 1=near high)
+        close_position = (close - low) / hl_range if hl_range > 0 else 0.5
+
+        # Body size (strength of conviction)
+        body = abs(close - open_price)
+        body_pct = (body / hl_range * 100) if hl_range > 0 else 0
+
+        # Wick sizes
+        upper_wick = high - max(open_price, close)
+        lower_wick = min(open_price, close) - low
+
+        if upper_wick > 0 or lower_wick > 0:
+            wick_ratio = min(upper_wick, lower_wick) / max(upper_wick, lower_wick)
+        else:
+            wick_ratio = 0
+
+        # ADX interpretation
+        adx_interpretation = "STRONG" if adx > 25 else "WEAK" if adx < 20 else "BORDERLINE"
+
+        return {
+            "success": True,
+            "close_position": round(close_position, 2),  # 0=low, 1=high
+            "range_pct": round(range_pct, 2),
+            "body_pct": round(body_pct, 2),
+            "wick_ratio": round(wick_ratio, 2),
+            "hl_range": round(hl_range, 0),
+            "adx_interpretation": adx_interpretation,
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to analyze OHLC shape: {str(e)}"}
+
+
+def compare_ohlc_sequence(bars: list) -> Dict:
+    """Compare sequence of bars to detect momentum and direction.
+
+    PA researcher uses this to understand PROGRESSION:
+    - Are closes getting higher or lower?
+    - Is range expanding or shrinking?
+    - Is momentum accelerating or decelerating?
+
+    Args:
+        bars: List of {open, high, low, close, adx} dicts, chronological order
+              [bar_t-2, bar_t-1, bar_t] or just [bar_t-1, bar_t]
+
+    Returns:
+        {
+            "higher_high": True/False,      # current high > prev high
+            "higher_low": True/False,       # current low > prev low
+            "higher_close": True/False,     # current close > prev close
+            "direction": "UP" | "DOWN" | "MIXED",
+            "momentum": "ACCELERATING" | "STABLE" | "DECELERATING",
+            "pattern": "BULL_CONTINUATION" | "BEAR_CONTINUATION" | "REVERSAL" | "CONSOLIDATION",
+            "closes_at_top": True/False,    # close > open (bullish) or close < open (bearish)
+            "range_change": "EXPANDING" | "CONTRACTING" | "STABLE",
+        }
+    """
+    try:
+        if len(bars) < 2:
+            return {"success": False, "message": "Need at least 2 bars"}
+
+        # Current and previous bars
+        prev = bars[-2]
+        curr = bars[-1]
+
+        prev_close = float(prev.get("close", 0))
+        curr_close = float(curr.get("close", 0))
+
+        prev_high = float(prev.get("high", 0))
+        prev_low = float(prev.get("low", 0))
+        curr_high = float(curr.get("high", 0))
+        curr_low = float(curr.get("low", 0))
+
+        curr_open = float(curr.get("open", 0))
+        curr_adx = float(curr.get("adx", 20))
+
+        # Direction signals
+        higher_high = curr_high > prev_high
+        higher_low = curr_low > prev_low
+        higher_close = curr_close > prev_close
+
+        # Overall direction
+        if higher_high and higher_low and higher_close:
+            direction = "UP"
+        elif not higher_high and not higher_low and not higher_close:
+            direction = "DOWN"
+        else:
+            direction = "MIXED"
+
+        # Momentum (using ADX and direction consistency)
+        if len(bars) >= 3:
+            prev_prev = bars[-3]
+            prev_prev_close = float(prev_prev.get("close", 0))
+            prev_prev_adx = float(prev_prev.get("adx", 20))
+
+            # Check if ADX is increasing (accelerating) or decreasing (decelerating)
+            adx_trend = "UP" if curr_adx > prev_prev_adx else "DOWN"
+            momentum = "ACCELERATING" if adx_trend == "UP" and direction != "MIXED" else \
+                       "DECELERATING" if adx_trend == "DOWN" else "STABLE"
+        else:
+            momentum = "STABLE"  # Can't determine with only 2 bars
+
+        # Closes at top or bottom
+        curr_range = curr_high - curr_low
+        if curr_range > 0:
+            close_position = (curr_close - curr_low) / curr_range
+            closes_at_top = close_position > 0.7
+            closes_at_bottom = close_position < 0.3
+        else:
+            closes_at_top = False
+            closes_at_bottom = False
+
+        # Pattern identification
+        if direction == "UP" and closes_at_top:
+            pattern = "BULL_CONTINUATION"
+        elif direction == "DOWN" and closes_at_bottom:
+            pattern = "BEAR_CONTINUATION"
+        elif direction == "MIXED":
+            pattern = "CONSOLIDATION"
+        elif (prev_close > curr_open and curr_close < prev_close) or \
+             (prev_close < curr_open and curr_close > prev_close):
+            pattern = "REVERSAL"
+        else:
+            pattern = "CONTINUATION"
+
+        # Range change (expanding or contracting)
+        prev_range = prev_high - prev_low
+        curr_range_val = curr_high - curr_low
+
+        if curr_range_val > prev_range * 1.1:
+            range_change = "EXPANDING"
+        elif curr_range_val < prev_range * 0.9:
+            range_change = "CONTRACTING"
+        else:
+            range_change = "STABLE"
+
+        return {
+            "success": True,
+            "higher_high": higher_high,
+            "higher_low": higher_low,
+            "higher_close": higher_close,
+            "direction": direction,
+            "momentum": momentum,
+            "pattern": pattern,
+            "closes_at_top": closes_at_top,
+            "range_change": range_change,
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to compare sequence: {str(e)}"}

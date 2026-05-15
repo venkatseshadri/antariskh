@@ -12,10 +12,27 @@ Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Built expanded PA crew with strategy selection, ChromaDB RAG, SQLite state, EOD trigger
+PA crew complete: rolling multi-TF bars + Batch 1 gap-capable indicators (SMA, RSI, ATR, MACD)
 
-## Priority Queue
-next: wire PA into trading_desk orchestrator dispatch + test full session
+## Pipeline Status
+- v3.1: 1-min capture (NIFTY/SENSEX) → Redis queue + log file
+- v4: Rolling bar aggregation (5/15/30/60/240/1440-min) + Batch 1 indicators → market_data_multitf.duckdb
+- PA Researcher: snapshot_multitf() → OHLC + Trend/Momentum/Volatility → phase reasoning (raw data only)
+
+## Indicators Complete ✅
+
+**Batch 1 - Gap-Capable** (work from market open):
+✅ SMA 20/50/200 — trend identification
+✅ RSI 14 — momentum measurement
+✅ ATR 14 — volatility range
+✅ MACD 12/26/9 — momentum confirmation
+
+**Batch 2 - Gap-Sensitive** (accumulate intraday):
+✅ ADX + DI+/DI- — trend strength & direction
+✅ Bollinger Bands — volatility extremes
+✅ OBV — on-balance volume
+✅ CMF — Chaikin Money Flow (volume quality)
+✅ CCI — oscillator for extremes
 
 ## What's Where (read on demand)
   `trading_desk.py` (1702 lines)

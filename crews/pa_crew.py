@@ -23,6 +23,8 @@ from tools.pa_tools import (
     load_portfolio_state as _load_portfolio_state,
     save_session_state as _save_session_state,
     snapshot_indicators as _snapshot_indicators,
+    score_confidence as _score_confidence,
+    track_missed_opportunities as _track_missed_opportunities,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
 
@@ -135,6 +137,18 @@ def snapshot_indicators(timestamp: str, index_name: str = "NIFTY") -> dict:
 
 
 @tool
+def score_confidence(snapshot: dict, direction: str = "UP") -> dict:
+    """Score how many indicators align with the direction (0-100% confidence)."""
+    return _score_confidence(snapshot, direction)
+
+
+@tool
+def track_missed_opportunities(trades_taken: list, potential_setups: list) -> dict:
+    """Identify high-confidence setups that were NOT traded (opportunity cost analysis)."""
+    return _track_missed_opportunities(trades_taken, potential_setups)
+
+
+@tool
 def generate_pa_recommendations(
     trades: list,
     total_margin_available: float = 0,
@@ -169,6 +183,8 @@ analyst = Agent(
         analyze_strategy_selection,
         save_session_state,
         snapshot_indicators,
+        score_confidence,
+        track_missed_opportunities,
     ],
     allow_delegation=False,
     verbose=True,

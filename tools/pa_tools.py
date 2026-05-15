@@ -495,6 +495,296 @@ def analyze_lot_scaling(
 # ============================================================
 
 
+def track_missed_opportunities(
+    trades_taken: List[Dict],
+    potential_setups: List[Dict],
+) -> Dict:
+    """Identify HIGH-CONFIDENCE setups that were NOT traded.
+
+    Opportunity cost analysis: "I could have made ₹X but didn't"
+
+    Args:
+        trades_taken: Actual trades executed {trade_id, entry_time, pnl}
+        potential_setups: All high-confidence setups identified {entry_time, direction, confidence, estimated_pnl}
+
+    Returns:
+        {
+          total_setups: N,
+          trades_taken: M,
+          missed_opportunities: K,
+          missed_pnl_estimate: ₹X,
+          opportunity_cost: ₹X,
+          missed_details: [{time, direction, confidence, reason}]
+        }
+    """
+    if not potential_setups:
+        return {
+            "success": True,
+            "total_setups": 0,
+            "trades_taken": len(trades_taken),
+            "missed_opportunities": 0,
+            "missed_pnl_estimate": 0,
+            "opportunity_cost": 0,
+            "message": "No potential setups identified",
+        }
+
+    try:
+        # Get entry times of actual trades
+        taken_times = {t.get("entry_time") for t in trades_taken if t.get("entry_time")}
+
+        missed = []
+        total_potential_pnl = 0
+
+        for setup in potential_setups:
+            entry_time = setup.get("entry_time")
+            confidence = setup.get("confidence", 0)
+            estimated_pnl = setup.get("estimated_pnl", 500)  # Default estimate
+
+            # High-confidence setups only
+            if confidence >= 70 and entry_time not in taken_times:
+                missed.append(
+                    {
+                        "entry_time": entry_time,
+                        "direction": setup.get("direction", "?"),
+                        "confidence": confidence,
+                        "estimated_pnl": estimated_pnl,
+                        "reason": f"High confidence ({confidence}%) but no trade taken",
+                    }
+                )
+                total_potential_pnl += estimated_pnl
+
+        # Summary
+        actual_pnl = sum(t.get("pnl", 0) for t in trades_taken)
+        potential_total = actual_pnl + total_potential_pnl
+        opportunity_cost = total_potential_pnl
+
+        return {
+            "success": True,
+            "total_setups": len(potential_setups),
+            "trades_taken": len(trades_taken),
+            "missed_opportunities": len(missed),
+            "actual_pnl": round(actual_pnl, 0),
+            "missed_pnl_estimate": round(total_potential_pnl, 0),
+            "potential_total_pnl": round(potential_total, 0),
+            "opportunity_cost": round(opportunity_cost, 0),
+            "efficiency_pct": round(
+                (actual_pnl / potential_total * 100) if potential_total != 0 else 0, 1
+            ),
+            "missed_details": sorted(
+                missed, key=lambda x: x["estimated_pnl"], reverse=True
+            )[:5],  # Top 5 missed
+            "summary": f"Actual P&L: ₹{actual_pnl:+,.0f}. "
+            f"Could have made: ₹{potential_total:+,.0f}. "
+            f"Missed opportunity: ₹{opportunity_cost:+,.0f} "
+            f"({len(missed)} high-confidence setups not taken). "
+            f"Efficiency: {round(actual_pnl / potential_total * 100) if potential_total != 0 else 0:.0f}%",
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to track: {str(e)}"}
+
+
+def score_confidence(
+    snapshot: Dict, direction: str = "UP"
+) -> Dict:
+    """Score how confident the setup is (0-100%).
+
+    Counts how many indicators align with the direction.
+    Used for rating breakout reliability.
+
+    Args:
+        snapshot: Output from snapshot_indicators()
+        direction: "UP" or "DOWN" or "SIDEWAYS"
+
+    Returns:
+        {
+          confidence_pct: 0-100,
+          aligned_indicators: list of aligned indicators,
+          misaligned_indicators: list of misaligned,
+          reasoning: explanation,
+          recommendation: STRONG_BUY/BUY/HOLD/SELL/STRONG_SELL
+        }
+    """
+    if not snapshot.get("success"):
+        return {"success": False, "message": "Invalid snapshot"}
+
+    direction = direction.upper()
+    if direction not in ["UP", "DOWN", "SIDEWAYS"]:
+        return {"success": False, "message": "Direction must be UP/DOWN/SIDEWAYS"}
+
+    aligned = []
+    misaligned = []
+    max_indicators = 0
+
+    try:
+        trend = snapshot["trend"]
+        momentum = snapshot["momentum"]
+        volatility = snapshot["volatility"]
+        structure = snapshot["structure"]
+        greeks = snapshot["greeks"]
+
+        # === TREND INDICATORS ===
+        st_consensus = trend.get("supertrend_consensus", "")
+        st_1m = trend.get("supertrend_1min_direction", "")
+        st_5m = trend.get("supertrend_5min_direction", "")
+        st_15m = trend.get("supertrend_15min_direction", "")
+        adx = trend.get("adx", 0)
+
+        if direction == "UP":
+            # ST consensus
+            if st_consensus == "BULLISH":
+                aligned.append("ST_consensus_BULLISH")
+            elif st_consensus == "BEARISH":
+                misaligned.append("ST_consensus_BEARISH")
+            max_indicators += 1
+
+            # ST alignment across timeframes
+            st_count = sum(1 for st in [st_1m, st_5m, st_15m] if st == "UP")
+            if st_count >= 2:
+                aligned.append(f"SuperTrend_{st_count}/3_UP")
+            elif st_count == 0:
+                misaligned.append("SuperTrend_0/3_UP")
+            max_indicators += 1
+
+            # ADX (trend strength)
+            if adx and adx > 25:
+                aligned.append(f"ADX_{adx:.0f}_strong")
+            elif adx and adx < 20:
+                misaligned.append(f"ADX_{adx:.0f}_weak")
+            max_indicators += 1
+
+        elif direction == "DOWN":
+            if st_consensus == "BEARISH":
+                aligned.append("ST_consensus_BEARISH")
+            elif st_consensus == "BULLISH":
+                misaligned.append("ST_consensus_BULLISH")
+            max_indicators += 1
+
+            st_count = sum(1 for st in [st_1m, st_5m, st_15m] if st == "DOWN")
+            if st_count >= 2:
+                aligned.append(f"SuperTrend_{st_count}/3_DOWN")
+            elif st_count == 0:
+                misaligned.append("SuperTrend_0/3_DOWN")
+            max_indicators += 1
+
+            if adx and adx > 25:
+                aligned.append(f"ADX_{adx:.0f}_strong")
+            elif adx and adx < 20:
+                misaligned.append(f"ADX_{adx:.0f}_weak")
+            max_indicators += 1
+
+        elif direction == "SIDEWAYS":
+            if st_consensus in ["NEUTRAL", ""]:
+                aligned.append("ST_sideways")
+            else:
+                misaligned.append(f"ST_{st_consensus}_not_sideways")
+            max_indicators += 1
+
+            if adx and adx < 20:
+                aligned.append(f"ADX_{adx:.0f}_low")
+            elif adx and adx > 25:
+                misaligned.append(f"ADX_{adx:.0f}_trending")
+            max_indicators += 1
+
+        # === MOMENTUM INDICATORS ===
+        rsi = momentum.get("rsi", 50)
+        ema_cross = momentum.get("ema_crossover", "NONE")
+
+        if direction == "UP":
+            if rsi and rsi > 50:
+                aligned.append(f"RSI_{rsi:.0f}_bullish")
+            elif rsi and rsi < 50:
+                misaligned.append(f"RSI_{rsi:.0f}_bearish")
+            max_indicators += 1
+
+            if ema_cross == "BULLISH":
+                aligned.append("EMA_bullish_cross")
+            elif ema_cross == "BEARISH":
+                misaligned.append("EMA_bearish_cross")
+            max_indicators += 1
+
+        elif direction == "DOWN":
+            if rsi and rsi < 50:
+                aligned.append(f"RSI_{rsi:.0f}_bearish")
+            elif rsi and rsi > 50:
+                misaligned.append(f"RSI_{rsi:.0f}_bullish")
+            max_indicators += 1
+
+            if ema_cross == "BEARISH":
+                aligned.append("EMA_bearish_cross")
+            elif ema_cross == "BULLISH":
+                misaligned.append("EMA_bullish_cross")
+            max_indicators += 1
+
+        # === VOLATILITY INDICATORS ===
+        atr = volatility.get("atr", 0)
+        iv_regime = volatility.get("iv_regime", "")
+
+        if atr and atr > 100:
+            aligned.append(f"ATR_{atr:.0f}_expanding")
+        elif atr and atr < 50:
+            misaligned.append(f"ATR_{atr:.0f}_contracting")
+        max_indicators += 1
+
+        if iv_regime == "HIGH":
+            aligned.append("IV_regime_HIGH")
+        elif iv_regime == "LOW":
+            misaligned.append("IV_regime_LOW")
+        max_indicators += 1
+
+        # === STRUCTURE INDICATORS ===
+        spot = snapshot["price"]["spot"]
+        resistance = structure.get("resistance_level")
+        support = structure.get("support_level")
+
+        if direction == "UP" and resistance:
+            if spot < resistance:
+                aligned.append(f"Price_below_resistance_{resistance:.0f}")
+            else:
+                aligned.append(f"Price_above_resistance_{resistance:.0f}")
+            max_indicators += 1
+
+        elif direction == "DOWN" and support:
+            if spot > support:
+                aligned.append(f"Price_above_support_{support:.0f}")
+            else:
+                aligned.append(f"Price_below_support_{support:.0f}")
+            max_indicators += 1
+
+        # === CALCULATE CONFIDENCE ===
+        confidence_pct = (len(aligned) / max_indicators * 100) if max_indicators > 0 else 0
+
+        # Recommendation
+        if confidence_pct >= 80:
+            recommendation = "STRONG_BUY" if direction == "UP" else "STRONG_SELL"
+        elif confidence_pct >= 60:
+            recommendation = "BUY" if direction == "UP" else "SELL"
+        elif confidence_pct >= 40:
+            recommendation = "HOLD"
+        elif confidence_pct >= 20:
+            recommendation = "WEAK_" + ("BUY" if direction == "UP" else "SELL")
+        else:
+            recommendation = "WAIT"
+
+        return {
+            "success": True,
+            "direction": direction,
+            "confidence_pct": round(confidence_pct, 1),
+            "aligned_count": len(aligned),
+            "misaligned_count": len(misaligned),
+            "max_indicators": max_indicators,
+            "aligned_indicators": aligned[:5],  # Top 5
+            "misaligned_indicators": misaligned[:5],
+            "recommendation": recommendation,
+            "reasoning": f"{direction} setup: {len(aligned)}/{max_indicators} indicators aligned ({confidence_pct:.0f}%). "
+            f"Aligned: {', '.join(aligned[:3])}. "
+            f"Misaligned: {', '.join(misaligned[:2]) if misaligned else 'None'}.",
+        }
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to score: {str(e)}"}
+
+
 def snapshot_indicators(timestamp: str, index_name: str = "NIFTY") -> Dict:
     """Snapshot ALL indicators at a specific moment.
 

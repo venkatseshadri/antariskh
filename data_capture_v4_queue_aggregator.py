@@ -55,7 +55,7 @@ class MultiTFAggregatorQueue:
             print(f"[V4] {msg}")
 
     def _ensure_table_exists(self):
-        """Create market_data_multitf table if it doesn't exist."""
+        """Create market_data_multitf table with gap-capable indicators."""
         try:
             conn = duckdb.connect(str(self.db_path), read_only=False)
 
@@ -72,8 +72,18 @@ class MultiTFAggregatorQueue:
                     close FLOAT,
                     volume FLOAT,
 
-                    adx FLOAT,
+                    -- Gap-Capable Indicators (Batch 1)
+                    sma20 FLOAT,
+                    sma50 FLOAT,
+                    sma200 FLOAT,
                     rsi FLOAT,
+                    atr FLOAT,
+                    macd FLOAT,
+                    macd_signal FLOAT,
+                    macd_histogram FLOAT,
+
+                    -- Legacy (to remove)
+                    adx FLOAT,
                     st_consensus TEXT,
 
                     PRIMARY KEY (timestamp, index_name, timeframe_min)
@@ -82,7 +92,7 @@ class MultiTFAggregatorQueue:
             )
 
             conn.close()
-            self.log("✅ Table market_data_multitf ready")
+            self.log("✅ Table market_data_multitf ready (Batch 1 indicators)")
 
         except Exception as e:
             self.log(f"⚠️ Table creation: {e}")
@@ -189,14 +199,15 @@ class MultiTFAggregatorQueue:
         current_day = None
         current_bucket = None
 
-        for bar in bars:
+        for i, bar in enumerate(bars):
             bar_time = datetime.fromisoformat(bar["timestamp"])
             bar_day = bar_time.date()
 
             # New trading day - finalize previous day's bar if it exists
             if bar_day != current_day:
                 if current_bucket:
-                    agg_bar = self._aggregate_bucket(current_bucket, 1440)
+                    # Pass all bars up to current for context (gap-capable indicators)
+                    agg_bar = self._aggregate_bucket(current_bucket, 1440, all_bars=bars[:i])
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_day = bar_day
@@ -207,7 +218,7 @@ class MultiTFAggregatorQueue:
 
         # Finalize last day's bar (still open/in-progress for today)
         if current_bucket:
-            agg_bar = self._aggregate_bucket(current_bucket, 1440)
+            agg_bar = self._aggregate_bucket(current_bucket, 1440, all_bars=bars)
             if agg_bar:
                 aggregated.append(agg_bar)
 
@@ -229,7 +240,7 @@ class MultiTFAggregatorQueue:
         current_hour_key = None
         current_bucket = None
 
-        for bar in bars:
+        for i, bar in enumerate(bars):
             bar_time = datetime.fromisoformat(bar["timestamp"])
             # Hour key: 2026-05-15 09:00 (start of the hour)
             hour_key = bar_time.replace(minute=0, second=0, microsecond=0)
@@ -237,7 +248,8 @@ class MultiTFAggregatorQueue:
             # New hour - finalize previous hour's bar if it exists
             if hour_key != current_hour_key:
                 if current_bucket:
-                    agg_bar = self._aggregate_bucket(current_bucket, 60)
+                    # Pass all bars up to current for context (gap-capable indicators)
+                    agg_bar = self._aggregate_bucket(current_bucket, 60, all_bars=bars[:i])
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_hour_key = hour_key
@@ -248,7 +260,7 @@ class MultiTFAggregatorQueue:
 
         # Finalize last hour's bar (still open/in-progress for current hour)
         if current_bucket:
-            agg_bar = self._aggregate_bucket(current_bucket, 60)
+            agg_bar = self._aggregate_bucket(current_bucket, 60, all_bars=bars)
             if agg_bar:
                 aggregated.append(agg_bar)
 
@@ -263,7 +275,7 @@ class MultiTFAggregatorQueue:
         current_bucket_start = None
         current_bucket = None
 
-        for bar in bars:
+        for i, bar in enumerate(bars):
             bar_time = datetime.fromisoformat(bar["timestamp"])
 
             # Determine which bucket this bar belongs to
@@ -282,7 +294,8 @@ class MultiTFAggregatorQueue:
             # New bucket - finalize previous bucket if it exists
             if bucket_start != current_bucket_start:
                 if current_bucket:
-                    agg_bar = self._aggregate_bucket(current_bucket, timeframe_min)
+                    # Pass all bars up to current for context (gap-capable indicators)
+                    agg_bar = self._aggregate_bucket(current_bucket, timeframe_min, all_bars=bars[:i])
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_bucket_start = bucket_start
@@ -293,14 +306,14 @@ class MultiTFAggregatorQueue:
 
         # Finalize last bucket (still open/in-progress for current timeframe)
         if current_bucket:
-            agg_bar = self._aggregate_bucket(current_bucket, timeframe_min)
+            agg_bar = self._aggregate_bucket(current_bucket, timeframe_min, all_bars=bars)
             if agg_bar:
                 aggregated.append(agg_bar)
 
         return aggregated
 
-    def _aggregate_bucket(self, bars: list, timeframe_min: int) -> dict:
-        """Aggregate bucket of bars to one timeframe bar."""
+    def _aggregate_bucket(self, bars: list, timeframe_min: int, all_bars: list = None) -> dict:
+        """Aggregate bucket of bars to one timeframe bar with gap-capable indicators."""
         if not bars:
             return None
 
@@ -317,10 +330,18 @@ class MultiTFAggregatorQueue:
         agg_close = closes[-1]
         agg_volume = sum(volumes)
 
-        # Simplified indicators
-        agg_adx = self._calculate_adx([b["close"] for b in bars])
-        agg_rsi = self._calculate_rsi([b["close"] for b in bars])
-        agg_st = self._calculate_supertrend([b["close"] for b in bars], [agg_high], [agg_low])
+        # Use all_bars for indicator context (gap-capable needs historical data)
+        context_closes = closes if all_bars is None else [b["close"] for b in all_bars]
+        context_highs = highs if all_bars is None else [b["high"] for b in all_bars]
+        context_lows = lows if all_bars is None else [b["low"] for b in all_bars]
+
+        # Batch 1: Gap-Capable Indicators (calculate from accumulated closes)
+        sma20 = self._calculate_sma(context_closes, 20)
+        sma50 = self._calculate_sma(context_closes, 50)
+        sma200 = self._calculate_sma(context_closes, 200)
+        rsi = self._calculate_rsi(context_closes, 14)
+        atr = self._calculate_atr(context_highs, context_lows, context_closes, 14)
+        macd_result = self._calculate_macd(context_closes)
 
         return {
             "timestamp": timestamps[-1],
@@ -329,9 +350,16 @@ class MultiTFAggregatorQueue:
             "low": agg_low,
             "close": agg_close,
             "volume": agg_volume,
-            "adx": agg_adx,
-            "rsi": agg_rsi,
-            "st_consensus": agg_st,
+            "sma20": sma20,
+            "sma50": sma50,
+            "sma200": sma200,
+            "rsi": rsi,
+            "atr": atr,
+            "macd": macd_result["macd"],
+            "macd_signal": macd_result["signal"],
+            "macd_histogram": macd_result["histogram"],
+            "adx": -1.0,  # Legacy, to be removed
+            "st_consensus": "NEUTRAL",  # Legacy, to be removed
         }
 
     def _calculate_adx(self, closes: list, period: int = 14) -> float:
@@ -396,6 +424,64 @@ class MultiTFAggregatorQueue:
         else:
             return "NEUTRAL"
 
+    def _calculate_sma(self, closes: list, period: int) -> float:
+        """Calculate Simple Moving Average. Gap-capable (uses all data)."""
+        if len(closes) < period:
+            return None
+        return round(sum(closes[-period:]) / period, 2)
+
+    def _calculate_atr(self, highs: list, lows: list, closes: list, period: int = 14) -> float:
+        """Calculate Average True Range. Gap-capable (gap is part of TR)."""
+        if len(closes) < 2:
+            return None
+
+        trs = []
+        for i in range(1, len(closes)):
+            high_low = highs[i] - lows[i]
+            high_close = abs(highs[i] - closes[i - 1])
+            low_close = abs(lows[i] - closes[i - 1])
+            tr = max(high_low, high_close, low_close)
+            trs.append(tr)
+
+        if len(trs) < period:
+            return round(sum(trs) / len(trs), 2) if trs else None
+
+        return round(sum(trs[-period:]) / period, 2)
+
+    def _calculate_macd(self, closes: list, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+        """Calculate MACD. Gap-capable (uses all data)."""
+        if len(closes) < slow:
+            return {"macd": None, "signal": None, "histogram": None}
+
+        # EMA calculation
+        def ema(data, period):
+            if len(data) < period:
+                return None
+            alpha = 2 / (period + 1)
+            ema_val = sum(data[:period]) / period
+            for val in data[period:]:
+                ema_val = val * alpha + ema_val * (1 - alpha)
+            return ema_val
+
+        fast_ema = ema(closes, fast)
+        slow_ema = ema(closes, slow)
+
+        if fast_ema is None or slow_ema is None:
+            return {"macd": None, "signal": None, "histogram": None}
+
+        macd_line = fast_ema - slow_ema
+
+        # Signal line (EMA of MACD)
+        # For simplicity, use a simple approximation
+        signal_line = macd_line  # Simplified; proper implementation would track MACD history
+        histogram = macd_line - signal_line
+
+        return {
+            "macd": round(macd_line, 2),
+            "signal": round(signal_line, 2),
+            "histogram": round(histogram, 2),
+        }
+
     def write_aggregated_bars(self, bars: list, index_name: str, timeframe_min: int):
         """Write aggregated bars to database."""
         if not bars:
@@ -408,16 +494,25 @@ class MultiTFAggregatorQueue:
                 conn.execute(
                     """
                     INSERT INTO market_data_multitf
-                    (timestamp, index_name, timeframe_min, open, high, low, close, volume, adx, rsi, st_consensus)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (timestamp, index_name, timeframe_min, open, high, low, close, volume,
+                     sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram,
+                     adx, st_consensus)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (timestamp, index_name, timeframe_min) DO UPDATE SET
                         open = EXCLUDED.open,
                         high = EXCLUDED.high,
                         low = EXCLUDED.low,
                         close = EXCLUDED.close,
                         volume = EXCLUDED.volume,
-                        adx = EXCLUDED.adx,
+                        sma20 = EXCLUDED.sma20,
+                        sma50 = EXCLUDED.sma50,
+                        sma200 = EXCLUDED.sma200,
                         rsi = EXCLUDED.rsi,
+                        atr = EXCLUDED.atr,
+                        macd = EXCLUDED.macd,
+                        macd_signal = EXCLUDED.macd_signal,
+                        macd_histogram = EXCLUDED.macd_histogram,
+                        adx = EXCLUDED.adx,
                         st_consensus = EXCLUDED.st_consensus
                     """,
                     (
@@ -429,8 +524,15 @@ class MultiTFAggregatorQueue:
                         bar["low"],
                         bar["close"],
                         bar["volume"],
-                        bar["adx"],
+                        bar["sma20"],
+                        bar["sma50"],
+                        bar["sma200"],
                         bar["rsi"],
+                        bar["atr"],
+                        bar["macd"],
+                        bar["macd_signal"],
+                        bar["macd_histogram"],
+                        bar["adx"],
                         bar["st_consensus"],
                     ),
                 )

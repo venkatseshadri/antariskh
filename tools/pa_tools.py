@@ -499,15 +499,32 @@ def write_trade_review_to_rag(
     trade: Dict,
     review: Dict,
     market_regime: str = "UNKNOWN",
+    strategy_analysis: Optional[Dict] = None,
+    entry_analysis: Optional[Dict] = None,
+    sl_analysis: Optional[Dict] = None,
+    vix_analysis: Optional[Dict] = None,
+    lot_analysis: Optional[Dict] = None,
     date: str = None,
 ) -> Dict:
-    """Write a trade review to ChromaDB for RAG learning.
+    """Write a comprehensive trade review to ChromaDB for RAG learning.
+
+    Captures all PA learning dimensions:
+    - strategy_success (from strategy_analysis)
+    - entry_window_patterns (from entry_analysis)
+    - sl_optimization (from sl_analysis)
+    - vix_thresholds (from vix_analysis)
+    - lot_scaling (from lot_analysis)
 
     Args:
-        trade: Trade executed {trade_id, strategy, pnl, entry, exit, ...}
+        trade: Trade {trade_id, strategy, pnl, entry, exit, entry_time, sl, vix_at_entry, ...}
         review: Review from PA {quality, score, issues}
-        market_regime: Market regime at time of trade
-        date: Date of trade (defaults to today)
+        market_regime: Market regime (SIDEWAYS, TRENDING, etc.)
+        strategy_analysis: {recommended_strategy, confidence, iron_fly_wr, credit_spread_wr}
+        entry_analysis: {best_window, best_win_rate, improvement}
+        sl_analysis: {recommended_sl, improvement}
+        vix_analysis: {vix_ceiling}
+        lot_analysis: {recommended_lots}
+        date: Date (defaults to today)
 
     Returns:
         {success, doc_id, message}
@@ -517,38 +534,92 @@ def write_trade_review_to_rag(
         return {"success": False, "message": "ChromaDB not available"}
 
     from datetime import datetime
+    from brahmand.state import TradeReview
 
     date = date or datetime.now().strftime("%Y-%m-%d")
+
+    # Extract entry time window
+    entry_time = trade.get("entry_time", "")
+    entry_window = ""
+    if entry_time and len(entry_time) >= 5:
+        hh, mm = entry_time.split(":")[:2]
+        minutes = int(hh) * 60 + int(mm)
+        window_start = (minutes // 30) * 30
+        w_hh, w_mm = window_start // 60, window_start % 60
+        entry_window = f"{w_hh:02d}:{w_mm:02d}-{(w_hh)%24:02d}:{(w_mm+30)%60:02d}"
+
+    # Build lesson learned
     lesson = ""
-
     if review.get("quality") == "EXCELLENT":
-        lesson = f"Clean trade: {trade.get('strategy')} at {market_regime}. Replicate setup."
+        lesson = f"✅ Clean {trade.get('strategy')} trade in {market_regime}. Replicate this setup."
     elif review.get("quality") == "CRITICAL":
-        lesson = f"AVOID: {trade.get('strategy')} failed at {market_regime}. Issues: {review.get('issues')}"
+        lesson = (
+            f"❌ AVOID this setup. {trade.get('strategy')} in {market_regime} failed. "
+            f"Issues: {', '.join(review.get('issues', []))}"
+        )
     else:
-        lesson = f"Learn: {review.get('quality')} trade. Issues: {', '.join(review.get('issues', []))}"
+        lesson = (
+            f"Learn: {review.get('quality')} execution. "
+            f"{', '.join(review.get('issues', []))}"
+        )
 
-    trade_review = {
-        "date": date,
-        "trade_id": trade.get("trade_id", "unknown"),
-        "strategy": trade.get("strategy", "IRON_FLY"),
-        "market_regime": market_regime,
-        "pnl": trade.get("pnl", 0),
-        "success": trade.get("pnl", 0) > 0,
-        "lesson_learned": lesson,
-        "execution_summary": f"{trade.get('strategy')} in {market_regime} regime (VIX ~18-22). "
-        f"Quality: {review.get('quality')}. P&L: ₹{trade.get('pnl', 0):+,}. "
-        f"{lesson}",
-        "quality": review.get("quality"),
-        "score": review.get("score", 0),
-    }
+    # Build comprehensive execution summary for RAG embedding
+    execution_summary = (
+        f"{trade.get('strategy')} in {market_regime} regime "
+        f"(VIX={trade.get('vix_at_entry', 18)}, Entry={entry_time}). "
+        f"Quality: {review.get('quality')}, P&L: ₹{trade.get('pnl', 0):+,}. "
+        f"Strategy WR: {strategy_analysis.get('iron_fly_wr') if trade.get('strategy') == 'IRON_FLY' else strategy_analysis.get('credit_spread_wr')}. "
+        f"Entry window: {entry_analysis.get('best_window')} ({entry_analysis.get('best_win_rate'):.0%} WR). "
+        f"SL optimization: ₹{sl_analysis.get('improvement', 0):+,} available. "
+        f"VIX ceiling: {vix_analysis.get('vix_ceiling', 20)}. "
+        f"Lot scaling: {lot_analysis.get('recommended_lots', 1)} lots safe. "
+        f"Lesson: {lesson}"
+    )
+
+    # Create TradeReview with all learning dimensions
+    trade_review_obj = TradeReview(
+        date=date,
+        trade_id=trade.get("trade_id", "unknown"),
+        strategy=trade.get("strategy", "IRON_FLY"),
+        market_regime=market_regime,
+        vix_at_entry=trade.get("vix_at_entry", 18.0),
+        entry_time=entry_time,
+        entry_window=entry_window,
+        entry_price=trade.get("entry", 0),
+        exit_price=trade.get("exit", 0),
+        pnl=trade.get("pnl", 0),
+        lots=trade.get("lots", 1),
+        success=trade.get("pnl", 0) > 0,
+        sl_hit=review.get("sl_hit", False),
+        tp_hit=review.get("tp_hit", False),
+        entry_quality=review.get("quality", "unknown"),
+        sl_used=trade.get("sl", 3500.0),
+        optimal_sl=sl_analysis.get("recommended_sl") if sl_analysis else None,
+        sl_improvement=sl_analysis.get("improvement") if sl_analysis else None,
+        strategy_score=(
+            strategy_analysis.get("confidence") if strategy_analysis else None
+        ),
+        vix_ceiling=vix_analysis.get("vix_ceiling") if vix_analysis else None,
+        margin_available=trade.get("margin_available"),
+        margin_used=trade.get("margin_used"),
+        recommended_lots=lot_analysis.get("recommended_lots") if lot_analysis else None,
+        lesson_learned=lesson,
+        execution_summary=execution_summary,
+    )
 
     try:
-        doc_id = rag.store_trade_review(trade_review)
+        doc_id = rag.store_trade_review(trade_review_obj.model_dump())
         return {
             "success": True,
             "doc_id": doc_id,
-            "message": f"Stored {trade_review['strategy']} review to RAG",
+            "learning_dimensions": [
+                f"strategy_success: {trade_review_obj.strategy_score:.0%}" if trade_review_obj.strategy_score else None,
+                f"entry_window: {trade_review_obj.entry_window}",
+                f"sl_improvement: ₹{trade_review_obj.sl_improvement:+,.0f}" if trade_review_obj.sl_improvement else None,
+                f"vix_ceiling: {trade_review_obj.vix_ceiling}",
+                f"lot_recommendation: {trade_review_obj.recommended_lots} lots",
+            ],
+            "message": f"Stored comprehensive {trade_review_obj.strategy} review to RAG with all learning dimensions",
         }
     except Exception as e:
         return {"success": False, "message": f"Failed to store: {str(e)}"}

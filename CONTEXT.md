@@ -1,4 +1,4 @@
-# SESSION CONTEXT — Updated 2026-05-15 09:00
+# SESSION CONTEXT — Updated 2026-05-15 09:22
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
 Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Wire trial run v1 with DuckDB live data + cron scheduler (trial_runner.py, scheduler scripts). Updated all docs (ARCHITECTURE.md 671 lines, BRAHMAND/CREW_SPEC archived).
+Built expanded PA crew with strategy selection, ChromaDB RAG, SQLite state, EOD trigger
 
 ## Priority Queue
-Test at 10:30 AM IST with cron, wire real broker
+next: wire PA into trading_desk orchestrator dispatch + test full session
 
 ## What's Where (read on demand)
   `trading_desk.py` (1702 lines)
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+988ac5c feat(pa): add EOD dispatch with Telegram alerts
+088469f feat(pa): add SQLite state.db persistence
+f44b97d feat(pa): add ChromaDB RAG integration for trade learning
+0fc75c2 feat(pa): add strategy selection analysis
 8d306fe chore: update context with Brahmand MVP status
-1ddd6ba fix: replace missing ExitSignalHandlerTool with TradeCommandHandlerTool
-c9de340 docs(01): research phase domain — CrewAI Flow + Pydantic + ChromaDB + SQLite
-585c69f chore: auto-update session context + CLAUDE.md rules
-919dafd docs: slim CONTEXT to lightweight index
 ```

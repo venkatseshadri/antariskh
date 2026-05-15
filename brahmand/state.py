@@ -68,22 +68,59 @@ class TradeSignal(BaseModel):
 
 
 class TradeReview(BaseModel):
-    """Post-Mortem writes these for RAG storage."""
+    """Post-Mortem writes these for RAG storage.
 
+    Captures all PA learning dimensions:
+    - strategy_success: did Iron Fly/CS work?
+    - entry_window_patterns: was this the right entry time?
+    - sl_optimization: was SL optimal?
+    - vix_thresholds: was VIX in tradeable range?
+    - lot_scaling: was position size appropriate?
+    """
+
+    # Identifiers & Context
     date: str  # "2026-05-15"
     trade_id: str
-    strategy: str
-    market_regime: str
+    strategy: str  # IRON_FLY, CREDIT_SPREAD
+    market_regime: str  # SIDEWAYS, TRENDING
 
-    # Outcomes
+    # Market Context (for query filtering)
+    vix_at_entry: float = 18.0  # VIX level when trade entered
+    entry_time: str = ""  # "10:35" — for time_window extraction
+    entry_window: str = ""  # "10:30-11:00" — computed from entry_time
+
+    # Trade Execution
     entry_price: float
     exit_price: float
     pnl: float
+    lots: int = 1
 
-    # Analysis
-    success: bool
+    # Outcomes & Quality
+    success: bool  # Profitable or not
+    sl_hit: bool = False
+    tp_hit: bool = False
     failure_reason: Optional[str] = None
-    lesson_learned: str
 
-    # For RAG embedding
-    execution_summary: str
+    # PA Learning Dimensions
+    # strategy_success: captured by (strategy, market_regime, success)
+    strategy_score: Optional[float] = None  # Recommendation confidence
+
+    # entry_window_patterns: captured by (entry_time, entry_window, pnl)
+    entry_quality: str = "unknown"  # EXCELLENT, GOOD, FAIR, CRITICAL
+
+    # sl_optimization: captured by (sl, pnl, sl_hit)
+    sl_used: float = 3500.0
+    optimal_sl: Optional[float] = None
+    sl_improvement: Optional[float] = None
+
+    # vix_thresholds: captured by (vix_at_entry, success)
+    vix_ceiling: Optional[float] = None  # Recommended max VIX for this strategy
+
+    # lot_scaling: captured by (pnl, lots)
+    margin_available: Optional[float] = None
+    margin_used: Optional[float] = None
+    recommended_lots: Optional[int] = None
+
+    # Narrative
+    lesson_learned: str  # What to do next time
+    execution_summary: str  # Full context for RAG embedding

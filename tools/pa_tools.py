@@ -13,8 +13,9 @@ DUCKDB_SENSEX = Path(
     "/home/trading_ceo/python-trader/varaha/data/varaha_data_sensex.duckdb"
 )
 
-# Lazy-load ChromaDB manager to avoid import errors if not installed
+# Lazy-load managers to avoid import errors if not installed
 _rag_manager = None
+_state_manager = None
 
 
 def _get_rag_manager():
@@ -25,10 +26,22 @@ def _get_rag_manager():
             from brahmand.persistence.rag_manager import RAGManager
 
             _rag_manager = RAGManager(verbose=False)
-        except Exception as e:
-            # ChromaDB not available — return None for graceful degradation
+        except Exception:
             _rag_manager = False
     return _rag_manager if _rag_manager else None
+
+
+def _get_state_manager():
+    """Lazy-load StateManager on first use."""
+    global _state_manager
+    if _state_manager is None:
+        try:
+            from brahmand.persistence.state_manager import StateManager
+
+            _state_manager = StateManager(verbose=False)
+        except Exception:
+            _state_manager = False
+    return _state_manager if _state_manager else None
 
 
 def review_trade(trade: Dict, spec: Dict) -> Dict:
@@ -601,6 +614,85 @@ def query_similar_trades_from_rag(
         }
     except Exception as e:
         return {"found": False, "count": 0, "similar_trades": [], "error": str(e)}
+
+
+# ============================================================
+# SQLite State Persistence — Load/Save BrahmandState
+# ============================================================
+
+
+def load_portfolio_state() -> Dict:
+    """Load latest portfolio state from SQLite.
+
+    Returns:
+        {success, portfolio_value, margin_available, margin_used, active_trades_count, daily_pnl}
+    """
+    sm = _get_state_manager()
+    if sm is None:
+        return {"success": False, "message": "SQLite state not available"}
+
+    try:
+        state = sm.load_latest_state()
+        if state is None:
+            return {"success": False, "message": "No state found"}
+
+        return {
+            "success": True,
+            "portfolio_value": state.portfolio_value,
+            "margin_available": state.margin_available,
+            "margin_used": state.margin_used,
+            "active_trades_count": len(state.active_trades),
+            "daily_pnl": state.daily_pnl,
+            "session_pnl": state.session_pnl,
+            "market_regime": state.market_regime,
+            "vix_level": state.vix_level,
+            "completed_trades_count": len(state.completed_trades),
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Failed to load state: {str(e)}"}
+
+
+def save_session_state(
+    portfolio_value: float = 100000.0,
+    daily_pnl: float = 0.0,
+    session_pnl: float = 0.0,
+    margin_available: float = 200000.0,
+    margin_used: float = 0.0,
+    active_trades: List[Dict] = None,
+    completed_trades: List[Dict] = None,
+) -> Dict:
+    """Save session state to SQLite for next session to load.
+
+    Called by PA crew at EOD to persist current portfolio metrics.
+
+    Returns:
+        {success, message}
+    """
+    sm = _get_state_manager()
+    if sm is None:
+        return {"success": False, "message": "SQLite state not available"}
+
+    try:
+        from brahmand.state import BrahmandState
+
+        state = BrahmandState(
+            portfolio_value=portfolio_value,
+            daily_pnl=daily_pnl,
+            session_pnl=session_pnl,
+            margin_available=margin_available,
+            margin_used=margin_used,
+            active_trades=active_trades or [],
+            completed_trades=completed_trades or [],
+        )
+
+        success = sm.save_state(state)
+
+        return {
+            "success": success,
+            "message": f"Saved portfolio state: PV=₹{portfolio_value:,.0f}, P&L=₹{daily_pnl:+,.0f}",
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Failed to save state: {str(e)}"}
 
 
 def generate_pa_recommendations(

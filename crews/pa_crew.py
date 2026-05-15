@@ -20,6 +20,8 @@ from tools.pa_tools import (
     analyze_strategy_selection as _analyze_strategy_selection,
     write_trade_review_to_rag as _write_trade_review_to_rag,
     query_similar_trades_from_rag as _query_similar_trades_from_rag,
+    load_portfolio_state as _load_portfolio_state,
+    save_session_state as _save_session_state,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
 
@@ -106,6 +108,26 @@ def query_similar_trades_from_rag(
 
 
 @tool
+def load_portfolio_state() -> dict:
+    """Load current portfolio state (capital, margin, trades) from SQLite."""
+    return _load_portfolio_state()
+
+
+@tool
+def save_session_state(
+    portfolio_value: float = 100000.0,
+    daily_pnl: float = 0.0,
+    session_pnl: float = 0.0,
+    margin_available: float = 200000.0,
+    margin_used: float = 0.0,
+) -> dict:
+    """Save portfolio state to SQLite for next session."""
+    return _save_session_state(
+        portfolio_value, daily_pnl, session_pnl, margin_available, margin_used
+    )
+
+
+@tool
 def generate_pa_recommendations(
     trades: list,
     total_margin_available: float = 0,
@@ -124,6 +146,7 @@ reviewer = Agent(
         run_counterfactuals,
         write_trade_review_to_rag,
         query_similar_trades_from_rag,
+        load_portfolio_state,
         generate_pa_recommendations,
     ],
     allow_delegation=False,
@@ -137,6 +160,7 @@ analyst = Agent(
         analyze_sl_optimization,
         analyze_entry_window,
         analyze_strategy_selection,
+        save_session_state,
     ],
     allow_delegation=False,
     verbose=True,

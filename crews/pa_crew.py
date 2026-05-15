@@ -18,6 +18,8 @@ from tools.pa_tools import (
     analyze_sl_optimization as _analyze_sl_optimization,
     analyze_entry_window as _analyze_entry_window,
     analyze_strategy_selection as _analyze_strategy_selection,
+    write_trade_review_to_rag as _write_trade_review_to_rag,
+    query_similar_trades_from_rag as _query_similar_trades_from_rag,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
 
@@ -90,6 +92,20 @@ def analyze_strategy_selection(
 
 
 @tool
+def write_trade_review_to_rag(trade: dict, review: dict, market_regime: str = "UNKNOWN") -> dict:
+    """Store trade review to ChromaDB for RAG learning."""
+    return _write_trade_review_to_rag(trade, review, market_regime)
+
+
+@tool
+def query_similar_trades_from_rag(
+    query_text: str, strategy_filter: str = None, n_results: int = 5
+) -> dict:
+    """Query similar past trades from ChromaDB RAG."""
+    return _query_similar_trades_from_rag(query_text, strategy_filter, n_results=n_results)
+
+
+@tool
 def generate_pa_recommendations(
     trades: list,
     total_margin_available: float = 0,
@@ -103,7 +119,13 @@ def generate_pa_recommendations(
 
 reviewer = Agent(
     **load_agent_config("pa", "reviewer"),
-    tools=[review_trade, run_counterfactuals, generate_pa_recommendations],
+    tools=[
+        review_trade,
+        run_counterfactuals,
+        write_trade_review_to_rag,
+        query_similar_trades_from_rag,
+        generate_pa_recommendations,
+    ],
     allow_delegation=False,
     verbose=True,
 )

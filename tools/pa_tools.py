@@ -1,7 +1,7 @@
 """Post-Mortem Analyst deterministic tools.
 
 Review trades, run counterfactuals, detect patterns, recommend PM adjustments.
-Now with DuckDB analysis — "better than current" recommendation engine.
+Now with DuckDB analysis, strategy selection, and ChromaDB RAG learning.
 """
 
 import os
@@ -12,6 +12,23 @@ DUCKDB_NIFTY = Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duc
 DUCKDB_SENSEX = Path(
     "/home/trading_ceo/python-trader/varaha/data/varaha_data_sensex.duckdb"
 )
+
+# Lazy-load ChromaDB manager to avoid import errors if not installed
+_rag_manager = None
+
+
+def _get_rag_manager():
+    """Lazy-load RAGManager on first use."""
+    global _rag_manager
+    if _rag_manager is None:
+        try:
+            from brahmand.persistence.rag_manager import RAGManager
+
+            _rag_manager = RAGManager(verbose=False)
+        except Exception as e:
+            # ChromaDB not available — return None for graceful degradation
+            _rag_manager = False
+    return _rag_manager if _rag_manager else None
 
 
 def review_trade(trade: Dict, spec: Dict) -> Dict:
@@ -458,6 +475,132 @@ def analyze_lot_scaling(
             f"{'READY TO SCALE' if safe_lots >= 2 else f'Need ₹{lot_margin - free_cash:,.0f} more for next lot'}"
         ),
     }
+
+
+# ============================================================
+# ChromaDB RAG Learning — Store & Query Trade Reviews
+# ============================================================
+
+
+def write_trade_review_to_rag(
+    trade: Dict,
+    review: Dict,
+    market_regime: str = "UNKNOWN",
+    date: str = None,
+) -> Dict:
+    """Write a trade review to ChromaDB for RAG learning.
+
+    Args:
+        trade: Trade executed {trade_id, strategy, pnl, entry, exit, ...}
+        review: Review from PA {quality, score, issues}
+        market_regime: Market regime at time of trade
+        date: Date of trade (defaults to today)
+
+    Returns:
+        {success, doc_id, message}
+    """
+    rag = _get_rag_manager()
+    if rag is None:
+        return {"success": False, "message": "ChromaDB not available"}
+
+    from datetime import datetime
+
+    date = date or datetime.now().strftime("%Y-%m-%d")
+    lesson = ""
+
+    if review.get("quality") == "EXCELLENT":
+        lesson = f"Clean trade: {trade.get('strategy')} at {market_regime}. Replicate setup."
+    elif review.get("quality") == "CRITICAL":
+        lesson = f"AVOID: {trade.get('strategy')} failed at {market_regime}. Issues: {review.get('issues')}"
+    else:
+        lesson = f"Learn: {review.get('quality')} trade. Issues: {', '.join(review.get('issues', []))}"
+
+    trade_review = {
+        "date": date,
+        "trade_id": trade.get("trade_id", "unknown"),
+        "strategy": trade.get("strategy", "IRON_FLY"),
+        "market_regime": market_regime,
+        "pnl": trade.get("pnl", 0),
+        "success": trade.get("pnl", 0) > 0,
+        "lesson_learned": lesson,
+        "execution_summary": f"{trade.get('strategy')} in {market_regime} regime (VIX ~18-22). "
+        f"Quality: {review.get('quality')}. P&L: ₹{trade.get('pnl', 0):+,}. "
+        f"{lesson}",
+        "quality": review.get("quality"),
+        "score": review.get("score", 0),
+    }
+
+    try:
+        doc_id = rag.store_trade_review(trade_review)
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "message": f"Stored {trade_review['strategy']} review to RAG",
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Failed to store: {str(e)}"}
+
+
+def query_similar_trades_from_rag(
+    query_text: str,
+    strategy_filter: Optional[str] = None,
+    regime_filter: Optional[str] = None,
+    n_results: int = 5,
+) -> Dict:
+    """Query similar trades from ChromaDB RAG.
+
+    Used by Executor before deciding on a trade. Semantic search over past trade reviews.
+
+    Args:
+        query_text: e.g., "Iron Fly in sideways market with low VIX"
+        strategy_filter: Filter by strategy (IRON_FLY, CREDIT_SPREAD)
+        regime_filter: Filter by regime (SIDEWAYS, TRENDING)
+        n_results: Number of similar trades to return
+
+    Returns:
+        {found, count, similar_trades, evidence}
+    """
+    rag = _get_rag_manager()
+    if rag is None:
+        return {"found": False, "count": 0, "similar_trades": []}
+
+    try:
+        trades = rag.query_similar_trades(
+            query_text=query_text,
+            n_results=n_results,
+            strategy_filter=strategy_filter,
+            regime_filter=regime_filter,
+        )
+
+        if not trades:
+            return {
+                "found": False,
+                "count": 0,
+                "similar_trades": [],
+                "evidence": "No similar trades found in history",
+            }
+
+        # Summarize findings
+        wins = sum(1 for t in trades if t.get("success"))
+        avg_pnl = sum(t.get("pnl", 0) for t in trades) / len(trades) if trades else 0
+
+        return {
+            "found": True,
+            "count": len(trades),
+            "similar_trades": [
+                {
+                    "strategy": t.get("strategy", ""),
+                    "pnl": t.get("pnl", 0),
+                    "success": t.get("success", False),
+                }
+                for t in trades
+            ],
+            "evidence": f"Found {len(trades)} similar {strategy_filter or 'any'} trades. "
+            f"Win rate: {wins}/{len(trades)} ({wins/len(trades):.0%}). "
+            f"Avg P&L: ₹{avg_pnl:+,.0f}.",
+        }
+    except Exception as e:
+        return {"found": False, "count": 0, "similar_trades": [], "error": str(e)}
 
 
 def generate_pa_recommendations(

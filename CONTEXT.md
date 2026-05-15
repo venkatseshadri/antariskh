@@ -12,7 +12,8 @@ Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-PA crew complete: rolling multi-TF bars + Batch 1 gap-capable indicators (SMA, RSI, ATR, MACD)
+PA crew complete: rolling multi-TF bars + ALL 14 indicators (Batch 1 + Batch 2)
+Pipeline: v3.1 (1-min capture) → Redis queue → v4 (6 TF + indicators) → market_data_multitf.duckdb
 
 ## Pipeline Status
 - v3.1: 1-min capture (NIFTY/SENSEX) → Redis queue + log file

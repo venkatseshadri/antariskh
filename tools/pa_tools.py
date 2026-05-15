@@ -1329,7 +1329,8 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
             # Gets the latest bar up to the query timestamp
             result = db.execute(
                 f"""
-                SELECT timestamp, open, high, low, close, volume, adx, rsi, st_consensus
+                SELECT timestamp, open, high, low, close, volume,
+                       sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram
                 FROM market_data_multitf
                 WHERE timeframe_min = ? AND index_name = ? AND timestamp <= ?
                 ORDER BY timestamp DESC
@@ -1346,9 +1347,14 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
                     "low": result[3],
                     "close": result[4],
                     "volume": result[5],
-                    "adx": result[6],
-                    "rsi": result[7],
-                    "st": result[8],
+                    "sma20": result[6],
+                    "sma50": result[7],
+                    "sma200": result[8],
+                    "rsi": result[9],
+                    "atr": result[10],
+                    "macd": result[11],
+                    "macd_signal": result[12],
+                    "macd_histogram": result[13],
                 }
             else:
                 multitf[f"{tf_min}min"] = {
@@ -1358,9 +1364,14 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
                     "low": None,
                     "close": None,
                     "volume": None,
-                    "adx": None,
+                    "sma20": None,
+                    "sma50": None,
+                    "sma200": None,
                     "rsi": None,
-                    "st": None,
+                    "atr": None,
+                    "macd": None,
+                    "macd_signal": None,
+                    "macd_histogram": None,
                 }
 
         db.close()

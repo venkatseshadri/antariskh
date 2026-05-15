@@ -1330,7 +1330,8 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
             result = db.execute(
                 f"""
                 SELECT timestamp, open, high, low, close, volume,
-                       sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram
+                       sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram,
+                       adx, di_plus, di_minus, bb_upper, bb_middle, bb_lower, obv, cmf, cci
                 FROM market_data_multitf
                 WHERE timeframe_min = ? AND index_name = ? AND timestamp <= ?
                 ORDER BY timestamp DESC
@@ -1347,6 +1348,7 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
                     "low": result[3],
                     "close": result[4],
                     "volume": result[5],
+                    # Batch 1: Gap-Capable
                     "sma20": result[6],
                     "sma50": result[7],
                     "sma200": result[8],
@@ -1355,6 +1357,16 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
                     "macd": result[11],
                     "macd_signal": result[12],
                     "macd_histogram": result[13],
+                    # Batch 2: Gap-Sensitive
+                    "adx": result[14],
+                    "di_plus": result[15],
+                    "di_minus": result[16],
+                    "bb_upper": result[17],
+                    "bb_middle": result[18],
+                    "bb_lower": result[19],
+                    "obv": result[20],
+                    "cmf": result[21],
+                    "cci": result[22],
                 }
             else:
                 multitf[f"{tf_min}min"] = {
@@ -1372,6 +1384,15 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
                     "macd": None,
                     "macd_signal": None,
                     "macd_histogram": None,
+                    "adx": None,
+                    "di_plus": None,
+                    "di_minus": None,
+                    "bb_upper": None,
+                    "bb_middle": None,
+                    "bb_lower": None,
+                    "obv": None,
+                    "cmf": None,
+                    "cci": None,
                 }
 
         db.close()

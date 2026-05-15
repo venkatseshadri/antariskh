@@ -55,7 +55,7 @@ class MultiTFAggregatorQueue:
             print(f"[V4] {msg}")
 
     def _ensure_table_exists(self):
-        """Create market_data_multitf table with gap-capable indicators."""
+        """Create market_data_multitf table with all indicator batches."""
         try:
             conn = duckdb.connect(str(self.db_path), read_only=False)
 
@@ -72,7 +72,7 @@ class MultiTFAggregatorQueue:
                     close FLOAT,
                     volume FLOAT,
 
-                    -- Gap-Capable Indicators (Batch 1)
+                    -- Batch 1: Gap-Capable Indicators
                     sma20 FLOAT,
                     sma50 FLOAT,
                     sma200 FLOAT,
@@ -82,8 +82,18 @@ class MultiTFAggregatorQueue:
                     macd_signal FLOAT,
                     macd_histogram FLOAT,
 
-                    -- Legacy (to remove)
+                    -- Batch 2: Gap-Sensitive Indicators (intraday buildup)
                     adx FLOAT,
+                    di_plus FLOAT,
+                    di_minus FLOAT,
+                    bb_upper FLOAT,
+                    bb_middle FLOAT,
+                    bb_lower FLOAT,
+                    obv FLOAT,
+                    cmf FLOAT,
+                    cci FLOAT,
+
+                    -- Legacy (deprecated)
                     st_consensus TEXT,
 
                     PRIMARY KEY (timestamp, index_name, timeframe_min)
@@ -92,7 +102,7 @@ class MultiTFAggregatorQueue:
             )
 
             conn.close()
-            self.log("✅ Table market_data_multitf ready (Batch 1 indicators)")
+            self.log("✅ Table market_data_multitf ready (Batch 1 + Batch 2 indicators)")
 
         except Exception as e:
             self.log(f"⚠️ Table creation: {e}")
@@ -343,6 +353,14 @@ class MultiTFAggregatorQueue:
         atr = self._calculate_atr(context_highs, context_lows, context_closes, 14)
         macd_result = self._calculate_macd(context_closes)
 
+        # Batch 2: Gap-Sensitive Indicators (need intraday buildup, return None if insufficient)
+        adx_result = self._calculate_adx(context_highs, context_lows, context_closes, 14)
+        bb_result = self._calculate_bollinger_bands(context_closes, 20)
+        obv = self._calculate_obv(context_closes, [b.get("volume", 0) for b in (bars if all_bars is None else all_bars)])
+        context_volumes = [b.get("volume", 0) for b in (bars if all_bars is None else all_bars)]
+        cmf = self._calculate_cmf(context_highs, context_lows, context_closes, context_volumes, 20)
+        cci = self._calculate_cci(context_highs, context_lows, context_closes, 20)
+
         return {
             "timestamp": timestamps[-1],
             "open": agg_open,
@@ -350,6 +368,7 @@ class MultiTFAggregatorQueue:
             "low": agg_low,
             "close": agg_close,
             "volume": agg_volume,
+            # Batch 1: Gap-Capable
             "sma20": sma20,
             "sma50": sma50,
             "sma200": sma200,
@@ -358,8 +377,18 @@ class MultiTFAggregatorQueue:
             "macd": macd_result["macd"],
             "macd_signal": macd_result["signal"],
             "macd_histogram": macd_result["histogram"],
-            "adx": -1.0,  # Legacy, to be removed
-            "st_consensus": "NEUTRAL",  # Legacy, to be removed
+            # Batch 2: Gap-Sensitive
+            "adx": adx_result["adx"],
+            "di_plus": adx_result["di_plus"],
+            "di_minus": adx_result["di_minus"],
+            "bb_upper": bb_result["bb_upper"],
+            "bb_middle": bb_result["bb_middle"],
+            "bb_lower": bb_result["bb_lower"],
+            "obv": obv,
+            "cmf": cmf,
+            "cci": cci,
+            # Legacy
+            "st_consensus": "NEUTRAL",
         }
 
     def _calculate_adx(self, closes: list, period: int = 14) -> float:
@@ -482,6 +511,126 @@ class MultiTFAggregatorQueue:
             "histogram": round(histogram, 2),
         }
 
+    def _calculate_adx(self, highs: list, lows: list, closes: list, period: int = 14) -> dict:
+        """Calculate ADX and Directional Indicators. Gap-sensitive (needs continuous buildup)."""
+        if len(closes) < period:
+            return {"adx": None, "di_plus": None, "di_minus": None}
+
+        # Calculate True Range
+        trs = []
+        for i in range(1, len(closes)):
+            high_low = highs[i] - lows[i]
+            high_close = abs(highs[i] - closes[i - 1])
+            low_close = abs(lows[i] - closes[i - 1])
+            tr = max(high_low, high_close, low_close)
+            trs.append(tr)
+
+        # Calculate Directional Movement
+        plus_dm = []
+        minus_dm = []
+        for i in range(1, len(highs)):
+            high_diff = highs[i] - highs[i - 1]
+            low_diff = lows[i - 1] - lows[i]
+
+            if high_diff > 0 and high_diff > low_diff:
+                plus_dm.append(high_diff)
+                minus_dm.append(0)
+            elif low_diff > 0 and low_diff > high_diff:
+                plus_dm.append(0)
+                minus_dm.append(low_diff)
+            else:
+                plus_dm.append(0)
+                minus_dm.append(0)
+
+        # Calculate DI+ and DI-
+        tr_sum = sum(trs[-period:]) if len(trs) >= period else sum(trs)
+        plus_dm_sum = sum(plus_dm[-period:]) if len(plus_dm) >= period else sum(plus_dm)
+        minus_dm_sum = sum(minus_dm[-period:]) if len(minus_dm) >= period else sum(minus_dm)
+
+        di_plus = (100 * plus_dm_sum / tr_sum) if tr_sum > 0 else 0
+        di_minus = (100 * minus_dm_sum / tr_sum) if tr_sum > 0 else 0
+
+        # Calculate ADX (simplified)
+        di_diff = abs(di_plus - di_minus)
+        di_sum = di_plus + di_minus
+        di_ratio = (100 * di_diff / di_sum) if di_sum > 0 else 0
+
+        return {
+            "adx": round(di_ratio, 2),
+            "di_plus": round(di_plus, 2),
+            "di_minus": round(di_minus, 2),
+        }
+
+    def _calculate_bollinger_bands(self, closes: list, period: int = 20, std_dev: float = 2.0) -> dict:
+        """Calculate Bollinger Bands. Gap-sensitive (needs period bars)."""
+        if len(closes) < period:
+            return {"bb_upper": None, "bb_middle": None, "bb_lower": None}
+
+        recent = closes[-period:]
+        sma = sum(recent) / period
+        variance = sum((x - sma) ** 2 for x in recent) / period
+        std = variance ** 0.5
+
+        upper = sma + (std_dev * std)
+        lower = sma - (std_dev * std)
+
+        return {
+            "bb_upper": round(upper, 2),
+            "bb_middle": round(sma, 2),
+            "bb_lower": round(lower, 2),
+        }
+
+    def _calculate_obv(self, closes: list, volumes: list) -> float:
+        """Calculate On-Balance Volume. Gap-sensitive (accumulates intraday)."""
+        if len(closes) < 2 or len(volumes) < 2:
+            return None
+
+        obv = 0
+        for i in range(1, len(closes)):
+            if closes[i] > closes[i - 1]:
+                obv += volumes[i]
+            elif closes[i] < closes[i - 1]:
+                obv -= volumes[i]
+
+        return round(obv, 0) if obv != 0 else 0
+
+    def _calculate_cmf(self, highs: list, lows: list, closes: list, volumes: list, period: int = 20) -> float:
+        """Calculate Chaikin Money Flow. Gap-sensitive (needs period bars)."""
+        if len(closes) < period or len(volumes) < period:
+            return None
+
+        mfv_sum = 0  # Money Flow Volume
+        vol_sum = 0
+
+        for i in range(len(closes) - period, len(closes)):
+            hl_range = highs[i] - lows[i]
+            if hl_range == 0:
+                mfm = 0
+            else:
+                mfm = ((closes[i] - lows[i]) - (highs[i] - closes[i])) / hl_range
+            mfv_sum += mfm * volumes[i]
+            vol_sum += volumes[i]
+
+        cmf = (mfv_sum / vol_sum) if vol_sum > 0 else 0
+        return round(cmf, 4)
+
+    def _calculate_cci(self, highs: list, lows: list, closes: list, period: int = 20) -> float:
+        """Calculate Commodity Channel Index. Gap-sensitive (needs period bars)."""
+        if len(closes) < period:
+            return None
+
+        recent_h = highs[-period:]
+        recent_l = lows[-period:]
+        recent_c = closes[-period:]
+
+        # Typical Price
+        tp = [(h + l + c) / 3 for h, l, c in zip(recent_h, recent_l, recent_c)]
+        sma_tp = sum(tp) / period
+        mean_dev = sum(abs(x - sma_tp) for x in tp) / period
+
+        cci = (tp[-1] - sma_tp) / (0.015 * mean_dev) if mean_dev > 0 else 0
+        return round(cci, 2)
+
     def write_aggregated_bars(self, bars: list, index_name: str, timeframe_min: int):
         """Write aggregated bars to database."""
         if not bars:
@@ -496,8 +645,8 @@ class MultiTFAggregatorQueue:
                     INSERT INTO market_data_multitf
                     (timestamp, index_name, timeframe_min, open, high, low, close, volume,
                      sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram,
-                     adx, st_consensus)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     adx, di_plus, di_minus, bb_upper, bb_middle, bb_lower, obv, cmf, cci, st_consensus)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (timestamp, index_name, timeframe_min) DO UPDATE SET
                         open = EXCLUDED.open,
                         high = EXCLUDED.high,
@@ -513,6 +662,14 @@ class MultiTFAggregatorQueue:
                         macd_signal = EXCLUDED.macd_signal,
                         macd_histogram = EXCLUDED.macd_histogram,
                         adx = EXCLUDED.adx,
+                        di_plus = EXCLUDED.di_plus,
+                        di_minus = EXCLUDED.di_minus,
+                        bb_upper = EXCLUDED.bb_upper,
+                        bb_middle = EXCLUDED.bb_middle,
+                        bb_lower = EXCLUDED.bb_lower,
+                        obv = EXCLUDED.obv,
+                        cmf = EXCLUDED.cmf,
+                        cci = EXCLUDED.cci,
                         st_consensus = EXCLUDED.st_consensus
                     """,
                     (
@@ -533,6 +690,14 @@ class MultiTFAggregatorQueue:
                         bar["macd_signal"],
                         bar["macd_histogram"],
                         bar["adx"],
+                        bar["di_plus"],
+                        bar["di_minus"],
+                        bar["bb_upper"],
+                        bar["bb_middle"],
+                        bar["bb_lower"],
+                        bar["obv"],
+                        bar["cmf"],
+                        bar["cci"],
                         bar["st_consensus"],
                     ),
                 )

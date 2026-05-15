@@ -17,8 +17,15 @@ Pipeline: v3.1 (1-min capture) → Redis queue → v4 (6 TF + indicators) → ma
 
 ## Pipeline Status
 - v3.1: 1-min capture (NIFTY/SENSEX) → Redis queue + log file
-- v4: Rolling bar aggregation (5/15/30/60/240/1440-min) + Batch 1 indicators → market_data_multitf.duckdb
+- v4: Rolling bar aggregation (5/15/30/60/240/1440-min) + ALL 14 indicators → market_data_multitf.duckdb
 - PA Researcher: snapshot_multitf() → OHLC + Trend/Momentum/Volatility → phase reasoning (raw data only)
+
+## Monday Production Readiness ✅
+**Cron-based reliability:**
+- 09:14 AM: Master script starts pipeline (v3.1 NIFTY/SENSEX + v4)
+- Every 5 min (9:15-15:30): Health-check validates master is alive
+- If master dies: Auto-restart with cleanup (stale processes, locks)
+- Guaranteed: 1 master + 3 children, no duplicates, continuous monitoring
 
 ## Indicators Complete ✅
 

@@ -703,3 +703,62 @@ def dispatch_with_ralph(crew_name: str, query: str = "") -> Dict:
             pass
 
     return {**crew_result, "ralph": ralph_result}
+
+
+# ============================================================
+# PA EOD Dispatch — Post-Mortem Analysis at 15:26
+# ============================================================
+
+
+def dispatch_pa_crew(
+    session_trades: List[Dict],
+    session_pnl: float = 0,
+    market_regime: str = "UNKNOWN",
+    vix_at_close: float = 18.0,
+) -> Dict:
+    """Dispatch PA crew for end-of-day analysis.
+
+    Called at 15:26 after market close. PA reviews all session trades,
+    runs counterfactuals, detects patterns, writes reviews to ChromaDB,
+    and generates recommendations.
+
+    Args:
+        session_trades: All trades executed today
+        session_pnl: Day's total P&L
+        market_regime: Market regime for the session
+        vix_at_close: VIX level at market close
+
+    Returns:
+        PA crew analysis + recommendations
+    """
+    query = (
+        f"EOD analysis: {len(session_trades)} trades executed, "
+        f"P&L ₹{session_pnl:+,.0f}. "
+        f"Market: {market_regime}, VIX={vix_at_close}. "
+        f"Review all trades, generate recommendations."
+    )
+
+    logger.info(f"📊 Dispatching PA crew for EOD analysis (queries={query[:50]}...)")
+
+    result = dispatch_with_ralph(crew_name="pa", query=query)
+
+    # Extract top 3 recommendations for Telegram alert
+    recommendations = result.get("output", {}).get("recommendations", [])[:3]
+    telegram_message = f"📊 EOD PA Analysis\n"
+    telegram_message += f"Trades: {len(session_trades)} | P&L: ₹{session_pnl:+,.0f}\n"
+    if recommendations:
+        telegram_message += "Top recommendations:\n"
+        for i, rec in enumerate(recommendations, 1):
+            telegram_message += f"{i}. {rec}\n"
+    else:
+        telegram_message += "Strategy executing well — no changes needed."
+
+    try:
+        from tools.notifications import send_telegram
+
+        send_telegram(message=telegram_message, channel="alerts")
+        logger.info(f"✓ Sent PA EOD alert to Telegram")
+    except Exception as e:
+        logger.warning(f"Failed to send Telegram alert: {e}")
+
+    return result

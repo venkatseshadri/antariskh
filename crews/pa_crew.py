@@ -22,6 +22,7 @@ from tools.pa_tools import (
     query_similar_trades_from_rag as _query_similar_trades_from_rag,
     load_portfolio_state as _load_portfolio_state,
     save_session_state as _save_session_state,
+    snapshot_indicators as _snapshot_indicators,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
 
@@ -128,6 +129,12 @@ def save_session_state(
 
 
 @tool
+def snapshot_indicators(timestamp: str, index_name: str = "NIFTY") -> dict:
+    """Snapshot all indicators at a specific moment for breakout analysis."""
+    return _snapshot_indicators(timestamp, index_name)
+
+
+@tool
 def generate_pa_recommendations(
     trades: list,
     total_margin_available: float = 0,
@@ -161,6 +168,7 @@ analyst = Agent(
         analyze_entry_window,
         analyze_strategy_selection,
         save_session_state,
+        snapshot_indicators,
     ],
     allow_delegation=False,
     verbose=True,

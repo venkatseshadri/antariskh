@@ -491,6 +491,165 @@ def analyze_lot_scaling(
 
 
 # ============================================================
+# Breakout Analysis Tools — Foundation Layer
+# ============================================================
+
+
+def snapshot_indicators(timestamp: str, index_name: str = "NIFTY") -> Dict:
+    """Snapshot ALL indicators at a specific moment.
+
+    Used for analyzing what indicators showed at:
+    - Breakout moment
+    - Range formation start
+    - Key trade events
+
+    Args:
+        timestamp: ISO timestamp (e.g., "2026-05-15 10:45:00")
+        index_name: NIFTY or SENSEX
+
+    Returns:
+        {
+          price: {spot, futures, atm_strike},
+          trend: {supertrend_1min, supertrend_5min, supertrend_15min, st_consensus, adx},
+          momentum: {rsi, ema_5, ema_20, ema_50, ema_crossover_status},
+          volatility: {atr, india_vix, iv_rank, iv_regime},
+          structure: {pivot_pp, pivot_r1/s1, swing_high, swing_low, support, resistance},
+          energy: {bb_pct_b, vwap, smc_strength},
+          greeks: {agg_delta, agg_gamma, agg_vega},
+          timestamp, success
+        }
+    """
+    try:
+        import duckdb
+        from pathlib import Path
+
+        db_path = Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb")
+        if not db_path.exists():
+            return {"success": False, "message": "DuckDB not found"}
+
+        db = duckdb.connect(str(db_path), read_only=True)
+
+        # Query exact timestamp
+        result = db.execute(
+            f"""
+            SELECT
+                -- Price
+                spot, futures, atm_strike,
+                -- Trend (multi-timeframe)
+                supertrend_value, supertrend_direction,
+                st_5min_value, st_5min_direction,
+                st_15min_value, st_15min_direction,
+                st_consensus,
+                adx,
+                -- Momentum
+                rsi,
+                ema_5, ema_20, ema_50,
+                -- Volatility
+                atr, india_vix, iv_rank, iv_regime,
+                -- Structure
+                pivot_pp, pivot_r1, pivot_s1,
+                swing_high, swing_low,
+                open_range_high, open_range_low,
+                intraday_high, intraday_low,
+                -- Energy
+                bb_pct_b, vwap, smc_strength,
+                -- Greeks
+                agg_delta, agg_gamma, agg_vega
+            FROM market_data
+            WHERE timestamp = ? AND index_name = ?
+            LIMIT 1
+            """,
+            (timestamp, index_name),
+        ).fetchone()
+
+        db.close()
+
+        if not result:
+            return {
+                "success": False,
+                "message": f"No data for {timestamp}",
+                "timestamp": timestamp,
+            }
+
+        # Determine EMA crossover status
+        ema_5, ema_20, ema_50 = result[14], result[15], result[16]
+        ema_crossover = "NONE"
+        if ema_5 > ema_20 > ema_50:
+            ema_crossover = "BULLISH"
+        elif ema_5 < ema_20 < ema_50:
+            ema_crossover = "BEARISH"
+
+        # Determine support/resistance relative to price
+        spot = result[0]
+        pivot_pp, pivot_r1, pivot_s1 = result[26], result[27], result[28]
+        swing_high, swing_low = result[29], result[30]
+        support = max(pivot_s1, swing_low) if pivot_s1 and swing_low else pivot_s1 or swing_low
+        resistance = min(pivot_r1, swing_high) if pivot_r1 and swing_high else pivot_r1 or swing_high
+
+        snapshot = {
+            "success": True,
+            "timestamp": timestamp,
+            "index": index_name,
+            "price": {
+                "spot": result[0],
+                "futures": result[1],
+                "atm_strike": result[2],
+            },
+            "trend": {
+                "supertrend_1min_value": result[3],
+                "supertrend_1min_direction": result[4],
+                "supertrend_5min_value": result[5],
+                "supertrend_5min_direction": result[6],
+                "supertrend_15min_value": result[7],
+                "supertrend_15min_direction": result[8],
+                "supertrend_consensus": result[9],
+                "adx": result[10],
+            },
+            "momentum": {
+                "rsi": result[11],
+                "ema_5": ema_5,
+                "ema_20": ema_20,
+                "ema_50": ema_50,
+                "ema_crossover": ema_crossover,
+            },
+            "volatility": {
+                "atr": result[19],
+                "india_vix": result[20],
+                "iv_rank": result[21],
+                "iv_regime": result[22],
+            },
+            "structure": {
+                "pivot_pp": pivot_pp,
+                "pivot_r1": pivot_r1,
+                "pivot_s1": pivot_s1,
+                "swing_high": swing_high,
+                "swing_low": swing_low,
+                "support_level": support,
+                "resistance_level": resistance,
+                "open_range_high": result[31],
+                "open_range_low": result[32],
+                "intraday_high": result[33],
+                "intraday_low": result[34],
+            },
+            "energy": {
+                "bb_pct_b": result[35],
+                "vwap": result[36],
+                "smc_strength": result[37],
+            },
+            "greeks": {
+                "agg_delta": result[38],
+                "agg_gamma": result[39],
+                "agg_vega": result[40],
+            },
+        }
+
+        return snapshot
+
+    except Exception as e:
+        return {"success": False, "message": f"Failed to snapshot: {str(e)}"}
+
+
+# ============================================================
 # ChromaDB RAG Learning — Store & Query Trade Reviews
 # ============================================================
 

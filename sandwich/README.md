@@ -4,7 +4,7 @@ Entry-signal research project. Produces probabilistic directional/path signals f
 
 ## Status
 
-Step 1: Connect & Inspect — in progress.
+Step 1: Connect & Inspect — ✅ complete (2026-05-16)
 
 ## Layout
 

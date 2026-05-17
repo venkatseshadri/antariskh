@@ -1,4 +1,4 @@
-# SESSION CONTEXT — Updated 2026-05-17 11:32
+# SESSION CONTEXT — Updated 2026-05-17 11:45
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
 Branch: `master` | Live data: VIX=18.42, NIFTY=23752.55, Regime=TRENDING_BULL
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=18.42, NIFTY=23752.55, Regime=TRENDING_BULL
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Data population audit: 2 DB queries, found ob_zone 12.9%, cluster 0%, st_consensus 57%, v4 = 1 day. Wrote AUDIT_DATA_POPULATION.md
+Fixed cluster_support 0% bug: VARCHAR vs DATE type mismatch in SQL, silent exception. Also fixed DATA_CAPTURE_V4.md talib claim, added v3.1 buffer warmup, DuckDB reconnect retry
 
 ## Priority Queue
-R3-Multi spec: decide what to do about OB zone and cluster gaps
+R3-Multi spec: ob_zone at 12.9% still needs investigation
 
 ## What's Where (read on demand)
   `trading_desk.py` (1702 lines)
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+b8c626b docs: add AUDIT_DATA_POPULATION.md — real DuckDB queries, no speculation
 5d945b8 chore: auto-update session context
 f19d08f docs: fix DATA_CAPTURE_V4.md — ta-lib IS installed, ADX 78% non-null; May 15 restart cascade caused NULLs
 128cf9a docs: add DATA_CAPTURE_V4.md — multi-TF aggregator schema, pipeline, last 10 rows
 6f97294 remove sandwich/ — moved to standalone repo github.com/venkatseshadri/sandwich
-2554dfd Sandwich: add Claude design analysis + full conversation PDF text
 ```

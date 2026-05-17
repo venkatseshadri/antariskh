@@ -60,11 +60,12 @@ Infra (partially broker-dependent):
   open_price             2,238  (73.6%)
   pivot_pp               2,300  (75.7%)
 
-DEAD columns (0.0%):
-  cluster_support            0  (0.0%)
-  cluster_resistance         0  (0.0%)
-  distance_to_support        0  (0.0%)
-  distance_to_resistance     0  (0.0%)
+DEAD columns (FIXED 2026-05-17):
+  cluster_support            0  (FIXED)  — was VARCHAR vs DATE type mismatch in SQL
+  cluster_resistance         0  (FIXED)  — same bug, caught silently by try/except
+  distance_to_support        0  (FIXED)  — "
+  distance_to_resistance     0  (FIXED)  — " 
+  Root cause: varaha_advanced_indicators.py:345 — CAST(date AS DATE) was missing
 ```
 
 ## v4 `market_data_multitf` — NIFTY (82 bars total across 6 TFs)
@@ -91,7 +92,7 @@ cci:       82-100% populated per TF
 | Gap | Severity | Detail |
 |-----|----------|--------|
 | ob_zone_high/low @ 12.9% | **BLOCKER** | Order block detection fails for 87% of rows. OB zones are the SMC foundation. But ob_strength/fvg_mitigated at 88% suggest the bools are computed from something else — needs code audit. |
-| cluster_support/resistance @ 0% | **DEAD** | Price cluster detection never populated. Remove from spec or fix. |
+| cluster_support/resistance @ 0% | **FIXED** | VARCHAR vs DATE type mismatch in SQL query. `CAST(date AS DATE)` added. Will populate on next capture. |
 | v4 has 1 day | **SEVERE** | SMA50/SMA200 impossible for weeks. MACD/Bollinger/ADX compute fine from ~20 bars. |
 | st_consensus @ 57% | **MODERATE** | Multi-TF SuperTrend needs both 5m and 15m ST — buffer warmup will fix. |
 | EMA_50 @ 67%, ADX @ 78% | **MODERATE** | Fixed by today's buffer warmup patch. Will normalize to ~88% (matching IV/Greeks ceiling). |

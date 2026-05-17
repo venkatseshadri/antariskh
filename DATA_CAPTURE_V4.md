@@ -165,7 +165,23 @@ Data captured May 15, 2026 — single trading day.
 2026-05-15T15:25:00 | spot=23632.9 | vix=18.90 | ADX=-    | RSI=-  | IV_rank=97.1 | delta=+0.024 | theta=-172.6 | PCR=1.086 | bearish | late | gap=0.18%
 ```
 
-> v3.1: 3,039 rows total, 104 columns. ADX/RSI/ATR NULL because ta-lib not installed. Other indicators (IV_rank, Greeks, PCR, sentiment, SMC levels) populate fine.
+> v3.1: 3,039 rows total, 104 columns. ta-lib **is installed** — ADX/RSI/ATR NULL in last 10 rows because process restarts lost the in-memory buffer. Overall 2,386/3,039 rows (78.5%) have non-null ADX.
+> May 15 anomaly: only 135/535 rows (25%) had non-null ADX due to DuckDB lock conflict restart cascade. Fixed in v3.1+ with buffer warmup from log on restart.
+
+**Per-day ADX non-null rate:**
+
+| Date | Rows | ADX non-null | Rate |
+|------|------|-------------|------|
+| 2026-05-04 | 364 | 336 | 92.3% |
+| 2026-05-05 | 367 | 322 | 87.7% |
+| 2026-05-06 | 376 | 348 | 92.6% |
+| 2026-05-07 | 375 | 361 | 96.3% |
+| 2026-05-08 | 375 | 361 | 96.3% |
+| 2026-05-11 | 375 | 361 | 96.3% |
+| 2026-05-12 | 20 | 6 | 30.0% |
+| 2026-05-14 | 252 | 156 | 61.9% |
+| 2026-05-15 | 535 | 135 | 25.2% |
+| **Total** | **3,039** | **2,386** | **78.5%** |
 
 ## Prerequisites
 

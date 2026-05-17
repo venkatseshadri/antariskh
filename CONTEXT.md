@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-05-15 09:22
+# SESSION CONTEXT — Updated 2026-05-17 11:28
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
+Branch: `master` | Live data: VIX=18.42, NIFTY=23752.55, Regime=TRENDING_BULL
 
 ## Locations
 ```
@@ -12,35 +12,10 @@ Branch: `master` | Live data: VIX=18.49, NIFTY=23719.0, Regime=SIDEWAYS
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-PA crew complete: rolling multi-TF bars + ALL 14 indicators (Batch 1 + Batch 2)
-Pipeline: v3.1 (1-min capture) → Redis queue → v4 (6 TF + indicators) → market_data_multitf.duckdb
+Fixed ta-lib NULL indicators: v3.1 buffer warmup from log + DuckDB reconnect retry + indicators redundancy log; fixed DATA_CAPTURE_V4.md false ta-lib claim
 
-## Pipeline Status
-- v3.1: 1-min capture (NIFTY/SENSEX) → Redis queue + log file
-- v4: Rolling bar aggregation (5/15/30/60/240/1440-min) + ALL 14 indicators → market_data_multitf.duckdb
-- PA Researcher: snapshot_multitf() → OHLC + Trend/Momentum/Volatility → phase reasoning (raw data only)
-
-## Monday Production Readiness ✅
-**Cron-based reliability:**
-- 09:14 AM: Master script starts pipeline (v3.1 NIFTY/SENSEX + v4)
-- Every 5 min (9:15-15:30): Health-check validates master is alive
-- If master dies: Auto-restart with cleanup (stale processes, locks)
-- Guaranteed: 1 master + 3 children, no duplicates, continuous monitoring
-
-## Indicators Complete ✅
-
-**Batch 1 - Gap-Capable** (work from market open):
-✅ SMA 20/50/200 — trend identification
-✅ RSI 14 — momentum measurement
-✅ ATR 14 — volatility range
-✅ MACD 12/26/9 — momentum confirmation
-
-**Batch 2 - Gap-Sensitive** (accumulate intraday):
-✅ ADX + DI+/DI- — trend strength & direction
-✅ Bollinger Bands — volatility extremes
-✅ OBV — on-balance volume
-✅ CMF — Chaikin Money Flow (volume quality)
-✅ CCI — oscillator for extremes
+## Priority Queue
+verify v3.1 indicators populate correctly on Monday
 
 ## What's Where (read on demand)
   `trading_desk.py` (1702 lines)
@@ -65,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
-988ac5c feat(pa): add EOD dispatch with Telegram alerts
-088469f feat(pa): add SQLite state.db persistence
-f44b97d feat(pa): add ChromaDB RAG integration for trade learning
-0fc75c2 feat(pa): add strategy selection analysis
-8d306fe chore: update context with Brahmand MVP status
+f19d08f docs: fix DATA_CAPTURE_V4.md — ta-lib IS installed, ADX 78% non-null; May 15 restart cascade caused NULLs
+128cf9a docs: add DATA_CAPTURE_V4.md — multi-TF aggregator schema, pipeline, last 10 rows
+6f97294 remove sandwich/ — moved to standalone repo github.com/venkatseshadri/sandwich
+2554dfd Sandwich: add Claude design analysis + full conversation PDF text
+51bad2b Sandwich Step 1: mark complete, add PROGRESS.md
 ```

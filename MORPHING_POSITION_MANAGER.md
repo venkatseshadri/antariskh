@@ -7,7 +7,40 @@
 
 Entry gate (Trend + Traffic Light, 0 LLM, Redis-only) determines direction.  
 Position manager dynamically adjusts open positions — rolling, hedging, morphing.  
+Margin capture + wing optimizer select optimal spread width per market conditions.  
 One system, one owner. No conflict between risk manager and position manager.
+
+## New: Margin Capture & Wing Optimizer
+
+**Source:** `brahmand/margin_capture.py`, `brahmand/wing_optimizer.py`
+
+Every 5 minutes, Shoonya's `span_calculator` API captures margin requirements for PE and CE credit spreads at ATM ±5 strikes. The wing optimizer computes risk/reward per wing width.
+
+### Formulas (NIFTY lot = 65)
+```
+Net Credit = premium_sell − premium_buy                     (per share)
+Max Profit = Net Credit × 65                                 (per lot, both OTM at expiry)
+Max Loss   = (strike_diff − Net Credit) × 65                 (per lot, both ITM at expiry)
+ROI%       = (Net Credit × 65) / margin × 100
+R/R        = Net Credit / (strike_diff − Net Credit)
+```
+
+### Capital Efficiency (PE Spread, 0 DTE)
+| Wing | Margin | Net Cr/Lot | Max Loss/Lot | ROI% | R/R |
+|------|--------|-----------|-------------|------|-----|
+| 50pt | ₹114,986 | ₹1,424 | ₹1,826 | 1.2% | 0.78 |
+| 100pt | ₹117,514 | ₹2,613 | ₹3,887 | 2.2% | 0.67 |
+| 150pt | ₹120,094 | ₹3,542 | ₹6,208 | 3.0% | 0.57 |
+| 200pt | ₹122,685 | ₹4,284 | ₹8,716 | 3.5% | 0.49 |
+| 250pt | ₹125,286 | ₹4,852 | ₹11,398 | 3.9% | 0.43 |
+
+**50→100pt gives the best marginal efficiency** (+₹470 credit per ₹1K added margin).
+Marginal returns diminish sharply after 150pt. Default wing: 100pt.
+
+### Cron
+```
+*/5 9-15 * * 1-5  cd /home/trading_ceo/brahmand && /usr/bin/python3 margin_capture.py >> logs/margin_capture.log
+```
 
 ---
 

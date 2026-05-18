@@ -1,48 +1,58 @@
-# SESSION CONTEXT — Updated 2026-05-17 11:45
+# SESSION CONTEXT — Updated 2026-05-18 22:00
 
-Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=18.42, NIFTY=23752.55, Regime=TRENDING_BULL
+Project: Antariksh — Autonomous options trading desk (NIFTY Credit Spreads + Iron Butterfly)
+Branch: `master` | 2 paper trades today | Deploying morphing PM + margin capture tomorrow (May 19, 0 DTE)
 
 ## Locations
 ```
-/home/trading_ceo/antariksh/              ← Antariksh
-/home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB capture)
-/home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/  ← Shoonya API
+/home/trading_ceo/antariksh/              ← Antariksh (orchestrator, agents, tools, config)
+/home/trading_ceo/brahmand/               ← Brahmand (5-agent chain, kickoff, PM, margin capture)
+/home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB + Redis capture v3.1+v4)
+/home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/  ← Shoonya broker API
 ```
-GitHub: `github.com/venkatseshadri/antariskh`
+GitHub: `github.com/venkatseshadri/antariskh` + `github.com/venkatseshadri/brahmand`
 
-## Last Built
-Fixed cluster_support 0% bug: VARCHAR vs DATE type mismatch in SQL, silent exception. Also fixed DATA_CAPTURE_V4.md talib claim, added v3.1 buffer warmup, DuckDB reconnect retry
+## Last Built (May 18 — All deployed)
+
+**Entry Gate (Redis-only, 0 LLM, 0 DuckDB, ~100ms)**
+- `antariksh/tools/entry_tools.py` — 9 family tools + deterministic scorers (score_trend_redis, score_traffic_light_redis, combine_entry_scores) + RL weight learner
+- `antariksh/agents/entry/entry_check.py` — confidence-weighted fusion → signal-driven strategy
+- `antariksh/config/entry_weights.json` — tunable TF weights, ADX thresholds, pattern scores
+- v3.1 data capture pushes 15 indicator fields to Redis (ema, rsi, adx, st_direction, bb)
+
+**Position Manager (single owner, no conflict)**
+- `brahmand/position_manager.py` — 7-priority checks: decay→roll, hedge→tighten, signal→morph, SL, TP, floor, market close
+- Integrated into `brahmand/kickoff.py` → monitor_trade() with legacy fallback
+- `brahmand/e2e_chain.py` — signal-driven: BULLISH→PUT_SPREAD, BEARISH→CALL_SPREAD, NEUTRAL→BUTTERFLY
+
+**Margin Capture + Wing Optimizer**
+- `brahmand/margin_capture.py` — Shoonya span_calculator every 5 min, PE/CE margins ATM ±5 strikes
+- `brahmand/wing_optimizer.py` — risk/reward scoring per wing, NIFTY lot=65, ROI% + R/R
+
+**Paper trade mode:** max 99 trades/day, 5min cooldown, no TIME_EXIT
+
+## Tomorrow's Cron
+```
+09:14  Data capture (v3.1+v4) starts
+09:30  Kickoff every 5 min: Entry Gate → Position Manager → Margin-optimized spreads
+09:30  Margin capture every 5 min: Shoonya span calc → wing_optimizer
+14:35  Session orchestrator exit (Telegram P&L)
+15:30  Market close → Post-Mortem + RL weight update
+```
 
 ## Priority Queue
-R3-Multi spec: ob_zone at 12.9% still needs investigation
+- Morphing position manager live test (0 DTE)
+- RL weight learner: post-session LLM analyzes P&L, adjusts entry_weights.json
+- Option LTP to Redis for PM (currently reads DuckDB)
+- Wing optimizer integration into entry gate (auto-select wing at entry time)
 
 ## What's Where (read on demand)
-  `trading_desk.py` (1702 lines)
-  `tests/test_integration_end_to_end.py` (263 lines)
-  `ARCHITECTURE.md` (697 lines)
-  `GAPS_AND_ROADMAP.md` (178 lines)
-  `TRADING_DESK_VALIDATION.md` (443 lines)
-  `crews/ta_crew.py` (424 lines)
-  `crews/pm_crew.py` (167 lines)
-  `tools/risk_tools.py` (606 lines)
-  `tools/execution_tools.py` (621 lines)
-  `tools/contract_tools.py` (533 lines)
-
-## Verify State
-```bash
-cd /home/trading_ceo/antariksh
-git log --oneline -3
-python3 tests/test_integration_end_to_end.py   # integration suite
-python3 trading_desk.py --test-triggers        # 4 trigger tests
-python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_desk import engine_scout_regime; r=engine_scout_regime(); print(f'Live: VIX={r.vix} Regime={r.regime}')"
-```
-
-## Recent Commits
-```
-b8c626b docs: add AUDIT_DATA_POPULATION.md — real DuckDB queries, no speculation
-5d945b8 chore: auto-update session context
-f19d08f docs: fix DATA_CAPTURE_V4.md — ta-lib IS installed, ADX 78% non-null; May 15 restart cascade caused NULLs
-128cf9a docs: add DATA_CAPTURE_V4.md — multi-TF aggregator schema, pipeline, last 10 rows
-6f97294 remove sandwich/ — moved to standalone repo github.com/venkatseshadri/sandwich
-```
+  `MORPHING_POSITION_MANAGER.md` (full architecture docs)
+  `brahmand/position_manager.py`
+  `brahmand/kickoff.py`
+  `brahmand/e2e_chain.py`
+  `brahmand/margin_capture.py`
+  `brahmand/wing_optimizer.py`
+  `antariksh/tools/entry_tools.py`
+  `antariksh/agents/entry/entry_check.py`
+  `antariksh/config/entry_weights.json`

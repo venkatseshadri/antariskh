@@ -1,23 +1,24 @@
 # Antariksh — Master System Architecture
 
-**Last Updated:** 2026-05-15 | **Status:** Production-ready dry-run
+**Last Updated:** 2026-05-18 | **Status:** Paper trading live with morphing PM
 
 ---
 
 ## 0. SYSTEM OVERVIEW
 
-Antariksh is a multi-layer autonomous options trading system for NIFTY Iron Butterfly. It has **4 layers**:
+Antariksh is a multi-layer autonomous options trading system for NIFTY options. It has **5 layers**:
 
 | Layer | Name | Purpose |
 |-------|------|---------|
-| **L0** | Config & Constitution | `antariksh_rules.yaml`, `constitution.yaml`, `self_improve.yaml`, `agents.json` — immutable rules |
+| **L-1** | Data Capture | v3.1 (1-min 104 cols → DuckDB + Redis) + v4 (multi-TF aggregation → DuckDB) |
+| **L0** | Entry Gate (NEW) | Redis-only Trend + Traffic Light scoring, 0 LLM, 0 DuckDB, ~100ms |
 | **L1** | CrewAI Crews (10) | Tactical execution — market scanning, strategy, trading, P&L, post-mortem |
 | **L2** | Chairman Orchestrator | Query routing, cross-crew learning injection, crew dispatch |
 | **L3** | Ralph Loop (meta) | PRD-driven verify-retry loop, scheduled oversight, self-improvement escalations |
 
-**Workspace:** `PAUL` — Plan → Apply → Unify → Loop (no longer GSD `.planning/`)
+**Trade Mode:** Paper (simulated). `BRAHMAND_MAX_TRADES=99`, 5min cooldown, no TIME_EXIT.
 
-**Trade Mode:** Dual-gate safety — `TRADE_MODE=LIVE` + `LIVE_KEY` secret required for real orders. Defaults to `PAPER` (simulated). Dry-run via `ANTARIKSH_MOCK_MODE=1`.
+**New (May 18):** Redis-only entry gate, deterministic position manager (morphing spreads), signal-driven strategy selection.
 
 ---
 

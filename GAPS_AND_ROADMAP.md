@@ -1,11 +1,28 @@
 # Antariksh Trading Desk — GAPS & ROADMAP
 
-**Date:** 2026-05-15
-**Last Update:** 2026-05-12 (original)
+**Date:** 2026-05-18
+**Last Update:** 2026-05-18 (entry gate + position manager deployed)
 
 ---
 
-## 1. WHAT'S MOCKED → NEEDS PRODUCTION WIRING
+## 1. WHAT'S DONE TODAY (May 18)
+
+| Component | Status | Detail |
+|-----------|--------|--------|
+| **Entry Gate (Redis-only)** | ✅ Production | Trend + Traffic Light scoring, 0 DuckDB, 0 LLM, ~100ms |
+| **Entry tools** | ✅ Production | 9 family tools: query_trend, query_momentum, query_volatility, query_volume, query_options, query_flow, query_macro, query_traffic_light, query_all_families |
+| **Deterministic scorers** | ✅ Production | score_trend_redis, score_traffic_light_redis, combine_entry_scores with confidence-weighted fusion |
+| **Config weights** | ✅ Production | entry_weights.json — tunable TF weights, ADX thresholds, pattern scores |
+| **Redis indicators** | ✅ Production | v3.1 now pushes 15 fields to Redis (ema, rsi, adx, st_direction, bb_pct_b) |
+| **Position Manager** | ✅ Deployed | 7-priority: decay→roll, hedge→tighten, signal→morph, SL, TP, floor, close |
+| **Signal-driven strategy** | ✅ Production | BULLISH→PUT_SPREAD, BEARISH→CALL_SPREAD, NEUTRAL→IRON_BUTTERFLY |
+| **RL weight learner** | ✅ Post-session | 1 LLM call after market close, adjusts entry_weights.json |
+| **Paper trade settings** | ✅ Active | 99 trades/day, 5min cooldown, no TIME_EXIT |
+| **Cron schedule** | ✅ Active | */5 9-15 kickoff.py with Redis entry gate |
+
+---
+
+## 2. WHAT'S MOCKED → NEEDS PRODUCTION WIRING
 
 | Component | Current (Mock) | Production Target | Action Required |
 |-----------|---------------|-------------------|-----------------|

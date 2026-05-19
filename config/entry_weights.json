@@ -51,7 +51,7 @@
       "BEARISH_STRUCTURE":          { "score": -5, "confidence": 65 },
       "DEAD_CAT_BOUNCE":            { "score": -6, "confidence": 60 },
       "CHOPPY_INDECISION":          { "score": 0, "confidence": 20 },
-      "MOMENTUM_PEAK":              { "score": 2, "confidence": 70, "note": "bullish but exhaustion risk" },
+      "MOMENTUM_PEAK":              { "score": 6, "confidence": 70, "note": "Bullish but exhaustion risk. Paper mode: trade it for data." },
       "mixed":                      { "score": 0, "confidence": 30 }
     },
     "signal_thresholds": {
@@ -71,8 +71,8 @@
       "both_neutral":        { "go": true,  "confidence_mult": 0.5,  "strategy": "IRON_BUTTERFLY" }
     },
     "go_threshold": {
-      "min_confidence": 35,
-      "note": "If combined confidence < 35, force NO-GO regardless of signal"
+      "min_confidence": 0,
+      "note": "Paper mode: take ALL trades. Only skip on signal conflict (BULLISH vs BEARISH). Changed from 35 to 0."
     }
   }
 }

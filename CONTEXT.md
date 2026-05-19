@@ -18,9 +18,21 @@ GitHub: `github.com/venkatseshadri/antariskh`
 See: [[seven_agent_system_complete]] memory file for complete details.
 
 ## Priority Queue (Next)
-1. **Test margin fetch** — Run token_refresh_dual.py at 07:00, verify /tmp/broker_limits.json created
-2. **Implement Flattrade margin** — Placeholder at token_refresh_dual.py:170 (low priority)
-3. **EMA backfill wiring** — Integrate ema_backfill into data_capture_v4, ema_integration_hook live updates
+
+### ⭐ #1 NEXT TASK: EMA Live Wiring (30-60 min)
+Wire `update_ema()` into `data_capture_v4_queue_aggregator.py`.
+- Everything else (ema_aggregator, ema_backfill, ema_integration_hook) is already complete ✅
+- One gap: v4 aggregator never calls update_ema() on closed candles
+- Steps: add `sys.path.insert(0, "/home/trading_ceo/brahmand")`, import `update_ema`, call after each closed candle in `run_all_timeframes()`
+- File: `/home/trading_ceo/antariksh/data_capture_v4_queue_aggregator.py`
+- Plan: `/root/.claude/plans/elegant-wobbling-robin.md`
+- Memory: [[ema-wiring-next-task]]
+
+### #2 Test margin fetch
+Run `python3 token_refresh_dual.py` and verify `/tmp/broker_limits_comparison.json` is created.
+
+### #3 Flattrade margin (low priority)
+Placeholder at `token_refresh_dual.py:170` — implement Flattrade get_limits() call.
 
 ## Key Files (May 20 Build)
 

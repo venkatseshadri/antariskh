@@ -941,18 +941,20 @@ def _aggregate_redis_bars(bars: list, tf_minutes: int) -> dict:
 
 def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     """
-    Score trend from REDIS only (0 DuckDB calls).
-    Reads 1-min bars + indicators from Redis, aggregates to multi-TF,
-    applies TF weights + ADX gates + ST boost from entry_weights.json.
+    Score trend using persistent EMA buffers (0 DuckDB calls).
+    Reads EMA values from /tmp/ema_state/*.json files.
+    Once EMA threshold crossed, always has data (rolling calculation).
+    Before threshold: returns None (not_enough_data).
 
     Args:
         index: NIFTY or SENSEX
-        lookback: how many 1-min bars to fetch for SMA/ADX computation
+        lookback: (unused, kept for API compatibility)
     Returns:
         {family, signal, score, confidence, reasoning, key_indicators}
     """
     import json as _json
     from datetime import datetime as _dt
+    from pathlib import Path as _Path
 
     cfg = _load_weights().get("trend", {})
     tf_weights = cfg.get(
@@ -962,6 +964,27 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     st_boost = cfg.get("st_boost", 2.0)
     thresholds = cfg.get("signal_thresholds", {"bullish": 3.0, "bearish": -3.0})
 
+    # Load EMA values from persistent files
+    ema_dir = _Path("/tmp/ema_state")
+    ema_values = {}
+    ema_status = {}
+
+    for period in [5, 20, 50, 100, 200]:
+        ema_file = ema_dir / f"ema_{period}.json"
+        if ema_file.exists():
+            try:
+                state = _json.loads(ema_file.read_text())
+                if state.get("available"):
+                    ema_values[period] = state.get("ema_value")
+                    ema_status[period] = "ready"
+                else:
+                    ema_status[period] = f"not_enough_data ({state.get('buffer_count', 0)}/{period})"
+            except Exception:
+                ema_status[period] = "error_reading_file"
+        else:
+            ema_status[period] = "file_not_found"
+
+    # Get latest price from Redis
     r = _redis_connect()
     if not r:
         return {
@@ -970,13 +993,13 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "score": 0,
             "confidence": 5,
             "reasoning": "redis_unavailable",
-            "key_indicators": {},
+            "ema_status": ema_status,
             "timestamp": _dt.now().isoformat(),
-            "_method": "redis",
+            "_method": "ema_file_based",
         }
 
     try:
-        bars_raw = r.lrange("v3_ohlcv_queue", 0, lookback - 1)
+        bars_raw = r.lrange("v3_ohlcv_queue", 0, 0)  # Just get latest bar
         if not bars_raw:
             return {
                 "family": "Trend",
@@ -984,145 +1007,25 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
                 "score": 0,
                 "confidence": 5,
                 "reasoning": "empty_queue",
-                "key_indicators": {},
+                "ema_status": ema_status,
                 "timestamp": _dt.now().isoformat(),
-                "_method": "redis",
+                "_method": "ema_file_based",
             }
 
-        bars = []
-        for b in bars_raw:
-            try:
-                d = _json.loads(b)
-                if d.get("index") == index:
-                    bars.append(d)
-            except _json.JSONDecodeError:
-                continue
+        latest_bar = _json.loads(bars_raw[0])
+        current_price = float(latest_bar.get("close", 0))
 
-        if len(bars) < 5:
+        if current_price == 0:
             return {
                 "family": "Trend",
                 "signal": "NEUTRAL",
                 "score": 0,
                 "confidence": 5,
-                "reasoning": f"only_{len(bars)}_bars",
-                "key_indicators": {},
+                "reasoning": "invalid_price",
+                "ema_status": ema_status,
                 "timestamp": _dt.now().isoformat(),
-                "_method": "redis",
+                "_method": "ema_file_based",
             }
-
-        # ── Aggregate 1-min bars to multi-TF candles ──
-        tf_map = {"5m": 5, "15m": 15, "30m": 30, "60m": 60, "240m": 240}
-        tf_agg = {}
-        for tf_label, tf_mins in tf_map.items():
-            tf_agg[tf_label] = _aggregate_to_tf(bars, tf_mins)
-
-        # Daily: use last day's close vs open of first bar today
-        latest_close = float(bars[0].get("close", 0))
-        if len(bars) < 240:
-            daily_open = float(bars[-1].get("open", latest_close))
-        else:
-            daily_open = float(bars[239].get("open", latest_close))
-        tf_agg["1440m"] = {
-            "open": daily_open,
-            "high": max(float(b.get("high", 0)) for b in bars),
-            "low": min(float(b.get("low", 99999)) for b in bars),
-            "close": latest_close,
-        }
-
-        # ── Compute SMAs from aggregated closes ──
-        import numpy as np
-
-        score = 0.0
-        tf_count = 0
-        aligned_count = 0
-        reasoning_parts = []
-
-        for tf_key, weight in tf_weights.items():
-            agg = tf_agg.get(tf_key)
-            if not agg:
-                reasoning_parts.append(f"{tf_key}:no_data")
-                continue
-
-            # Compute SMA20 and SMA50 from 1-min closes for this TF
-            sma20, sma50 = _compute_sma_from_bars(bars, tf_map.get(tf_key, 5))
-            sma_pos = "neutral"
-            if sma20 and sma50:
-                sma_pos = "bullish" if sma20 > sma50 else "bearish"
-            else:
-                reasoning_parts.append(f"{tf_key}:no_sma_data(×{weight})")
-                continue
-            tf_count += 1
-
-            candle = "GREEN" if agg["close"] > agg["open"] else "RED"
-            tf_score = weight if sma_pos == "bullish" else -weight
-
-            # ADX from Redis indicator if available
-            adx_val = _get_latest_indicator(bars, "adx")
-            reasoning_parts.append(
-                f"{tf_key}:{sma_pos}(×{weight},{candle},adx={adx_val})"
-            )
-
-            # No ADX per TF from Redis (only 1-min ADX) — apply noise gate if ADX < 10
-            if adx_val is not None:
-                if adx_val < 10:
-                    tf_score *= 0.0  # noise
-                elif adx_val < 20:
-                    tf_score *= 0.5  # weak
-                elif adx_val >= 35:
-                    tf_score *= 1.3  # strong
-                    aligned_count += 1
-                else:
-                    aligned_count += 1
-            else:
-                aligned_count += 1
-
-            # ST boost from Redis indicator
-            st = bars[0].get("st_direction", "").upper()
-            if st in ("BULLISH", "BEARISH"):
-                if sma_pos == "bullish" and st == "BULLISH":
-                    tf_score += st_boost
-                elif sma_pos == "bearish" and st == "BEARISH":
-                    tf_score += st_boost
-
-            score += tf_score
-
-        if tf_count == 0:
-            signal = "NEUTRAL"
-            score = 0.0
-        else:
-            signal = (
-                "BULLISH"
-                if score >= thresholds["bullish"]
-                else ("BEARISH" if score <= thresholds["bearish"] else "NEUTRAL")
-            )
-
-        max_tfs = len(tf_weights)
-        missing = max_tfs - tf_count
-        if missing == max_tfs:
-            confidence = 5
-        elif aligned_count >= 5:
-            confidence = 90 - missing * 12
-        elif aligned_count >= 3:
-            confidence = 70 - missing * 12
-        else:
-            confidence = 40 - missing * 12
-        confidence = max(5, min(100, confidence))
-
-        return {
-            "family": "Trend",
-            "signal": signal,
-            "score": round(score, 2),
-            "confidence": confidence,
-            "reasoning": " | ".join(reasoning_parts)
-            if reasoning_parts
-            else "no_tf_data",
-            "key_indicators": {
-                "aligned_tfs": f"{aligned_count}/{max_tfs}",
-                "raw_score": round(score, 2),
-            },
-            "timestamp": _dt.now().isoformat(),
-            "_method": "redis",
-        }
     except Exception as e:
         return {
             "family": "Trend",
@@ -1130,10 +1033,98 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "score": 0,
             "confidence": 5,
             "reasoning": f"redis_error:{e}",
-            "key_indicators": {},
+            "ema_status": ema_status,
             "timestamp": _dt.now().isoformat(),
-            "_method": "redis_error",
+            "_method": "ema_file_based",
         }
+
+    # Score based on EMA values
+    score = 0.0
+    ema_aligned = 0
+    available_count = 0
+    reasoning_parts = []
+
+    # EMA20 scoring (primary)
+    if 20 in ema_values:
+        ema20 = ema_values[20]
+        available_count += 1
+        if current_price > ema20:
+            ema_aligned += 1
+            tf_score = 0.30
+            reasoning_parts.append(f"EMA20:BULLISH(+0.30)")
+        else:
+            tf_score = -0.30
+            reasoning_parts.append(f"EMA20:BEARISH(-0.30)")
+        score += tf_score
+    else:
+        reasoning_parts.append(f"EMA20:not_ready")
+
+    # EMA50 scoring (confirmation)
+    if 50 in ema_values:
+        ema50 = ema_values[50]
+        available_count += 1
+        if current_price > ema50:
+            ema_aligned += 1
+            tf_score = 0.25
+            reasoning_parts.append(f"EMA50:BULLISH(+0.25)")
+        else:
+            tf_score = -0.25
+            reasoning_parts.append(f"EMA50:BEARISH(-0.25)")
+        score += tf_score
+    else:
+        reasoning_parts.append(f"EMA50:not_ready")
+
+    # EMA100 scoring (long-term)
+    if 100 in ema_values:
+        ema100 = ema_values[100]
+        available_count += 1
+        if current_price > ema100:
+            ema_aligned += 1
+            tf_score = 0.20
+            reasoning_parts.append(f"EMA100:BULLISH(+0.20)")
+        else:
+            tf_score = -0.20
+            reasoning_parts.append(f"EMA100:BEARISH(-0.20)")
+        score += tf_score
+    else:
+        reasoning_parts.append(f"EMA100:not_ready")
+
+    # Determine signal
+    if available_count == 0:
+        signal = "NEUTRAL"
+        confidence = 5
+        reason_str = "no_ema_data_yet"
+    else:
+        alignment_pct = ema_aligned / available_count
+
+        if alignment_pct >= 0.75:
+            signal = "BULLISH"
+            confidence = min(90, 50 + (alignment_pct * 40))
+        elif alignment_pct <= 0.25:
+            signal = "BEARISH"
+            confidence = min(90, 50 + ((1 - alignment_pct) * 40))
+        else:
+            signal = "NEUTRAL"
+            confidence = 40
+
+        reason_str = f"EMA alignment {int(ema_aligned)}/{available_count}"
+
+    return {
+        "family": "Trend",
+        "signal": signal,
+        "score": round(score, 2),
+        "confidence": int(confidence),
+        "reasoning": reason_str,
+        "key_indicators": {
+            "ema_aligned": f"{ema_aligned}/{available_count}",
+            "raw_score": round(score, 2),
+            "current_price": round(current_price, 2),
+            "ema_values": {k: round(v, 2) for k, v in ema_values.items()},
+        },
+        "ema_status": ema_status,
+        "timestamp": _dt.now().isoformat(),
+        "_method": "ema_file_based",
+    }
 
 
 def _compute_sma_from_bars(bars: list, tf_minutes: int, periods: list = None) -> tuple:
@@ -1188,10 +1179,63 @@ def _aggregate_to_tf(bars: list, tf_minutes: int) -> dict:
     }
 
 
+def _get_gap_from_redis(index: str, latest_1m: dict) -> dict:
+    """
+    Calculate gap direction and size from Redis data.
+
+    Gap = today's market open vs yesterday's close
+    GREEN if open > prev_close (gap up)
+    RED if open < prev_close (gap down)
+    """
+    try:
+        r = _redis_connect()
+        if not r:
+            return {"direction": "unknown", "reason": "redis_unavailable"}
+
+        # Get today's market open price from latest 1m bar
+        # (first bar of the day at 9:15 market open)
+        today_open = latest_1m.get("open")
+        if not today_open:
+            return {"direction": "unknown", "reason": "no_latest_1m"}
+
+        # Try to get previous day's close from Redis
+        # Look for a special key or read from historical data
+        prev_close_key = f"prev_close_{index}"
+        prev_close_str = r.get(prev_close_key)
+
+        if prev_close_str:
+            try:
+                prev_close = float(prev_close_str)
+            except ValueError:
+                return {"direction": "unknown", "reason": "invalid_prev_close"}
+        else:
+            # Fallback: assume no prev close available
+            # In production, this should be set by v3.1 at 9:15
+            return {"direction": "unknown", "reason": "prev_close_not_in_redis"}
+
+        gap_size = float(today_open) - float(prev_close)
+        gap_pct = (gap_size / float(prev_close) * 100) if prev_close != 0 else 0
+
+        direction = "GREEN" if gap_size > 0 else ("RED" if gap_size < 0 else "FLAT")
+
+        return {
+            "direction": direction,
+            "today_open": round(float(today_open), 2),
+            "prev_close": round(float(prev_close), 2),
+            "gap_size_points": round(gap_size, 2),
+            "gap_size_pct": round(gap_pct, 3),
+            "status": "complete"
+        }
+
+    except Exception as e:
+        return {"direction": "unknown", "reason": f"error: {str(e)}"}
+
+
 def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     """
     Score traffic light from REDIS (0 DuckDB calls).
     Uses get_live_candles() for per-TF candle colors, pattern matches.
+    Includes 7th parameter: gap direction (GREEN if gap up, RED if gap down).
     """
     import json as _json
     from datetime import datetime as _dt
@@ -1210,10 +1254,13 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
             "score": 0,
             "confidence": 5,
             "reasoning": f"Redis error: {live.get('error', 'no data')}",
-            "key_indicators": {"story": "no_data"},
+            "key_indicators": {"story": "no_data", "gap": "unknown"},
             "timestamp": _dt.now().isoformat(),
             "_method": "redis",
         }
+
+    # ── 7th Parameter: Gap Direction ──
+    gap_info = _get_gap_from_redis(index, live.get("latest_1m", {}))
 
     colors = {}
     for tf in ["5m", "15m", "30m", "60m", "240m", "1440m"]:
@@ -1261,106 +1308,35 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     )
     score = pat_data["score"]
     confidence = pat_data.get("confidence", 30)
-    signal = (
-        "BULLISH"
-        if score >= thresholds["bullish"]
-        else ("BEARISH" if score <= thresholds["bearish"] else "NEUTRAL")
-    )
 
-    story = " | ".join(
-        f"{tf}={colors.get(tf, '?')}"
-        for tf in ["1440m", "240m", "60m", "30m", "15m", "5m"]
-    )
-    story += f" | G={green_c}/6 R={red_c}/6"
+    # ── Apply gap weighting (7th parameter) ──
+    gap_weight = cfg.get("gap_weight", 0.2)  # Default 0.2 (20% influence)
+    gap_boost = 0
+    gap_conf_adjust = 0
 
-    return {
-        "family": "TrafficLight",
-        "signal": signal,
-        "score": score,
-        "confidence": confidence,
-        "reasoning": f"pattern={pattern} (Redis, no DuckDB)",
-        "key_indicators": {
-            "pattern": pattern,
-            "story": story,
-            "n_bars": live.get("n_bars", 0),
-        },
-        "timestamp": _dt.now().isoformat(),
-        "_method": "redis",
-    }
+    if gap_info.get("status") == "complete":
+        gap_dir = gap_info.get("direction")
 
-    """
-    Score traffic light from REDIS (0 DuckDB calls).
-    Reads live 1-min bars, aggregates to multi-TF candles, pattern matches.
-    """
-    import json as _json
-    from datetime import datetime as _dt
+        # Boost/penalty based on gap alignment with pattern
+        if gap_dir == "GREEN":
+            # Gap up context
+            if green_c >= 4:  # Bullish pattern + gap up = strong
+                gap_boost = gap_weight * 2.0
+                gap_conf_adjust = 15
+            elif red_c >= 4:  # Bearish pattern + gap up = conflict
+                gap_boost = -gap_weight * 1.5
+                gap_conf_adjust = -20
+        elif gap_dir == "RED":
+            # Gap down context
+            if red_c >= 4:  # Bearish pattern + gap down = strong
+                gap_boost = -gap_weight * 2.0
+                gap_conf_adjust = 15
+            elif green_c >= 4:  # Bullish pattern + gap down = conflict/recovery
+                gap_boost = gap_weight * 1.5
+                gap_conf_adjust = 10
 
-    cfg = _load_weights().get("traffic_light", {})
-    pattern_cfg = cfg.get("patterns", {})
-    thresholds = cfg.get("signal_thresholds", {"bullish": 3.0, "bearish": -3.0})
-
-    live = get_live_candles(index)
-    candles = live.get("candles_by_tf", {})
-
-    if not candles or live.get("error"):
-        return {
-            "family": "TrafficLight",
-            "signal": "NEUTRAL",
-            "score": 0,
-            "confidence": 5,
-            "reasoning": f"Redis error: {live.get('error', 'no data')}",
-            "key_indicators": {"story": "no_data", "n_bars": live.get("n_bars", 0)},
-            "timestamp": _dt.now().isoformat(),
-            "_method": "redis",
-        }
-
-    # Pattern detection (same logic as query_traffic_light pattern matching)
-    colors = {}
-    for tf in ["5m", "15m", "30m", "60m", "240m", "1440m"]:
-        c = candles.get(tf, "no_data")
-        colors[tf] = c if c in ("GREEN", "RED") else "neutral"
-
-    green_c = sum(1 for c in colors.values() if c == "GREEN")
-    red_c = sum(1 for c in colors.values() if c == "RED")
-    daily_c = colors.get("1440m", "neutral")
-    h4_c = colors.get("240m", "neutral")
-    h1_c = colors.get("60m", "neutral")
-    m30_c = colors.get("30m", "neutral")
-
-    pattern = "mixed"
-    if green_c == 6:
-        pattern = "MOMENTUM_PEAK"
-    elif red_c == 6:
-        pattern = "STRONG_BEAR_CONTINUATION"
-    elif daily_c == "GREEN" and h4_c == "RED" and h1_c == "GREEN":
-        pattern = "BULLISH_PULLBACK_RESUMING"
-    elif daily_c == "GREEN" and h4_c == "GREEN" and h1_c == "RED":
-        pattern = "BULLISH_MILD_PULLBACK"
-    elif (
-        daily_c == "GREEN"
-        and h4_c == "RED"
-        and h1_c == "RED"
-        and (m30_c == "GREEN" or colors.get("15m") == "GREEN")
-    ):
-        pattern = "BULLISH_DEEP_PULLBACK_BOUNCING"
-    elif daily_c == "RED" and h1_c == "GREEN" and colors.get("15m") == "GREEN":
-        pattern = "DEAD_CAT_BOUNCE"
-    elif daily_c == "GREEN" and green_c >= 4:
-        pattern = "BULLISH_CONTINUATION"
-    elif daily_c == "RED" and red_c >= 4:
-        pattern = "BEARISH_CONTINUATION"
-    elif green_c >= 4:
-        pattern = "BULLISH_STRUCTURE"
-    elif red_c >= 4:
-        pattern = "BEARISH_STRUCTURE"
-    elif green_c == 3 and red_c == 3:
-        pattern = "CHOPPY_INDECISION"
-
-    pat_data = pattern_cfg.get(
-        pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 30})
-    )
-    score = pat_data["score"]
-    confidence = pat_data.get("confidence", 30)
+        score += gap_boost
+        confidence += gap_conf_adjust
 
     signal = (
         "BULLISH"
@@ -1372,22 +1348,29 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         f"{tf}={colors.get(tf, '?')}"
         for tf in ["1440m", "240m", "60m", "30m", "15m", "5m"]
     )
-    story += f" | G={green_c}/6 R={red_c}/6"
+    story += f" | G={green_c}/6 R={red_c}/6 | GAP={gap_info.get('direction', '?')}"
+
+    confidence = max(5, min(100, confidence))  # Clamp to 5-100
 
     return {
         "family": "TrafficLight",
         "signal": signal,
-        "score": score,
+        "score": round(score, 2),
         "confidence": confidence,
-        "reasoning": f"pattern={pattern} from Redis (no DuckDB)",
+        "reasoning": f"pattern={pattern} (Redis, no DuckDB) + gap_weighted",
         "key_indicators": {
             "pattern": pattern,
             "story": story,
             "n_bars": live.get("n_bars", 0),
+            "gap": gap_info.get("direction"),  # 7th parameter
+            "gap_boost": round(gap_boost, 2),
+            "gap_conf_adjust": gap_conf_adjust,
         },
+        "gap": gap_info,  # Include full gap details
         "timestamp": _dt.now().isoformat(),
         "_method": "redis",
     }
+
 
 
 def _load_weights():
@@ -1594,6 +1577,8 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
     tl_sig = tl_score.get("signal", "NEUTRAL").upper()
     t_conf = trend_score.get("confidence", 50)
     tl_conf = tl_score.get("confidence", 50)
+    t_score = trend_score.get("score", 0)
+    tl_score_val = tl_score.get("score", 0)
 
     if t_sig == "BULLISH" and tl_sig == "BULLISH":
         rule = rules.get("both_bullish", {})
@@ -1649,6 +1634,12 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
     else:
         confidence = 0
 
+    # Compute combined score (weighted by confidence)
+    if total_weight > 0:
+        combined_score = (t_score * t_conf + tl_score_val * tl_conf) / total_weight
+    else:
+        combined_score = 0
+
     # Override: low confidence = NO-GO
     if go and confidence < go_thresh:
         go = False
@@ -1657,11 +1648,14 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
     return {
         "go": go,
         "signal": signal,
+        "score": round(combined_score, 2),
         "confidence": confidence,
         "trend_signal": t_sig,
         "traffic_light_signal": tl_sig,
         "trend_confidence": t_conf,
         "traffic_light_confidence": tl_conf,
+        "trend_score": round(t_score, 2),
+        "traffic_light_score": round(tl_score_val, 2),
         "reasoning": reason,
         "suggested_trade": (
             "SELL_PUT"

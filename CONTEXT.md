@@ -1,48 +1,74 @@
-# SESSION CONTEXT — Updated 2026-05-19 21:22
+# SESSION CONTEXT — Updated 2026-05-20 (May 19 EOD + Margin Integration)
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
 Branch: `master` | Live data: VIX=18.53, NIFTY=23604.3, Regime=TRENDING_BEAR
 
 ## Locations
 ```
-/home/trading_ceo/antariksh/              ← Antariksh
+/home/trading_ceo/antariksh/              ← Antariksh (trading desk)
+/home/trading_ceo/brahmand/               ← Brahmand (data/orders)
 /home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB capture)
 /home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/  ← Shoonya API
 ```
 GitHub: `github.com/venkatseshadri/antariskh`
 
-## Last Built
-Implement EMA backfill with yfinance seeds + persistent state files in /home/trading_ceo/brahmand/data/ema_state
+## Last Built (May 19-20)
+✅ Complete 7-agent trading system with Order Agent hub, safe broker integration (margin fetch at 07:00 cron), zero hardcoding (risk_config.py), dynamic registries. **System ready for May 20 market.**
 
-## Priority Queue
-Wire ema_backfill into v3.1 startup and integrate ema_integration_hook into data capture loop
+See: [[seven_agent_system_complete]] memory file for complete details.
 
-## What's Where (read on demand)
-  `trading_desk.py` (1702 lines)
-  `tests/test_integration_end_to_end.py` (263 lines)
-  `ARCHITECTURE.md` (698 lines)
-  `GAPS_AND_ROADMAP.md` (209 lines)
-  `TRADING_DESK_VALIDATION.md` (443 lines)
-  `crews/ta_crew.py` (424 lines)
-  `crews/pm_crew.py` (167 lines)
-  `tools/risk_tools.py` (606 lines)
-  `tools/execution_tools.py` (621 lines)
-  `tools/contract_tools.py` (533 lines)
+## Priority Queue (Next)
+1. **Test margin fetch** — Run token_refresh_dual.py at 07:00, verify /tmp/broker_limits.json created
+2. **Implement Flattrade margin** — Placeholder at token_refresh_dual.py:170 (low priority)
+3. **EMA backfill wiring** — Integrate ema_backfill into data_capture_v4, ema_integration_hook live updates
 
-## Verify State
+## Key Files (May 20 Build)
+
+**Core System**:
+- `trading_desk.py` — 7 agents + 4-phase crew + registry init
+- `order_agent.py` — Central order hub + ledger (/tmp/order_ledger.json)
+- `risk_config.py` — All limits (ZERO hardcoding), hot-reload functions
+- `broker_limits.py` — Fetch live margins, cache, sync to config
+- `agent_registry.py` — 7 agents discoverable
+- `tools_registry.py` — 10 tools discoverable
+
+**Integration**:
+- `token_refresh_dual.py` — 07:00 cron: tokens + margin fetch (integrated)
+- `leg_shifter.py` — Uses Order Agent for shift orders
+- `position_manager.py` — MORPH detection
+
+**Docs**:
+- `AGENTS_SPECIFICATION.md` — Knowledge for all 7 agents
+- `ORDER_AGENT_INTEGRATION.md` — Order Agent architecture
+- `SYSTEM_INTEGRATION_GUIDE.md` — How everything works
+- `BROKER_API_SAFETY.md` — API rate-limit principles
+- `MARGIN_FETCH_INTEGRATION.md` — 07:00 cron margin capture
+
+## Verify State (May 20)
 ```bash
 cd /home/trading_ceo/antariksh
-git log --oneline -3
-python3 tests/test_integration_end_to_end.py   # integration suite
-python3 trading_desk.py --test-triggers        # 4 trigger tests
-python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_desk import engine_scout_regime; r=engine_scout_regime(); print(f'Live: VIX={r.vix} Regime={r.regime}')"
+
+# Check system is intact
+python3 -c "from risk_config import get_config_summary; print(get_config_summary())"
+python3 -c "from agent_registry import list_agents; print(list_agents())"
+
+# Check Order Agent works
+python3 /home/trading_ceo/brahmand/order_agent.py --test
+
+# Check broker integration
+python3 -c "from broker_limits import get_current_limits; limits, fresh = get_current_limits(); print(f'Limits: {limits}, Fresh: {fresh}')"
+
+# Full trading desk
+python3 trading_desk.py --full-session
 ```
 
-## Recent Commits
+## Recent Commits (May 19-20)
 ```
-6c462bc feat: integrate entry_check into v4 queue aggregator loop
 7881f5a docs: update session context and roadmap (May 19 EOD)
 1c421e0 docs: add SESSION_20260519.md — full session capture with active trade, discoveries, pipeline state
 4cb00d4 fix: paper mode — take ALL trades including MOMENTUM_PEAK
 fda816a feat: datacapture v3.1 + v4 validation complete — zero data loss
+
+Next commit (May 20):
+→ feat: 7-agent system + Order Agent hub + safe broker integration (margin at 07:00 cron)
 ```

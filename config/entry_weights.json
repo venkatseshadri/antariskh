@@ -38,7 +38,36 @@
   },
 
   "traffic_light": {
-    "description": "Pattern scores — higher TF patterns dominate",
+    "description": "Pattern scores — higher TF patterns dominate. Gap (7th parameter) weighted separately.",
+    "gap_weight": 0.2,
+    "gap_rules": {
+      "description": "How gap direction affects pattern score and confidence",
+      "gap_up_bullish_pattern": {
+        "score_boost": 0.4,
+        "confidence_adjust": 15,
+        "note": "Gap up + bullish pattern = strong continuation"
+      },
+      "gap_up_bearish_pattern": {
+        "score_penalty": -0.3,
+        "confidence_adjust": -20,
+        "note": "Gap up + bearish pattern = conflict, bearish wins"
+      },
+      "gap_down_bearish_pattern": {
+        "score_boost": -0.4,
+        "confidence_adjust": 15,
+        "note": "Gap down + bearish pattern = strong continuation"
+      },
+      "gap_down_bullish_pattern": {
+        "score_boost": 0.3,
+        "confidence_adjust": 10,
+        "note": "Gap down + bullish pattern = recovery play, bullish continues"
+      },
+      "gap_flat": {
+        "score_boost": 0,
+        "confidence_adjust": 0,
+        "note": "No gap = no gap adjustment"
+      }
+    },
     "patterns": {
       "STRONG_BEAR_CONTINUATION":   { "score": -9, "confidence": 90 },
       "STRONG_BULL_CONTINUATION":   { "score": 9, "confidence": 90, "pattern": "all_green" },

@@ -43,10 +43,12 @@ def load_agent_config(crew: str, agent_id: str) -> Dict[str, str]:
     crew_cfg = cfg.get(crew)
     if crew_cfg is None:
         raise KeyError(f"Crew '{crew}' not found. Available: {list(cfg.keys())}")
-    agent_cfg = crew_cfg.get(agent_id)
+    # agents.json has "agents" as sub-key under each crew
+    agents_cfg = crew_cfg.get("agents", crew_cfg)
+    agent_cfg = agents_cfg.get(agent_id)
     if agent_cfg is None:
         raise KeyError(
-            f"Agent '{agent_id}' not found in crew '{crew}'. Available: {list(crew_cfg.keys())}"
+            f"Agent '{agent_id}' not found in crew '{crew}'. Available: {list(agents_cfg.keys())}"
         )
     return agent_cfg
 
@@ -61,4 +63,5 @@ def load_crew_config(crew: str) -> Dict[str, Dict[str, str]]:
     crew_cfg = cfg.get(crew)
     if crew_cfg is None:
         raise KeyError(f"Crew '{crew}' not found. Available: {list(cfg.keys())}")
-    return crew_cfg
+    # agents.json has "agents" as sub-key under each crew
+    return crew_cfg.get("agents", crew_cfg)

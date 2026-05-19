@@ -229,6 +229,9 @@ class DeskState:
         self.tsl_active: bool = False
         self.tsl_level: float = 0.0
 
+        # Latest market prices (from broker feed)
+        self.latest_ltps: Dict[str, float] = {}  # {token: ltp} — updated on each tick
+
         # Thread safety
         self._lock = threading.Lock()
 
@@ -677,9 +680,9 @@ class ListenTriggers:
       - on_feed_update:   LTP crosses TSL → MODIFY SL
 
     Executioner's Listens:
-      - on_risk_command:  MODIFY command → api.modify_order → report back
-      - on_risk_command:  CANCEL command → api.cancel_order → report back
-      - on_risk_command:  EXIT command  → api.place_order (close) → report back
+      - on_risk_command:  MODIFY command → update desk state (PAPER)
+      - on_risk_command:  CANCEL command → update desk state (PAPER)
+      - on_risk_command:  EXIT command  → update desk state (PAPER)
     """
 
     def __init__(self, desk_ref=None):
@@ -776,6 +779,10 @@ class ListenTriggers:
         ltp = float(tick_data.get("lp", 0))
         token = tick_data.get("token", "?")
 
+        # Store latest LTP for shifter to access (no DuckDB lock)
+        if token and ltp > 0:
+            desk.latest_ltps[token] = ltp
+
         if not desk.positions_open:
             logger.debug(f"Feed: No open positions — ignoring tick {ltp}")
             return {
@@ -841,8 +848,9 @@ class ListenTriggers:
         """
         Executioner listen trigger: receives commands from Risk Agent.
 
+        PAPER TRADING SYSTEM — No broker orders placed.
         Trigger: Risk Agent issues MODIFY / CANCEL / EXIT command.
-        Action: Call appropriate broker API and report status back.
+        Action: Update desk state (paper-only, no API calls).
         """
         cmd = command.get("command", "UNKNOWN")
         order_id = command.get("order_id", "")
@@ -850,36 +858,37 @@ class ListenTriggers:
 
         if cmd == "MODIFY":
             new_price = command.get("new_trigger", 0.0)
-            logger.info(f"EXECUTIONER: MODIFY order {order_id} → trigger={new_price}")
+            logger.info(f"[PAPER] EXECUTIONER: MODIFY order {order_id} → trigger={new_price}")
             return {
                 "flow": "Executioner → Risk Agent",
                 "action": "MODIFY_CONFIRMED",
                 "order_id": order_id,
                 "new_trigger": new_price,
-                "status": "SUCCESS" if MOCK_MODE else "PENDING",
-                "api_call": f"api.modify_order(order_id={order_id}, newtrigger_price={new_price})",
+                "status": "SUCCESS",
+                "mode": "PAPER",
             }
 
         if cmd == "CANCEL":
-            logger.info(f"EXECUTIONER: CANCEL order {order_id} ({reason})")
+            logger.info(f"[PAPER] EXECUTIONER: CANCEL order {order_id} ({reason})")
             return {
                 "flow": "Executioner → Risk Agent",
                 "action": "CANCEL_CONFIRMED",
                 "order_id": order_id,
                 "reason": reason,
-                "status": "SUCCESS" if MOCK_MODE else "PENDING",
-                "api_call": f"api.cancel_order(orderno={order_id})",
+                "status": "SUCCESS",
+                "mode": "PAPER",
             }
 
         if cmd == "EXIT":
-            logger.info(f"EXECUTIONER: EXIT all positions ({reason})")
+            logger.info(f"[PAPER] EXECUTIONER: EXIT all positions ({reason})")
             desk.positions_open = False
             desk.transition(DeskPhase.CLOSED)
             return {
                 "flow": "Executioner → Risk Agent",
                 "action": "EXIT_CONFIRMED",
                 "reason": reason,
-                "status": "SUCCESS" if MOCK_MODE else "PENDING",
+                "status": "SUCCESS",
+                "mode": "PAPER",
             }
 
         return {"error": f"Unknown command: {cmd}"}
@@ -914,7 +923,13 @@ def shifter_evaluate() -> str:
         return json.dumps({"error": "No handoff data for shifter"})
 
     avg_entry = sum(handoff.entry_prices.values()) / max(len(handoff.entry_prices), 1)
-    current_ltp = avg_entry * 0.40
+
+    # Get real LTP from broker feed (stored on each tick) — no DuckDB lock
+    # Use average of latest LTPs from all open legs
+    ltps = [desk.latest_ltps.get(token, avg_entry * 0.40)
+            for token in handoff.order_ids.values() if token]
+    current_ltp = sum(ltps) / max(len(ltps), 1) if ltps else avg_entry * 0.40
+
     premium_erosion = (
         ((avg_entry - current_ltp) / avg_entry) * 100 if avg_entry > 0 else 0
     )
@@ -923,13 +938,32 @@ def shifter_evaluate() -> str:
 
     if theta_exhausted and desk.shift_count < 2:
         desk.shift_count += 1
+        # Adaptive shift direction based on market movement
+        current_spot = desk.regime.nifty_spot if desk.regime else 0
+        entry_atm = desk.setup.atm_strike if desk.setup else 0
+        shift_delta = 50  # pts to shift strike
+
+        # Determine which leg to shift based on market direction
+        if current_spot > entry_atm:
+            # Market moved UP → shift PE (short put) upward
+            option_type = "PE"
+            new_strike = entry_atm + shift_delta
+        elif current_spot < entry_atm:
+            # Market moved DOWN → shift CE (short call) downward
+            option_type = "CE"
+            new_strike = entry_atm - shift_delta
+        else:
+            # No directional move → default to PE
+            option_type = "PE"
+            new_strike = entry_atm + shift_delta
+
         shift = ShiftProposal(
             reason="THETA_EXHAUSTED",
             old_leg={
-                "strike": desk.setup.atm_strike if desk.setup else 0,
-                "option_type": "PE",
+                "strike": entry_atm,
+                "option_type": option_type,
             },
-            new_strike=(desk.setup.atm_strike + 50 if desk.setup else 0),
+            new_strike=new_strike,
             theta_current=-2.5,
             theta_target=-8.0,
             premium_erosion_pct=round(premium_erosion, 1),
@@ -981,6 +1015,9 @@ def researcher_backtest_shift() -> str:
     spot = desk.regime.nifty_spot if desk.regime else MOCK_NIFTY
     atm = desk.setup.atm_strike if desk.setup else 0
     wing = desk.setup.wing_width if desk.setup else 300
+    target_pnl = desk.setup.exp_profit if desk.setup else 800
+    max_loss = desk.setup.max_loss if desk.setup else 3000
+    lots = desk.setup.lots if desk.setup else 1
 
     from backtester import IronFlyBacktester
 
@@ -988,9 +1025,9 @@ def researcher_backtest_shift() -> str:
         "spot": spot,
         "atm_strike": latest.new_strike,
         "wing_width": wing,
-        "target_profit": 800,
-        "max_loss": 3000,
-        "lots": 1,
+        "target_profit": target_pnl,
+        "max_loss": max_loss,
+        "lots": lots,
     }
     bt = IronFlyBacktester.backtest_iron_fly(new_plan, exit_spot=spot)
     pnl = bt.get("pnl_inr", 0) if bt else 0
@@ -1052,6 +1089,75 @@ def risk_direct_shift(validated_shift: Dict) -> str:
     )
 
 
+@tool
+def order_agent_place_order(
+    symbol: str,
+    action_type: str,
+    quantity: int,
+    price: Optional[float] = None,
+    order_type: str = "ENTRY",
+    component: str = "unknown",
+    trade_id: Optional[str] = None,
+    reason: str = "",
+) -> str:
+    """
+    Order Agent: Place an order (PAPER or LIVE mode).
+
+    Called by: position_manager, leg_shifter, risk_agent, executioner.
+    Action: Route order to broker (LIVE) or update ledger (PAPER).
+    Returns: order_id, status, execution_time.
+    """
+    from brahmand.order_agent import place_order
+
+    result = place_order(
+        symbol=symbol,
+        action_type=action_type,
+        quantity=quantity,
+        price=price,
+        order_type=order_type,
+        component=component,
+        trade_id=trade_id,
+        reason=reason,
+    )
+
+    logger.info(f"[ORDER_AGENT] PLACED: {action_type} {quantity}x {symbol} @ {price} ({component})")
+    return json.dumps(result)
+
+
+@tool
+def order_agent_modify_order(order_id: str, new_trigger: Optional[float] = None, reason: str = "") -> str:
+    """
+    Order Agent: Modify an existing order (SL/TP update).
+
+    Called by: risk_agent (SL modification).
+    Action: Update order in ledger (PAPER) or call broker API (LIVE).
+    Returns: order_id, status.
+    """
+    from brahmand.order_agent import modify_order
+
+    result = modify_order(order_id=order_id, new_trigger=new_trigger, reason=reason)
+
+    logger.info(f"[ORDER_AGENT] MODIFIED: {order_id} → trigger={new_trigger} ({reason})")
+    return json.dumps(result)
+
+
+@tool
+def order_agent_cancel_order(order_id: str, reason: str = "") -> str:
+    """
+    Order Agent: Cancel an existing order.
+
+    Called by: risk_agent (TP fill → cancel SL), executioner (manual cancel).
+    Action: Cancel order in ledger (PAPER) or call broker API (LIVE).
+    Returns: order_id, status.
+    """
+    from brahmand.order_agent import cancel_order
+
+    result = cancel_order(order_id=order_id, reason=reason)
+
+    logger.info(f"[ORDER_AGENT] CANCELLED: {order_id} ({reason})")
+    return json.dumps(result)
+
+
 # ======================================================================
 # AGENTS — The Full Trading Desk
 # ======================================================================
@@ -1060,15 +1166,19 @@ def risk_direct_shift(validated_shift: Dict) -> str:
 scout_agent = Agent(
     role="Technical Scout (Market Eyes)",
     goal=(
-        "Detect market regime from live data before any trade is designed. "
-        "Determine TRENDING_BULL, TRENDING_BEAR, or SIDEWAYS. "
-        "Feed the Market Regime packet to the Researcher. Never fabricate readings."
+        "Detect market regime from live VIX, NIFTY spot, and ADX data before any trade is designed. "
+        "Classify as TRENDING_BULL, TRENDING_BEAR, or SIDEWAYS with confidence scores. "
+        "Feed the MarketRegime packet to Researcher every 5 minutes. Never fabricate readings."
     ),
     backstory=(
-        "You are the eyes of the firm. You don't know options greeks or order types "
-        "— you know ADX, SuperTrend, and trend strength. You read market data every "
-        "60 seconds and report the pulse. The Researcher cannot design a strategy "
-        "until you tell them what kind of day this is."
+        "You are the EYES of the firm. You read technical indicators obsessively: "
+        "ADX (trend strength), SuperTrend (direction), VIX (volatility), NIFTY spot. "
+        "You don't know options greeks or order types — that's the Researcher's job. "
+        "You read market data every market cycle and report the raw pulse. "
+        "The Researcher waits for YOUR regime classification before designing ANY strategy. "
+        "You are the FIRST filter: if regime is UNKNOWN or transitioning, you HALT entry. "
+        "If regime is CLEAR (ADX > 25, SuperTrend aligned), you signal confidence. "
+        "This is your only job, but it's the MOST IMPORTANT job. All trades depend on your reading."
     ),
     tools=[scout_market_regime],
     allow_delegation=False,
@@ -1081,16 +1191,20 @@ researcher_agent = Agent(
     role="Quantitative Researcher (Setup Architect)",
     goal=(
         "Design mathematically optimal options strategies from the Scout's market regime. "
-        "Run backtests on every proposal. Send ProposedSetup to PM. "
-        "Respond to Leg Shifter's shift proposals with backtested validations."
+        "Run backtests on every proposal: initial setups and leg shifts. "
+        "Send ProposedSetup to PM for initial trades. "
+        "Validate Leg Shifter's shift proposals with rigorous backtests. "
+        "Ensure all strikes, wings, and P&L expectations are mathematically sound."
     ),
     backstory=(
-        "You are a cold, disciplined Dalal Street quantitative analyst. "
-        "You take the Regime from the Scout, use option chain data and Greeks, "
-        "and select precise strikes for the trade. You run the Backtest Tool on "
-        "every proposal — yours and the Shifter's. You never guess. "
-        "When the Shifter says theta is exhausted, you validate and send the "
-        "result back to the Risk Agent."
+        "You are a cold, disciplined quantitative analyst on Dalal Street. "
+        "You take the Market Regime from the Scout, analyze option chain Greeks, "
+        "and select PRECISE strikes for the Iron Butterfly. You run the Backtest Tool on "
+        "EVERY proposal — yours, the Shifter's, everyone's. You never guess. "
+        "When the Shifter says theta is exhausted and proposes a new strike, "
+        "you backtest it immediately. If P&L stays positive, you APPROVE. "
+        "If P&L turns negative, you REJECT. You flow decisions back to Risk Agent. "
+        "You are the mathematical gatekeeper of profitability."
     ),
     tools=[research_setup, researcher_backtest_shift],
     allow_delegation=False,
@@ -1102,17 +1216,26 @@ researcher_agent = Agent(
 pm_agent = Agent(
     role="Portfolio Manager (Capital Gatekeeper)",
     goal=(
-        "Validate every ProposedSetup against capital constraints. "
-        "Check margin, free cash, and risk limits. "
-        "Authorize exact lot count. Send AuthorizedOrder to Executioner. "
-        "Never let a trade through without capital validation."
+        "Validate every ProposedSetup against total capital constraints (as set by asset manager). "
+        "Check: margin utilization %, free cash floor, burn rate, max loss limits. "
+        "Authorize EXACT lot count (no guessing). "
+        "Send AuthorizedOrder to Executioner with capital validation. "
+        "REJECT any trade that violates risk guardrails."
     ),
     backstory=(
-        "You are the gatekeeper of the firm's capital. ₹611k is on the line. "
-        "Every trade passes through your approval. You check margin utilization, "
-        "free cash floor, and burn rate before authorizing anything. "
-        "You don't design strategies — you validate them. "
-        "The Executioner never acts without your authorization."
+        "You are the GATEKEEPER of the firm's capital (total amount as per asset manager). "
+        "Every trade MUST pass your approval. You are NOT a trader — you are a validator. "
+        "Checks you run EVERY time: "
+        "  1. Margin required vs free margin available (must be < 85% utilization)\n"
+        "  2. Free cash floor (must stay above minimum as set by asset manager)\n"
+        "  3. Max loss per trade (as per risk policy)\n"
+        "  4. Max cumulative daily loss (as per risk policy)\n"
+        "  5. Burn rate (VIX spike scenarios)\n"
+        "  6. Lot count (vs margin requirement)\n"
+        "If ANY check fails, you HALT and explain why. "
+        "You do NOT design strategies — you validate them mathematically. "
+        "The Executioner NEVER acts without your AuthorizedOrder. "
+        "All limits are configured via risk management policy, not hardcoded."
     ),
     tools=[pm_approve],
     allow_delegation=False,
@@ -1125,20 +1248,21 @@ executioner_agent = Agent(
     role="Execution Specialist (Order Engine)",
     goal=(
         "Execute orders precisely as authorized by the PM. "
-        "Place 4-leg baskets (wings-first sequencing). "
+        "Place 4-leg baskets (wings-first sequencing) via Order Agent. "
         "Report HandoffReport (fills, order IDs) to the Risk Agent. "
-        "Listen for Risk Agent commands (MODIFY, CANCEL, EXIT) and execute instantly."
+        "Listen for Risk Agent commands (MODIFY, CANCEL, EXIT) and execute instantly via Order Agent."
     ),
     backstory=(
         "You are the HANDS of the firm — a high-speed order management engine. "
         "You receive the AUTHORIZED ORDER from PM and execute with zero delay. "
         "You place wings (BUY hedges) first to unlock margin, then the center (SELL straddle). "
+        "You route all orders through the Order Agent — your trusted intermediary. "
         "After execution, you hand off to the Risk Agent with every fill price and order ID. "
-        "Then you LISTEN: when the Risk Agent commands MODIFY, you call modify_order. "
-        "When they command CANCEL, you call cancel_order. When they command EXIT, you close. "
-        "You NEVER decide what to do — you execute commands."
+        "Then you LISTEN: when the Risk Agent commands MODIFY, you use order_agent_modify. "
+        "When they command CANCEL, you use order_agent_cancel. When they command EXIT, you close via Order Agent. "
+        "You NEVER decide what to do — you execute commands through the Order Agent."
     ),
-    tools=[execute_orders],
+    tools=[execute_orders, order_agent_place_order, order_agent_modify_order, order_agent_cancel_order],
     allow_delegation=False,
     verbose=True,
     memory=True,
@@ -1149,23 +1273,28 @@ risk_agent = Agent(
     role="Risk & Compliance Sentry (The Commander)",
     goal=(
         "Monitor live positions via WebSocket ticks. "
-        "Issue COMMANDS (not recommendations) to the Executioner. "
+        "Issue COMMANDS (not recommendations) to the Executioner via Order Agent. "
         "Listen for order_updates: TP COMPLETE → CANCEL all SLs. "
         "Listen for feed_updates: LTP crosses TSL → MODIFY or EXIT. "
         "Direct Leg Shifter's validated shifts to Executioner."
     ),
     backstory=(
         "You are the COMMANDER — the brain of the live trade. "
-        "You NEVER call broker APIs directly. You issue COMMANDS and the "
-        "Executioner executes them. "
+        "You NEVER call broker APIs directly. You route through the Order Agent. "
         "You listen to WebSocket events: order updates and feed ticks. "
-        "When TP fills, you kill all SLs immediately. "
-        "When price crosses TSL, you modify the SL order. "
-        "When the Shifter's proposal is backtest-validated, you command "
-        "the Executioner to close the old leg and open the new one. "
-        "You command. They execute. Zero latency."
+        "When TP fills, you use order_agent_cancel to kill all SLs immediately. "
+        "When price crosses TSL, you use order_agent_modify to update SL trigger. "
+        "When the Shifter's proposal is backtest-validated, you use order_agent "
+        "to direct close of old leg and open of new leg. "
+        "You COMMAND via Order Agent. Executioner EXECUTES. Zero latency."
     ),
-    tools=[shifter_evaluate, risk_direct_shift],
+    tools=[
+        shifter_evaluate,
+        risk_direct_shift,
+        order_agent_place_order,
+        order_agent_modify_order,
+        order_agent_cancel_order,
+    ],
     allow_delegation=False,
     verbose=True,
     memory=True,
@@ -1175,20 +1304,58 @@ risk_agent = Agent(
 shifter_agent = Agent(
     role="Leg Shifter (Theta Optimizer)",
     goal=(
-        "Monitor theta decay on live positions. "
-        "When premium erodes below threshold, propose optimal strike shift "
-        "to the Researcher. Create a circular feedback loop that keeps the "
-        "strategy fresh throughout the trade."
+        "Monitor theta decay on live positions every 5 minutes. "
+        "When premium erodes to 30% (decay > 70%), propose optimal strike shift. "
+        "Route shift proposals to Researcher for backtest validation. "
+        "Create circular feedback loop: Shifter → Researcher → Risk → Executioner → Shifter. "
+        "Keep strategy fresh and profitable throughout the trade."
     ),
     backstory=(
-        "You are the optimizer — always asking 'is this the best strike right now?' "
-        "You listen to feed updates for the tokens in the active trade. "
-        "When theta is exhausted (premium decayed 70%+), you propose a shift "
-        "to the next optimal strike. The Researcher backtests it. If validated, "
-        "the Risk Agent directs the Executioner. "
-        "You make the strategy adaptive, not static."
+        "You are the ADAPTIVE OPTIMIZER — always asking 'is this the best strike RIGHT NOW?' "
+        "You monitor TWO decay thresholds every cycle: "
+        "  1. HEDGE DECAY > 50%: Shift hedge closer (always safe, reduces margin)\n"
+        "  2. SELL DECAY > 60%: Shift SELL farther (needs margin check, expands wing)\n"
+        "When either threshold hits, you evaluate the shift mathematically: "
+        "  • Calculate new strike positions\n"
+        "  • Estimate new premium values\n"
+        "  • Check if wing width change is acceptable\n"
+        "  • Propose shift to Researcher with full details\n"
+        "Researcher backtests it. If P&L stays positive, Risk Agent directs Executioner. "
+        "If P&L turns negative, you wait for next cycle. "
+        "You make the strategy ADAPTIVE, not static. You are the HEARTBEAT of position management."
     ),
     tools=[shifter_evaluate],
+    allow_delegation=False,
+    verbose=True,
+    memory=True,
+)
+
+# --- Order Agent: Centralized Order Router ---
+order_agent = Agent(
+    role="Order Agent (Order Router)",
+    goal=(
+        "Centralize ALL order management for paper and live trading. "
+        "Route orders from Executioner (ENTRY), Leg Shifter (SHIFT_OPEN/CLOSE), Risk Agent (MODIFY/CANCEL/EXIT). "
+        "Maintain /tmp/order_ledger.json with complete order lifecycle. "
+        "In PAPER: mark orders FILLED immediately. In LIVE: forward to Shoonya, track broker order_id. "
+        "Be the SINGLE SOURCE OF TRUTH for all fills, modifications, and cancellations."
+    ),
+    backstory=(
+        "You are the CENTRAL ORDER HUB — all orders flow through YOU. "
+        "Your AUTHORITY: Components don't call brokers directly. They ALWAYS call YOU. "
+        "Your LEDGER: Every order gets an order_id (ORD-YYYYMMDD-NNNN) and lives in /tmp/order_ledger.json "
+        "  Fields tracked: symbol, action_type (BUY/SELL), quantity, price, order_type, component, "
+        "  trade_id, reason, timestamp, status, execution_time\n"
+        "Your LIFECYCLE:\n"
+        "  PLACE: Check if PAPER or LIVE mode\n"
+        "    PAPER: Mark FILLED immediately, execution_time = now, return order_id\n"
+        "    LIVE: Forward to Shoonya, store as PENDING, await webhook callback\n"
+        "  MODIFY: Update trigger price (SL/TP), mark as MODIFIED\n"
+        "  CANCEL: Mark as CANCELLED, record cancel_reason and cancel_time\n"
+        "Your TRANSITION: When LIVE_MODE flag flips to True, you start forwarding to Shoonya. "
+        "Paper trading is YOUR training ground. Live trading is YOUR showtime."
+    ),
+    tools=[order_agent_place_order, order_agent_modify_order, order_agent_cancel_order],
     allow_delegation=False,
     verbose=True,
     memory=True,
@@ -1286,6 +1453,22 @@ shifter_task = Task(
     agent=shifter_agent,
 )
 
+order_agent_task = Task(
+    description=(
+        "ORDER ROUTING — Central order management (all phases).\n\n"
+        "Responsibilities:\n"
+        "1. Route orders from all components (Executioner, Leg Shifter, Risk Agent, Position Manager)\n"
+        "2. In PAPER mode: Update /tmp/order_ledger.json immediately\n"
+        "3. In LIVE mode: Forward to Shoonya API, track broker order_id\n"
+        "4. Maintain single source of truth for all fills and order status\n"
+        "5. Support order lifecycle: PLACE → MODIFY → CANCEL\n"
+        "6. Generate audit trail with component, reason, timestamp\n\n"
+        "Do NOT make broker API calls in PAPER mode. Only update ledger."
+    ),
+    expected_output="Order confirmation with order_id, status, execution details",
+    agent=order_agent,
+)
+
 # ======================================================================
 # CREW BUILDER — The Full Desk
 # ======================================================================
@@ -1305,6 +1488,7 @@ def build_trading_desk_crew() -> Crew:
                 executioner_agent,
                 risk_agent,
                 shifter_agent,
+                order_agent,  # Central order router (all phases)
             ],
             tasks=[
                 scout_task,
@@ -1313,6 +1497,7 @@ def build_trading_desk_crew() -> Crew:
                 execution_task,
                 monitor_task,
                 shifter_task,
+                order_agent_task,  # Order routing task (runs continuously)
             ],
             process=Process.hierarchical,
             manager_llm=_get_llm(),
@@ -1633,6 +1818,28 @@ def test_listen_triggers() -> Dict:
     results["shifter_eval"] = json.loads(shift_event)
 
     return results
+
+
+# ======================================================================
+# AGENT & TOOLS REGISTRY INITIALIZATION
+# ======================================================================
+
+# Register all agents and tools on module import
+def _initialize_registries():
+    """Initialize agent and tools registries."""
+    try:
+        from agent_registry import register_trading_desk_agents
+        from tools_registry import register_trading_desk_tools
+
+        register_trading_desk_agents()
+        register_trading_desk_tools()
+        logger.info("[REGISTRY] Agent and Tools registries initialized")
+    except Exception as e:
+        logger.warning(f"[REGISTRY] Could not initialize registries: {e}")
+
+
+# Initialize registries on import
+_initialize_registries()
 
 
 # ======================================================================

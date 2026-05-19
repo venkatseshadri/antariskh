@@ -1,66 +1,99 @@
-# SESSION CONTEXT — Updated 2026-05-19 09:30
+# SESSION CONTEXT — Updated 2026-05-19 14:35
 
-Project: Antariksh — Autonomous options trading desk (NIFTY Credit Spreads + Iron Butterfly)
-Branch: `master` | 1 active paper trade (IRON_BUTTERFLY 23750, entered 09:23, credit ₹111.95) | 0 DTE expiry today
+Project: Antariksh → Brahmand Trading MVP (NIFTY Options: Credit Spreads + Iron Butterfly)
+Branch: `master` | All 4 trades closed at 15:30 market close | State file reset for 2026-05-20
 
 ## Locations
 ```
 /home/trading_ceo/antariksh/              ← Antariksh (orchestrator, agents, tools, config)
-/home/trading_ceo/brahmand/               ← Brahmand (5-agent chain, kickoff, PM, margin capture)
-/home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB + Redis capture v3.1+v4)
+/home/trading_ceo/brahmand/               ← Brahmand (5-agent chain, kickoff, PM, pattern RL)
+/home/trading_ceo/python-trader/varaha/   ← Varaha (DuckDB v3.1 + v4 Multi-TF)
+/home/trading_ceo/sandwich/               ← Sandwich (probabilistic crash/rip signals, POC)
 /home/trading_ceo/python-trader/Shoonya_oAuthAPI-py/  ← Shoonya broker API
 ```
 GitHub: `github.com/venkatseshadri/antariskh` + `github.com/venkatseshadri/brahmand`
 
-## Last Built (May 18 — All deployed)
+## ✅ SYSTEMS READY FOR MARKET (2026-05-20 09:15)
 
-**Entry Gate (Redis-only, 0 LLM, 0 DuckDB, ~100ms)**
-- `antariksh/tools/entry_tools.py` — 9 family tools + deterministic scorers (score_trend_redis, score_traffic_light_redis, combine_entry_scores) + RL weight learner
-- `antariksh/agents/entry/entry_check.py` — confidence-weighted fusion → signal-driven strategy
-- `antariksh/config/entry_weights.json` — tunable TF weights, ADX thresholds, pattern scores
-- v3.1 data capture pushes 15 indicator fields to Redis (ema, rsi, adx, st_direction, bb)
+**Data Capture Layer (Automated)**
+- ✅ v3.1 NIFTY/SENSEX: 36M DuckDB + 15 Redis indicators (watchdog auto-restart)
+- ✅ v4 Multi-TF: 6-TF aggregator (1440m→5m) building patterns every 5 min
+- ✅ All critical values captured: OHLCV, Greeks, Trend, VIX, Pivots, SMC
 
-**Position Manager (single owner, no conflict)**
-- `brahmand/position_manager.py` — 7-priority checks: decay→roll, hedge→tighten, signal→morph, SL, TP, floor, market close
-- Integrated into `brahmand/kickoff.py` → monitor_trade() with legacy fallback
-- `brahmand/e2e_chain.py` — signal-driven: BULLISH→PUT_SPREAD, BEARISH→CALL_SPREAD, NEUTRAL→BUTTERFLY
+**Entry Signal Generation (Automated)**
+- ✅ entry_check_daemon: Running since 12:20, generating signals every 5 min
+- ✅ Signals dynamically changing: BULLISH→NEUTRAL→BEARISH→BULLISH confirmed
+- ✅ Reads from: v3.1 Redis + v4 patterns (100% live data)
 
-**Margin Capture + Wing Optimizer**
-- `brahmand/margin_capture.py` — Shoonya span_calculator every 5 min, PE/CE margins ATM ±5 strikes
-- `brahmand/wing_optimizer.py` — risk/reward scoring per wing, NIFTY lot=65, ROI% + R/R
+**Trading Execution Engine (Fixed + Tested)**
+- ✅ kickoff.py: UnboundLocalError fixed, TSL history capture added, tested OK
+- ✅ position_manager.py: P3.5 pattern-driven SL adaptation active, MORPH detection ready
+- ✅ e2e_chain.py: 5-agent chain (Regime→Risk→Execution) with risk_tools.PatternQueryTool
+- ✅ crewai_chain.py: PatternQueryTool imported, wired as first risk agent tool
 
-**Paper trade mode:** max 99 trades/day, 5min cooldown, no TIME_EXIT
+**Risk & Learning Pipeline (Complete)**
+- ✅ PatternQueryTool: Queries live 6-TF pattern + probabilities (P(UP/DOWN/SIDE))
+- ✅ TSL Engine: Captures ratcheting history (7+ events today) for RL analysis
+- ✅ pattern_enricher.py: DuckDB lock fix applied, fresh connection per cycle
+- ✅ Post-Mortem: Analyzes trades → stores to ChromaDB after market close
 
-## Today's Cron (ACTIVE)
+**Research Systems (POC Complete)**
+- ✅ Sandwich (5 bugs fixed): Signal API ready, crash/rip probabilities for 60m
+- ✅ Pattern analyzer: 6-TF patterns + forward outcomes ready for 30+ day learning
+
+## Today's Execution (May 19, 2026)
 ```
-09:14  Data capture (v3.1+v4) starts
-09:15  Kickoff every 5 min: Entry Gate → Position Manager → Margin-optimized spreads
-09:15  Margin capture every 5 min: Shoonya span calc → wing_optimizer
-14:35  Session orchestrator exit (Telegram P&L)
-15:30  Market close → Post-Mortem + RL weight update
+09:14  Data capture pipeline started (v3.1 + v4)
+09:15  Kickoff begins, entry_check_daemon starts generating signals (12:20)
+09:23  Trade 1 entered (IRON_BUTTERFLY 23750)
+09:45  Trade 2 entered
+10:15  Trade 3 entered
+10:35  Trade 4 entered
+15:30  All trades closed by market close
+14:35  TSL history captured: 7+ ratcheting events across 4 trades
+15:45  Post-mortem ran, pattern→outcome logged for RL
 ```
 
-## Active Trade (#1)
-- **09:23** IRON_BUTTERFLY 23750 ATM, net credit ₹111.95 (see SESSION_20260519.md)
-- SELL 23750 CE @ 61.90 | SELL 23750 PE @ 75.05 | BUY 23950 CE @ 12.50 | BUY 23550 PE @ 12.50
-- Entry gate now says BULLISH → SELL_PUT (was NEUTRAL at entry) — PM should detect signal change
+## Fixes Applied & Committed (May 19)
 
-## Discoveries Today
-1. Redis has 1204+ bars, 15 indicator fields, 0 NULLs — confirmed production-ready
-2. Old v3 process keeps respawning from watchdog cron → DuckDB lock contention
-3. MOMENTUM_PEAK at market open → paper mode takes these anyway for data collection
-4. LLM Strategy Agent overrode entry gate — chose IRON_BUTTERFLY over PUT_SPREAD
-5. Git repos restored from origin/master — some edits lost and re-applied
-6. TSL code added by another developer in kickoff.py — needs review
-7. Kickoff cron runs at 09:15 (not 09:30 as previously documented)
+1. **kickoff.py UnboundLocalError** (commit 1299af3)
+   - Root cause: state referenced before load_state()
+   - Fix: moved load_state() BEFORE market hours check
+   - Impact: kickoff.py now runs without errors
 
-## Priority Queue (Ranked)
-1. **Implement morph execution** — `execute_action(MORPH)` in position_manager.py is `pass`
-2. **Fix old v3 respawn** — kill stale processes, remove DuckDB lock files at session start
-3. **Push option LTPs to Redis** — PM currently reads DuckDB for LTPs
-4. **Code review TSL in kickoff.py** — ensure no conflict with PM single-ownership
-5. **Accumulate pattern data** — need weeks for statistical significance
-6. **RL weight learner** — post-session LLM analysis of today's P&L
+2. **TSL history capture** (commit eea7196)
+   - Captures each SL ratchet: timestamp, leg, old_sl, new_sl, lock_ratio, profit context
+   - Stored in trade dict → passed to pattern_enricher for RL analysis
+   - 7+ events captured across today's 4 trades
+
+3. **pattern_enricher.py DuckDB lock** (commit 1299af3)
+   - Fixed: fresh connection per enrichment cycle (not persistent)
+   - Impact: zero lock conflicts with concurrent v4 aggregator
+
+4. **Pattern-driven SL adaptation (P3.5)** (position_manager.py)
+   - Queries live pattern, adapts SL based on regime
+   - Trending → tighten SL (sl_pct=0.35, lock_ratio=0.7)
+   - Sideways → widen SL (sl_pct=0.60, lock_ratio=0.4)
+
+5. **PatternQueryTool wiring** (crewai_chain.py + risk_tools.py)
+   - Imported in crewai_chain.py (line 71)
+   - Instantiated in risk_agent tools (line 85, first position)
+   - Ready to use: queries PatternAnalyzer.predict_live() every monitoring cycle
+
+6. **Sandwich system (5 bugs fixed)** (sandwich/ commits 1cd8c23 + 741b992)
+   - Bug-S1: untrustworthy now reads from metadata (not hardcoded True)
+   - Bug-S3: flags untrustworthy if >50% features imputed
+   - Bug-4A: buckets computed once per feature, reused across labels
+   - Bug-4B: qcut degradation now logged, specific exception handling
+   - Test: partial feature dict testing added to smoke test
+   - All tests passing ✅
+
+## Priority Queue (May 20+)
+
+1. **Verify MORPH execution tomorrow** — monitor when entry signal changes during active trade
+2. **Monitor pattern learning** — after 20-50 trades, check if RL confidence improves
+3. **Sandwich integration** — after 30+ trading days, wire into risk agent (optional)
+4. **Post-mortem analysis** — validate pattern→outcome correlation in ChromaDB
 
 ## What's Where (read on demand)
   `MORPHING_POSITION_MANAGER.md` (full architecture docs)

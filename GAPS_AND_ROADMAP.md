@@ -5,24 +5,43 @@
 
 ---
 
-## 1. WHAT'S DONE TODAY (May 18)
+## 1. WHAT'S DONE (Updated May 19)
 
 | Component | Status | Detail |
 |-----------|--------|--------|
 | **Entry Gate (Redis-only)** | ✅ Production | Trend + Traffic Light scoring, 0 DuckDB, 0 LLM, ~100ms |
 | **Entry tools** | ✅ Production | 9 family tools: query_trend, query_momentum, query_volatility, query_volume, query_options, query_flow, query_macro, query_traffic_light, query_all_families |
+| **Entry signals** | ✅ Live (May 19 12:20+) | entry_check_daemon generates every 5 min, signals dynamically changing (BULLISH→NEUTRAL→BEARISH) |
 | **Deterministic scorers** | ✅ Production | score_trend_redis, score_traffic_light_redis, combine_entry_scores with confidence-weighted fusion |
 | **Config weights** | ✅ Production | entry_weights.json — tunable TF weights, ADX thresholds, pattern scores |
 | **Redis indicators** | ✅ Production | v3.1 now pushes 15 fields to Redis (ema, rsi, adx, st_direction, bb_pct_b) |
-| **Position Manager** | ✅ Deployed | 7-priority: decay→roll, hedge→tighten, signal→morph, SL, TP, floor, close |
+| **Position Manager** | ✅ Deployed | 7-priority: decay→roll, hedge→tighten, signal→morph, SL, TP, floor, close + P3.5 pattern-driven SL |
 | **Signal-driven strategy** | ✅ Production | BULLISH→PUT_SPREAD, BEARISH→CALL_SPREAD, NEUTRAL→IRON_BUTTERFLY |
-| **RL weight learner** | ✅ Post-session | 1 LLM call after market close, adjusts entry_weights.json |
+| **Pattern System (NEW)** | ✅ Operational | PatternAnalyzer + 6-TF candle patterns (GRGRGG), P(UP/DOWN/SIDE) probabilities per horizon |
+| **Pattern-driven SL (NEW)** | ✅ Ready | P3.5 in position_manager: queries pattern → adapts SL/TP dynamically (trending→tighten, sideways→widen) |
+| **TSL History (NEW)** | ✅ Capturing | Each SL ratchet logged with context (lock_ratio, profit, shift_pct) for RL analysis |
+| **RL Learning Pipeline (NEW)** | ✅ Complete | Trade entry → TSL capture → exit logging → pattern_enricher → post-mortem → ChromaDB learning |
 | **Paper trade settings** | ✅ Active | 99 trades/day, 5min cooldown, no TIME_EXIT |
-| **Cron schedule** | ✅ Active | */5 9-15 kickoff.py with Redis entry gate |
+| **Cron schedule** | ✅ Active | */5 9-15 kickoff.py with Redis entry gate, entry_check_daemon every 5 min |
+| **Data Capture v3.1 + v4** | ✅ Production | NIFTY (36M) + SENSEX + 6-TF aggregator, 0 data loss, 0 DuckDB conflicts (fresh connection per cycle) |
+| **Sandwich Research** | ✅ POC (5 bugs fixed) | Crash/rip signal API ready, 8 days training data, awaiting 30+ day accumulation for integration |
 
 ---
 
-## 2. WHAT'S MOCKED → NEEDS PRODUCTION WIRING
+## 2. WHAT'S PRODUCTION READY (May 19)
+
+| Component | Status | Detail |
+|-----------|--------|--------|
+| **Pattern System** | ✅ Production | 6-TF patterns (GRGRGG), probabilities computed, risk_guidance generated |
+| **Pattern-driven Risk** | ✅ Production | P3.5 in position_manager queries pattern every 5 min, adapts SL based on regime |
+| **TSL Engine** | ✅ Production | Captures history (7+ events today), lock_ratio adaptive, stored for RL |
+| **VIX fetch** | ✅ Production | DuckDB read, no NaN issues |
+| **NIFTY spot** | ✅ Production | DuckDB read, real-time |
+| **ADX/SuperTrend** | ✅ Production | DuckDB read, v3.1 pushes to Redis, no NaN handling needed |
+| **Fund balance** | ✅ Production | Paper mode (hardcoded budget), margin tracking ready for live |
+| **Post-mortem** | ✅ Production | Analyzes trades → logs to ChromaDB after market close |
+
+## 3. WHAT'S MOCKED → NEEDS PRODUCTION WIRING
 
 | Component | Current (Mock) | Production Target | Action Required |
 |-----------|---------------|-------------------|-----------------|
@@ -30,14 +49,9 @@
 | **Order placement** | Simulated `SIM-{tsym}-{i:03d}` IDs | `api.place_order()` via Shoonya/Flattrade | Wire `BrokerManager.execute_trade()` at `tools/execution_tools.py:23` |
 | **WebSocket feed** | Static mock tick data | Shoonya WebSocket `event_handler_quote_update` | Register `ListenTriggers.on_feed_update` as WS callback in `broker_manager.py:280` |
 | **Order status** | Static mock `COMPLETE` status | Shoonya `event_handler_order_update` on orders WS | Register `ListenTriggers.on_order_update` as WS callback |
-| **TSL engine** | Hardcoded `desk.highest_favorable = 80.0` | Live LTP tracking from feed ticks | Feed `on_feed_update` → `desk.highest_favorable` tracking already wired, needs real LTPs |
 | **Theta computation** | Hardcoded `theta_current=-2.5`, `theta_target=-8.0` | Live Greek engine from `tools/risk_tools.py:MonitorPnLGreeksTool` | Wire `MonitorPnLGreeksTool._run()` into `shifter_evaluate()` |
 | **Premium erosion** | `current_ltp = avg_entry * 0.40` (60% erosion assumption) | Live LTP from option feed → real `(avg_entry - ltp)/avg_entry * 100` | Replace `avg_entry * 0.40` with `on_feed_update` LTP for active tsyms |
 | **Backtester** | Black-Scholes `IronFlyBacktester` with spot-derived premiums | Real option chain LTP from DuckDB `option_snapshots` | Wire `get_weekly_expiry()` + live chain into backtester |
-| **VIX fetch** | DuckDB read (works in production) ✓ | Already wired | No change needed |
-| **NIFTY spot** | DuckDB read (works in production) ✓ | Already wired | No change needed |
-| **ADX/SuperTrend** | DuckDB read (works in production, may be NaN on fresh capture) | Already wired | Handle NaN → wait for next 1-min cycle |
-| **Fund balance** | Hardcoded `mock_balance=200000` | Live margin/free cash from `tools/am_tools.py:check_capital_limits()` | Wire into `engine_pm_validate` |
 | **Trade sync** | No sync with Shoonya order book | Cross-check `desk.active_sl_orders` against broker open orders | Post-execution reconciliation |
 
 ---

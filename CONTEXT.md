@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-05-18 22:00
+# SESSION CONTEXT — Updated 2026-05-19 09:30
 
 Project: Antariksh — Autonomous options trading desk (NIFTY Credit Spreads + Iron Butterfly)
-Branch: `master` | 2 paper trades today | Deploying morphing PM + margin capture tomorrow (May 19, 0 DTE)
+Branch: `master` | 1 active paper trade (IRON_BUTTERFLY 23750, entered 09:23, credit ₹111.95) | 0 DTE expiry today
 
 ## Locations
 ```
@@ -31,20 +31,36 @@ GitHub: `github.com/venkatseshadri/antariskh` + `github.com/venkatseshadri/brahm
 
 **Paper trade mode:** max 99 trades/day, 5min cooldown, no TIME_EXIT
 
-## Tomorrow's Cron
+## Today's Cron (ACTIVE)
 ```
 09:14  Data capture (v3.1+v4) starts
-09:30  Kickoff every 5 min: Entry Gate → Position Manager → Margin-optimized spreads
-09:30  Margin capture every 5 min: Shoonya span calc → wing_optimizer
+09:15  Kickoff every 5 min: Entry Gate → Position Manager → Margin-optimized spreads
+09:15  Margin capture every 5 min: Shoonya span calc → wing_optimizer
 14:35  Session orchestrator exit (Telegram P&L)
 15:30  Market close → Post-Mortem + RL weight update
 ```
 
-## Priority Queue
-- Morphing position manager live test (0 DTE)
-- RL weight learner: post-session LLM analyzes P&L, adjusts entry_weights.json
-- Option LTP to Redis for PM (currently reads DuckDB)
-- Wing optimizer integration into entry gate (auto-select wing at entry time)
+## Active Trade (#1)
+- **09:23** IRON_BUTTERFLY 23750 ATM, net credit ₹111.95 (see SESSION_20260519.md)
+- SELL 23750 CE @ 61.90 | SELL 23750 PE @ 75.05 | BUY 23950 CE @ 12.50 | BUY 23550 PE @ 12.50
+- Entry gate now says BULLISH → SELL_PUT (was NEUTRAL at entry) — PM should detect signal change
+
+## Discoveries Today
+1. Redis has 1204+ bars, 15 indicator fields, 0 NULLs — confirmed production-ready
+2. Old v3 process keeps respawning from watchdog cron → DuckDB lock contention
+3. MOMENTUM_PEAK at market open → paper mode takes these anyway for data collection
+4. LLM Strategy Agent overrode entry gate — chose IRON_BUTTERFLY over PUT_SPREAD
+5. Git repos restored from origin/master — some edits lost and re-applied
+6. TSL code added by another developer in kickoff.py — needs review
+7. Kickoff cron runs at 09:15 (not 09:30 as previously documented)
+
+## Priority Queue (Ranked)
+1. **Implement morph execution** — `execute_action(MORPH)` in position_manager.py is `pass`
+2. **Fix old v3 respawn** — kill stale processes, remove DuckDB lock files at session start
+3. **Push option LTPs to Redis** — PM currently reads DuckDB for LTPs
+4. **Code review TSL in kickoff.py** — ensure no conflict with PM single-ownership
+5. **Accumulate pattern data** — need weeks for statistical significance
+6. **RL weight learner** — post-session LLM analysis of today's P&L
 
 ## What's Where (read on demand)
   `MORPHING_POSITION_MANAGER.md` (full architecture docs)

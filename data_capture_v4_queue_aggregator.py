@@ -737,6 +737,9 @@ def main():
 
     print("\n[V4] Starting continuous aggregation loop...")
     print("[V4] Aggregating every 60 seconds (9:15-15:30 IST)")
+    print("[V4] Entry check will run every 5 minutes on 00/05/10/15/20/25/30/35/40/45/50/55")
+
+    last_entry_check_minute = -1
 
     while True:
         # Check if market hours (9:15 AM - 3:30 PM, weekdays only)
@@ -761,6 +764,18 @@ def main():
         aggregator.run_all_timeframes(index_name="SENSEX")
 
         print(f"[V4] Aggregation complete at {now.strftime('%H:%M:%S')}")
+
+        # ── Entry Check: Run every 5 minutes (on 00/05/10/15/20/25/30/35/40/45/50/55) ──
+        # This ensures fresh entry signals are available whenever kickoff.py runs
+        if minute % 5 == 0 and minute != last_entry_check_minute:
+            try:
+                from agents.entry.entry_check import check_entry
+                decision = check_entry("NIFTY")
+                icon = "🟢 GO" if decision.get("go") else "🔴 NO-GO"
+                print(f"[V4→ENTRY] {icon} | {decision.get('signal')} {decision.get('confidence')}% [{now.strftime('%H:%M:%S')}]")
+                last_entry_check_minute = minute
+            except Exception as e:
+                print(f"[V4→ENTRY] ⚠️  Entry check failed: {e}")
 
         # Wait 60 seconds before next aggregation
         time.sleep(60)

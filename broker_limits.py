@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 
+from format_utils import format_inr
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
 
@@ -129,10 +131,10 @@ def fetch_live_limits_from_broker(api) -> Optional[BrokerLimits]:
         _save_broker_limits(limits)
 
         print(f"[BROKER_LIMITS] Fetched from broker at {limits.timestamp}")
-        print(f"  Total margin available: ₹{margin_available:,.0f}")
-        print(f"  Used margin: ₹{used_margin:,.0f}")
-        print(f"  Free margin: ₹{free_margin:,.0f}")
-        print(f"  Cash available: ₹{cash_available:,.0f}")
+        print(f"  Total margin available: {format_inr(margin_available)}")
+        print(f"  Used margin: {format_inr(used_margin)}")
+        print(f"  Free margin: {format_inr(free_margin)}")
+        print(f"  Cash available: {format_inr(cash_available)}")
         print(f"  Margin multiplier: {mult}x (VIX effect)")
 
         return limits

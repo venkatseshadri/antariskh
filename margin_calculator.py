@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+from format_utils import format_inr
+
 PROJECT_ROOT = Path(__file__).parent.parent
 PYTHON_TRADER = PROJECT_ROOT / "python-trader"
 
@@ -47,8 +49,8 @@ def fetch_shoonya_margin():
             if limits:
                 sync_with_config()
                 logger.info(
-                    f"✅ Shoonya margin: ₹{limits.total_margin_available:,.0f} "
-                    f"(used: ₹{limits.used_margin:,.0f})"
+                    f"✅ Shoonya margin: {format_inr(limits.total_margin_available)} "
+                    f"(used: {format_inr(limits.used_margin)})"
                 )
                 return True
             else:

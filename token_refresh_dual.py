@@ -137,43 +137,6 @@ def refresh_shoonya():
         return False
 
 
-def fetch_margins_after_token_refresh(shoonya_ok: bool, flattrade_ok: bool):
-    """Tag along: fetch margins using freshly refreshed tokens (no new login)."""
-    logger.info("=" * 70)
-    logger.info("MARGIN CAPTURE — Using Fresh Tokens")
-    logger.info("=" * 70)
-
-    try:
-        # Import after tokens are refreshed
-        sys.path.insert(0, str(PROJECT_ROOT / "python-trader"))
-
-        if shoonya_ok:
-            try:
-                # Use Varaha to get Shoonya margins (uses cred.yml we just refreshed)
-                from varaha_auth import VarahaConnect
-                varaha = VarahaConnect()
-                if varaha.login():  # Uses existing cred.yml, no new OAuth needed
-                    from broker_limits import fetch_live_limits_from_broker, sync_with_config
-                    limits = fetch_live_limits_from_broker(varaha.api)
-                    if limits:
-                        sync_with_config()
-                        logger.info(f"✅ Shoonya margin cached: ₹{limits.total_margin_available:,.0f}")
-                    else:
-                        logger.warning("⚠️  Shoonya margin fetch failed")
-                else:
-                    logger.warning("⚠️  Shoonya login failed (using cached)")
-            except Exception as e:
-                logger.warning(f"⚠️  Shoonya margin error: {e}")
-
-        if flattrade_ok:
-            try:
-                # TODO: Implement Flattrade margin fetch using fresh token
-                logger.info("ℹ️  Flattrade margin: placeholder (TODO: integrate)")
-            except Exception as e:
-                logger.warning(f"⚠️  Flattrade margin error: {e}")
-
-    except Exception as e:
-        logger.error(f"Margin capture error: {e}")
 
 
 def main():
@@ -193,10 +156,8 @@ def main():
 
     all_ok = all(results.values())
 
-    # Tag along: fetch margins using fresh tokens (no separate login)
-    if any(results.values()):
-        fetch_margins_after_token_refresh(results.get("shoonya", False), results.get("flattrade", False))
-
+    logger.info("=" * 70)
+    logger.info("Note: Margin fetch moved to separate 8:00 AM job (margin_calculator.py)")
     logger.info("=" * 70)
     logger.info(f"Overall: {'✅ SUCCESS' if all_ok else '⚠️  PARTIAL/FAIL'}")
     logger.info("=" * 70)

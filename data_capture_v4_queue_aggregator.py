@@ -19,6 +19,9 @@ import json
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/home/trading_ceo/brahmand")
+
+from ema_aggregator import update_ema
 
 
 class MultiTFAggregatorQueue:
@@ -53,6 +56,16 @@ class MultiTFAggregatorQueue:
     def log(self, msg: str):
         if self.verbose:
             print(f"[V4] {msg}")
+
+    def _get_ema_timeframe_name(self, tf_minutes: int) -> str:
+        """Map timeframe minutes to EMA timeframe name. Returns None if not supported."""
+        mapping = {
+            5: "5min",
+            15: "15min",
+            60: "60min",
+            1440: "1D",
+        }
+        return mapping.get(tf_minutes)
 
     def _ensure_table_exists(self):
         """Create market_data_multitf table with all indicator batches."""
@@ -721,10 +734,27 @@ class MultiTFAggregatorQueue:
 
         self.log(f"Aggregating {len(bars)} 1-min bars")
 
+        # Update EMA for 1-min bars (all closed bars)
+        for bar in bars:
+            try:
+                update_ema(bar["close"], tf="1min")
+            except Exception as e:
+                self.log(f"⚠️ EMA 1min update failed: {e}")
+
         for tf in timeframes:
             agg_bars = self.aggregate_bars(bars, tf)
             self.write_aggregated_bars(agg_bars, index_name, tf)
             self.log(f"  {tf}-min: {len(agg_bars)} bars")
+
+            # Update EMA for newly closed bars (exclude last bar which may still be forming)
+            tf_name = self._get_ema_timeframe_name(tf)
+            if tf_name and len(agg_bars) > 1:
+                # Only update for bars that are closed (exclude the last/current bar)
+                for bar in agg_bars[:-1]:
+                    try:
+                        update_ema(bar["close"], tf=tf_name)
+                    except Exception as e:
+                        self.log(f"⚠️ EMA {tf_name} update failed: {e}")
 
         self.log("Aggregation complete")
 

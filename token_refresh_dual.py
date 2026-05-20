@@ -150,8 +150,8 @@ def fetch_margins_after_token_refresh(shoonya_ok: bool, flattrade_ok: bool):
         if shoonya_ok:
             try:
                 # Use Varaha to get Shoonya margins (uses cred.yml we just refreshed)
-                from varaha_auth import Varaha
-                varaha = Varaha()
+                from varaha_auth import VarahaConnect
+                varaha = VarahaConnect()
                 if varaha.login():  # Uses existing cred.yml, no new OAuth needed
                     from broker_limits import fetch_live_limits_from_broker, sync_with_config
                     limits = fetch_live_limits_from_broker(varaha.api)

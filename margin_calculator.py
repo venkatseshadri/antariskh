@@ -48,7 +48,7 @@ def fetch_shoonya_margin():
                 sync_with_config()
                 logger.info(
                     f"✅ Shoonya margin: ₹{limits.total_margin_available:,.0f} "
-                    f"(used: ₹{limits.total_margin_used:,.0f})"
+                    f"(used: ₹{limits.used_margin:,.0f})"
                 )
                 return True
             else:

@@ -942,7 +942,7 @@ def _aggregate_redis_bars(bars: list, tf_minutes: int) -> dict:
 def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     """
     Score trend using persistent EMA buffers (0 DuckDB calls).
-    Reads EMA values from /tmp/ema_state/*.json files.
+    Reads EMA values from /home/trading_ceo/brahmand/data/ema_state/{timeframe}/ files.
     Once EMA threshold crossed, always has data (rolling calculation).
     Before threshold: returns None (not_enough_data).
 
@@ -964,10 +964,14 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     st_boost = cfg.get("st_boost", 2.0)
     thresholds = cfg.get("signal_thresholds", {"bullish": 3.0, "bearish": -3.0})
 
-    # Load EMA values from persistent files
-    ema_dir = _Path("/tmp/ema_state")
+    # Load EMA values from brahmand data directory (organized by timeframe)
+    # Primary: 60min TF for trend scoring (balanced resolution)
+    # Fallback: 1min TF if 60min data is stale (>30 min old)
+    ema_base_dir = _Path("/home/trading_ceo/brahmand/data/ema_state")
+    ema_dir = ema_base_dir / "60min"
     ema_values = {}
     ema_status = {}
+    ema_source = "60min"
 
     for period in [5, 20, 50, 100, 200]:
         ema_file = ema_dir / f"ema_{period}.json"
@@ -978,11 +982,53 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
                     ema_values[period] = state.get("ema_value")
                     ema_status[period] = "ready"
                 else:
-                    ema_status[period] = f"not_enough_data ({state.get('buffer_count', 0)}/{period})"
-            except Exception:
-                ema_status[period] = "error_reading_file"
+                    ema_status[period] = (
+                        f"not_enough_data ({state.get('buffer_count', 0)}/{period})"
+                    )
+            except Exception as e:
+                ema_status[period] = f"error_reading: {e}"
         else:
             ema_status[period] = "file_not_found"
+
+    # Staleness check: if 60min EMA timestamp is >30 min old, fall back to 1min
+    ema_timestamp = None
+    ema20_file = ema_dir / "ema_20.json"
+    if ema20_file.exists():
+        try:
+            state = _json.loads(ema20_file.read_text())
+            ts_str = state.get("timestamp")
+            if ts_str:
+                ema_timestamp = _dt.fromisoformat(ts_str)
+        except Exception:
+            pass
+
+    use_1min_fallback = False
+    if ema_timestamp:
+        age_seconds = (_dt.now() - ema_timestamp).total_seconds()
+        if age_seconds > 1800:  # 30 minutes
+            use_1min_fallback = True
+
+    if use_1min_fallback:
+        ema_dir = ema_base_dir / "1min"
+        ema_values = {}
+        ema_status = {}
+        ema_source = "1min (fallback — 60min stale)"
+        for period in [5, 20, 50, 100, 200]:
+            ema_file = ema_dir / f"ema_{period}.json"
+            if ema_file.exists():
+                try:
+                    state = _json.loads(ema_file.read_text())
+                    if state.get("available"):
+                        ema_values[period] = state.get("ema_value")
+                        ema_status[period] = "ready"
+                    else:
+                        ema_status[period] = (
+                            f"not_enough_data ({state.get('buffer_count', 0)}/{period})"
+                        )
+                except Exception as e:
+                    ema_status[period] = f"error_reading: {e}"
+            else:
+                ema_status[period] = "file_not_found"
 
     # Get latest price from Redis
     r = _redis_connect()
@@ -994,6 +1040,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "confidence": 5,
             "reasoning": "redis_unavailable",
             "ema_status": ema_status,
+            "ema_source": ema_source,
             "timestamp": _dt.now().isoformat(),
             "_method": "ema_file_based",
         }
@@ -1008,6 +1055,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
                 "confidence": 5,
                 "reasoning": "empty_queue",
                 "ema_status": ema_status,
+                "ema_source": ema_source,
                 "timestamp": _dt.now().isoformat(),
                 "_method": "ema_file_based",
             }
@@ -1023,6 +1071,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
                 "confidence": 5,
                 "reasoning": "invalid_price",
                 "ema_status": ema_status,
+                "ema_source": ema_source,
                 "timestamp": _dt.now().isoformat(),
                 "_method": "ema_file_based",
             }
@@ -1034,15 +1083,29 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "confidence": 5,
             "reasoning": f"redis_error:{e}",
             "ema_status": ema_status,
+            "ema_source": ema_source,
             "timestamp": _dt.now().isoformat(),
             "_method": "ema_file_based",
         }
 
-    # Score based on EMA values
+    # Score based on EMA values (5 periods: 5, 20, 50, 100, 200)
     score = 0.0
     ema_aligned = 0
     available_count = 0
     reasoning_parts = []
+
+    # EMA5 scoring (shortest, most reactionary)
+    if 5 in ema_values:
+        available_count += 1
+        if current_price > ema_values[5]:
+            ema_aligned += 1
+            score += 0.35
+            reasoning_parts.append("EMA5:BULLISH(+0.35)")
+        else:
+            score += -0.35
+            reasoning_parts.append("EMA5:BEARISH(-0.35)")
+    else:
+        reasoning_parts.append("EMA5:not_ready")
 
     # EMA20 scoring (primary)
     if 20 in ema_values:
@@ -1089,6 +1152,19 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     else:
         reasoning_parts.append(f"EMA100:not_ready")
 
+    # EMA200 scoring (longest, slowest)
+    if 200 in ema_values:
+        available_count += 1
+        if current_price > ema_values[200]:
+            ema_aligned += 1
+            score += 0.15
+            reasoning_parts.append("EMA200:BULLISH(+0.15)")
+        else:
+            score += -0.15
+            reasoning_parts.append("EMA200:BEARISH(-0.15)")
+    else:
+        reasoning_parts.append("EMA200:not_ready")
+
     # Determine signal
     if available_count == 0:
         signal = "NEUTRAL"
@@ -1122,6 +1198,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "ema_values": {k: round(v, 2) for k, v in ema_values.items()},
         },
         "ema_status": ema_status,
+        "ema_source": ema_source,
         "timestamp": _dt.now().isoformat(),
         "_method": "ema_file_based",
     }
@@ -1224,7 +1301,7 @@ def _get_gap_from_redis(index: str, latest_1m: dict) -> dict:
             "prev_close": round(float(prev_close), 2),
             "gap_size_points": round(gap_size, 2),
             "gap_size_pct": round(gap_pct, 3),
-            "status": "complete"
+            "status": "complete",
         }
 
     except Exception as e:
@@ -1317,21 +1394,23 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     if gap_info.get("status") == "complete":
         gap_dir = gap_info.get("direction")
 
-        # Boost/penalty based on gap alignment with pattern
+        # Boost/penalty based on gap alignment with pattern SIGNAL
+        # (not raw green_c/red_c — a bearish pattern with green TFs is still bearish)
+        pattern_is_bullish = score > 0
+        pattern_is_bearish = score < 0
+
         if gap_dir == "GREEN":
-            # Gap up context
-            if green_c >= 4:  # Bullish pattern + gap up = strong
+            if pattern_is_bullish:
                 gap_boost = gap_weight * 2.0
                 gap_conf_adjust = 15
-            elif red_c >= 4:  # Bearish pattern + gap up = conflict
+            elif pattern_is_bearish:
                 gap_boost = -gap_weight * 1.5
                 gap_conf_adjust = -20
         elif gap_dir == "RED":
-            # Gap down context
-            if red_c >= 4:  # Bearish pattern + gap down = strong
+            if pattern_is_bearish:
                 gap_boost = -gap_weight * 2.0
                 gap_conf_adjust = 15
-            elif green_c >= 4:  # Bullish pattern + gap down = conflict/recovery
+            elif pattern_is_bullish:
                 gap_boost = gap_weight * 1.5
                 gap_conf_adjust = 10
 
@@ -1370,7 +1449,6 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         "timestamp": _dt.now().isoformat(),
         "_method": "redis",
     }
-
 
 
 def _load_weights():
@@ -1645,7 +1723,7 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
         go = False
         reason += f" (conf={confidence}% < min={go_thresh}%)"
 
-    return {
+    result = {
         "go": go,
         "signal": signal,
         "score": round(combined_score, 2),
@@ -1669,6 +1747,18 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
         "timestamp": _dt.now().isoformat(),
         "_method": "deterministic",
     }
+
+    # Include gap details from traffic light (7th parameter)
+    if "gap" in tl_score and tl_score["gap"]:
+        result["gap"] = tl_score["gap"]
+
+    # Include diagnostic fields for history log
+    result["ema_source"] = trend_score.get("ema_source", "?")
+    result["traffic_light_pattern"] = tl_score.get("key_indicators", {}).get(
+        "pattern", "?"
+    )
+
+    return result
 
 
 # ============================================================

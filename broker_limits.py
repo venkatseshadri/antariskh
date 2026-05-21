@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from format_utils import format_inr
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
+sys.path.insert(
+    0, str(Path(__file__).parent.parent / "python-trader" / "Shoonya_oAuthAPI-py")
+)
 
-LIMITS_FILE = Path("/tmp/broker_limits.json")
+LIMITS_FILE = Path(__file__).parent / "data" / "broker_limits.json"
 
 
 @dataclass
@@ -187,7 +189,7 @@ def print_limits_summary():
 ║ Cash Available:                 ₹{limits.cash_available:,.0f}
 ║ Margin Multiplier:              {limits.margin_multiplier}x (VIX effect)
 ║
-║ Recommended Safety Buffer:      {limits.get_safety_buffer_pct()*100:.0f}%
+║ Recommended Safety Buffer:      {limits.get_safety_buffer_pct() * 100:.0f}%
 ║ Net Available (with buffer):    ₹{limits.get_net_available_margin():,.0f}
 ║
 ║ Account:                        {limits.account_id}
@@ -200,6 +202,7 @@ def print_limits_summary():
 # ======================================================================
 # INTEGRATION WITH risk_config.py
 # ======================================================================
+
 
 def sync_with_config():
     """
@@ -254,4 +257,6 @@ print(get_config_summary())
     if limits:
         print_limits_summary()
     else:
-        print("[BROKER_LIMITS] No cached limits. See example above to fetch from broker.")
+        print(
+            "[BROKER_LIMITS] No cached limits. See example above to fetch from broker."
+        )

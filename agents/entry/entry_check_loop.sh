@@ -4,7 +4,7 @@
 # Runs 09:15-15:30 IST weekdays
 
 cd /home/trading_ceo/antariksh
-LOG=/tmp/entry_check_loop.log
+LOG=/home/trading_ceo/antariksh/logs/entry_check_loop.log
 
 exec >> "$LOG" 2>&1
 

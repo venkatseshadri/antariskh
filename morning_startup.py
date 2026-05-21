@@ -27,20 +27,23 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
+sys.path.insert(
+    0, str(Path(__file__).parent.parent / "python-trader" / "Shoonya_oAuthAPI-py")
+)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s — %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
 # Cache files
-SHOONYA_LIMITS_FILE = Path("/tmp/shoonya_limits.json")
-FLATTRADE_LIMITS_FILE = Path("/tmp/flattrade_limits.json")
-COMPARISON_FILE = Path("/tmp/broker_limits_comparison.json")
+DATA_DIR = Path(__file__).parent / "data"
+SHOONYA_LIMITS_FILE = DATA_DIR / "shoonya_limits.json"
+FLATTRADE_LIMITS_FILE = DATA_DIR / "flattrade_limits.json"
+COMPARISON_FILE = DATA_DIR / "broker_limits_comparison.json"
 
 
 def refresh_oauth_tokens():
@@ -48,6 +51,7 @@ def refresh_oauth_tokens():
     logger.info("Step 1/5: Refreshing Shoonya OAuth tokens...")
     try:
         from varaha_auth import Varaha
+
         varaha = Varaha()
         if varaha.login():
             logger.info("  ✓ OAuth tokens refreshed")
@@ -71,14 +75,17 @@ def fetch_shoonya_limits(varaha) -> Optional[Dict]:
                 "timestamp": datetime.now().isoformat(),
                 "total_margin": float(limits_resp.get("marginallowed", 0)),
                 "used_margin": float(limits_resp.get("marginused", 0)),
-                "free_margin": float(limits_resp.get("marginallowed", 0)) - float(limits_resp.get("marginused", 0)),
+                "free_margin": float(limits_resp.get("marginallowed", 0))
+                - float(limits_resp.get("marginused", 0)),
                 "cash_available": float(limits_resp.get("cash", 0)),
                 "multiplier": float(limits_resp.get("multiplier", 1.0)),
                 "account_id": limits_resp.get("accountid", "N/A"),
             }
             # Cache
             SHOONYA_LIMITS_FILE.write_text(json.dumps(limits, indent=2))
-            logger.info(f"  ✓ Shoonya: ₹{limits['total_margin']:,.0f} margin (mult: {limits['multiplier']}x)")
+            logger.info(
+                f"  ✓ Shoonya: ₹{limits['total_margin']:,.0f} margin (mult: {limits['multiplier']}x)"
+            )
             return limits
         else:
             logger.error(f"  ✗ Shoonya error: {limits_resp}")
@@ -139,11 +146,15 @@ def compare_broker_limits(shoonya: Dict, flattrade: Optional[Dict]) -> Dict:
     ft_margin = flattrade.get("total_margin", float("inf"))
 
     if sh_margin <= ft_margin:
-        logger.info(f"  ✓ Shoonya is conservative: ₹{sh_margin:,.0f} vs ₹{ft_margin:,.0f}")
+        logger.info(
+            f"  ✓ Shoonya is conservative: ₹{sh_margin:,.0f} vs ₹{ft_margin:,.0f}"
+        )
         selected = shoonya
         reason = "Shoonya has lower available margin (more conservative)"
     else:
-        logger.info(f"  ✓ Flattrade is conservative: ₹{ft_margin:,.0f} vs ₹{sh_margin:,.0f}")
+        logger.info(
+            f"  ✓ Flattrade is conservative: ₹{ft_margin:,.0f} vs ₹{sh_margin:,.0f}"
+        )
         selected = flattrade
         reason = "Flattrade has lower available margin (more conservative)"
 
@@ -187,36 +198,36 @@ def print_startup_summary(shoonya: Dict, flattrade: Optional[Dict], selected: Di
 ╠════════════════════════════════════════════════════════════════╣
 ║
 ║ SHOONYA LIMITS:
-║   Total Margin:              ₹{shoonya.get('total_margin', 0):>12,.0f}
-║   Used Margin:               ₹{shoonya.get('used_margin', 0):>12,.0f}
-║   Free Margin:               ₹{shoonya.get('free_margin', 0):>12,.0f}
-║   Cash Available:            ₹{shoonya.get('cash_available', 0):>12,.0f}
-║   Multiplier (VIX effect):   {shoonya.get('multiplier', 1.0):>18.2f}x
+║   Total Margin:              ₹{shoonya.get("total_margin", 0):>12,.0f}
+║   Used Margin:               ₹{shoonya.get("used_margin", 0):>12,.0f}
+║   Free Margin:               ₹{shoonya.get("free_margin", 0):>12,.0f}
+║   Cash Available:            ₹{shoonya.get("cash_available", 0):>12,.0f}
+║   Multiplier (VIX effect):   {shoonya.get("multiplier", 1.0):>18.2f}x
 ║
 """
 
     if flattrade:
         summary += f"""
 ║ FLATTRADE LIMITS:
-║   Total Margin:              ₹{flattrade.get('total_margin', 0):>12,.0f}
-║   Used Margin:               ₹{flattrade.get('used_margin', 0):>12,.0f}
-║   Free Margin:               ₹{flattrade.get('free_margin', 0):>12,.0f}
-║   Cash Available:            ₹{flattrade.get('cash_available', 0):>12,.0f}
-║   Multiplier (VIX effect):   {flattrade.get('multiplier', 1.0):>18.2f}x
+║   Total Margin:              ₹{flattrade.get("total_margin", 0):>12,.0f}
+║   Used Margin:               ₹{flattrade.get("used_margin", 0):>12,.0f}
+║   Free Margin:               ₹{flattrade.get("free_margin", 0):>12,.0f}
+║   Cash Available:            ₹{flattrade.get("cash_available", 0):>12,.0f}
+║   Multiplier (VIX effect):   {flattrade.get("multiplier", 1.0):>18.2f}x
 ║
 """
 
     summary += f"""
 ║ SELECTED FOR TRADING:
-║   Broker:                    {selected.get('broker', 'N/A'):>30}
-║   Effective Margin:          ₹{selected.get('total_margin', 0):>12,.0f}
-║   Safety Margin (80%):       ₹{selected.get('total_margin', 0) * 0.80:>12,.0f}
+║   Broker:                    {selected.get("broker", "N/A"):>30}
+║   Effective Margin:          ₹{selected.get("total_margin", 0):>12,.0f}
+║   Safety Margin (80%):       ₹{selected.get("total_margin", 0) * 0.80:>12,.0f}
 ║
 ║ FILES CREATED:
-║   • /tmp/shoonya_limits.json
-║   • /tmp/flattrade_limits.json
-║   • /tmp/broker_limits_comparison.json
-║   • /tmp/broker_limits.json (synced to config)
+║   • data/shoonya_limits.json
+║   • data/flattrade_limits.json
+║   • data/broker_limits_comparison.json
+║   • data/broker_limits.json (synced to config)
 ║
 ║ SYSTEM READY: All agents use effective margin for trading
 ║

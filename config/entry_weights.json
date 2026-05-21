@@ -1,11 +1,19 @@
 {
-  "_comment": "Entry family weights for deterministic scoring. No LLM needed for these calculations.",
-  "_version": "1.0",
-  "_phase": "Phase 1 — equal weights. RL adjusts post-session.",
+  "_comment": "Entry family weights for deterministic scoring (Redis-only live path). No LLM.",
+  "_version": "2.0",
+  "_updated": "2026-05-20 — Added EMA5/EMA200 scoring. ST boost, TF weights, ADX kept for DuckDB path.",
 
   "trend": {
-    "description": "Per-TF weights for SMA/EMA directional scoring",
+    "description": "EMA alignment within 60min TF. Traffic Light handles multi-TF diversification.",
+    "ema_weights": {
+      "5": 0.35,
+      "20": 0.30,
+      "50": 0.25,
+      "100": 0.20,
+      "200": 0.15
+    },
     "tf_weights": {
+      "_note": "Used by DuckDB score_trend() only — not the Redis live path",
       "5m": 0.10,
       "15m": 0.15,
       "30m": 0.15,
@@ -14,6 +22,7 @@
       "1440m": 0.20
     },
     "adx": {
+      "_note": "Used by DuckDB score_trend() only",
       "noise_threshold": 10,
       "weak_threshold": 20,
       "trending_threshold": 25,
@@ -29,6 +38,7 @@
       "bearish": -3.0
     },
     "confidence": {
+      "_note": "Used by DuckDB score_trend() only. Redis path uses inline math.",
       "full_alignment": 90,
       "high_alignment": 70,
       "mixed": 40,
@@ -38,50 +48,21 @@
   },
 
   "traffic_light": {
-    "description": "Pattern scores — higher TF patterns dominate. Gap (7th parameter) weighted separately.",
+    "description": "Pattern scores — 6 TF candle colors + GAP (7th light). Higher TFs dominate.",
     "gap_weight": 0.2,
-    "gap_rules": {
-      "description": "How gap direction affects pattern score and confidence",
-      "gap_up_bullish_pattern": {
-        "score_boost": 0.4,
-        "confidence_adjust": 15,
-        "note": "Gap up + bullish pattern = strong continuation"
-      },
-      "gap_up_bearish_pattern": {
-        "score_penalty": -0.3,
-        "confidence_adjust": -20,
-        "note": "Gap up + bearish pattern = conflict, bearish wins"
-      },
-      "gap_down_bearish_pattern": {
-        "score_boost": -0.4,
-        "confidence_adjust": 15,
-        "note": "Gap down + bearish pattern = strong continuation"
-      },
-      "gap_down_bullish_pattern": {
-        "score_boost": 0.3,
-        "confidence_adjust": 10,
-        "note": "Gap down + bullish pattern = recovery play, bullish continues"
-      },
-      "gap_flat": {
-        "score_boost": 0,
-        "confidence_adjust": 0,
-        "note": "No gap = no gap adjustment"
-      }
-    },
     "patterns": {
       "STRONG_BEAR_CONTINUATION":   { "score": -9, "confidence": 90 },
-      "STRONG_BULL_CONTINUATION":   { "score": 9, "confidence": 90, "pattern": "all_green" },
-      "BULLISH_CONTINUATION":       { "score": 8, "confidence": 80 },
       "BEARISH_CONTINUATION":       { "score": -8, "confidence": 80 },
-      "BULLISH_PULLBACK_RESUMING":  { "score": 7, "confidence": 70 },
-      "BULLISH_MILD_PULLBACK":      { "score": 6, "confidence": 65 },
-      "BULLISH_STRUCTURE":          { "score": 5, "confidence": 65 },
-      "BULLISH_DEEP_PULLBACK_BOUNCING": { "score": 4, "confidence": 55 },
-      "BEARISH_STRUCTURE":          { "score": -5, "confidence": 65 },
       "DEAD_CAT_BOUNCE":            { "score": -6, "confidence": 60 },
+      "BEARISH_STRUCTURE":          { "score": -5, "confidence": 65 },
       "CHOPPY_INDECISION":          { "score": 0, "confidence": 20 },
-      "MOMENTUM_PEAK":              { "score": 6, "confidence": 70, "note": "Bullish but exhaustion risk. Paper mode: trade it for data." },
-      "mixed":                      { "score": 0, "confidence": 30 }
+      "mixed":                      { "score": 0, "confidence": 30 },
+      "BULLISH_DEEP_PULLBACK_BOUNCING": { "score": 4, "confidence": 55 },
+      "BULLISH_STRUCTURE":          { "score": 5, "confidence": 65 },
+      "BULLISH_MILD_PULLBACK":      { "score": 6, "confidence": 65 },
+      "MOMENTUM_PEAK":              { "score": 6, "confidence": 70, "note": "All 6 green = exhaustion risk. +6 by design: universal buying is a peak, not continuation." },
+      "BULLISH_PULLBACK_RESUMING":  { "score": 7, "confidence": 70 },
+      "BULLISH_CONTINUATION":       { "score": 8, "confidence": 80 }
     },
     "signal_thresholds": {
       "bullish": 3.0,
@@ -90,18 +71,18 @@
   },
 
   "combine": {
-    "description": "How to merge Trend + Traffic Light into a single decision",
+    "description": "Merge Trend + Traffic Light into GO/NO-GO + suggested trade.",
     "rules": {
-      "both_bullish":        { "go": true,  "confidence_mult": 1.0,  "strategy": "PUT_CREDIT_SPREAD" },
-      "both_bearish":        { "go": true,  "confidence_mult": 1.0,  "strategy": "CALL_CREDIT_SPREAD" },
-      "bullish_plus_neutral": { "go": true,  "confidence_mult": 0.75, "strategy": "PUT_CREDIT_SPREAD" },
-      "bearish_plus_neutral": { "go": true,  "confidence_mult": 0.75, "strategy": "CALL_CREDIT_SPREAD" },
+      "both_bullish":        { "go": true,  "confidence_mult": 1.0,  "strategy": "PUT_SPREAD" },
+      "both_bearish":        { "go": true,  "confidence_mult": 1.0,  "strategy": "CALL_SPREAD" },
+      "bullish_plus_neutral": { "go": true,  "confidence_mult": 0.75, "strategy": "PUT_SPREAD" },
+      "bearish_plus_neutral": { "go": true,  "confidence_mult": 0.75, "strategy": "CALL_SPREAD" },
       "conflict":            { "go": false, "confidence_mult": 0.3,  "strategy": "NONE" },
       "both_neutral":        { "go": true,  "confidence_mult": 0.5,  "strategy": "IRON_BUTTERFLY" }
     },
     "go_threshold": {
       "min_confidence": 0,
-      "note": "Paper mode: take ALL trades. Only skip on signal conflict (BULLISH vs BEARISH). Changed from 35 to 0."
+      "note": "Paper mode: take ALL non-conflict trades. Only skip on BULLISH vs BEARISH signal conflict."
     }
   }
 }

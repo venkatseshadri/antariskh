@@ -7,11 +7,13 @@ Asset manager sets these values based on firm policy.
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Any
 
 # ======================================================================
 # CAPITAL CONFIGURATION
 # ======================================================================
+
 
 @dataclass
 class CapitalConfig:
@@ -37,6 +39,7 @@ class CapitalConfig:
 # ======================================================================
 # RISK LIMITS CONFIGURATION
 # ======================================================================
+
 
 @dataclass
 class RiskLimitsConfig:
@@ -86,6 +89,7 @@ class RiskLimitsConfig:
 # MARGIN & EXECUTION CONFIGURATION
 # ======================================================================
 
+
 @dataclass
 class ExecutionConfig:
     """Order execution and margin parameters."""
@@ -103,7 +107,7 @@ class ExecutionConfig:
     margin_matrix_path: str = "/home/trading_ceo/brahmand/data/margin_matrix.json"
 
     # Order ledger file path
-    order_ledger_path: str = "/tmp/order_ledger.json"
+    order_ledger_path: str = str(Path(__file__).parent / "data" / "order_ledger.json")
 
     # Whether to route orders through broker (LIVE) or ledger (PAPER)
     live_mode_enabled: bool = False
@@ -116,6 +120,7 @@ class ExecutionConfig:
 # ======================================================================
 # POSITION MANAGEMENT CONFIGURATION
 # ======================================================================
+
 
 @dataclass
 class PositionManagementConfig:
@@ -151,7 +156,7 @@ class PositionManagementConfig:
 
     def is_neutral_signal(self, score: float) -> bool:
         """Check if score indicates NEUTRAL regime."""
-        return (self.morph_bearish_threshold < score < self.morph_bullish_threshold)
+        return self.morph_bearish_threshold < score < self.morph_bullish_threshold
 
 
 # ======================================================================
@@ -169,6 +174,7 @@ POSITION = PositionManagementConfig()
 # CONFIGURATION UPDATES (called by asset manager)
 # ======================================================================
 
+
 def update_capital_limits(
     total_capital: float = None,
     free_cash_floor: float = None,
@@ -182,7 +188,9 @@ def update_capital_limits(
         CAPITAL.free_cash_floor = free_cash_floor
     if max_margin_utilization_pct is not None:
         CAPITAL.max_margin_utilization_pct = max_margin_utilization_pct
-    print(f"[RISK_CONFIG] Capital limits updated: ₹{CAPITAL.total_capital} | Floor: ₹{CAPITAL.free_cash_floor}")
+    print(
+        f"[RISK_CONFIG] Capital limits updated: ₹{CAPITAL.total_capital} | Floor: ₹{CAPITAL.free_cash_floor}"
+    )
 
 
 def update_risk_limits(
@@ -198,7 +206,9 @@ def update_risk_limits(
         RISK.max_loss_per_day = max_loss_per_day
     if max_concurrent_trades is not None:
         RISK.max_concurrent_trades = max_concurrent_trades
-    print(f"[RISK_CONFIG] Risk limits updated: Trade={RISK.max_loss_per_trade} | Daily={RISK.max_loss_per_day} | Max trades={RISK.max_concurrent_trades}")
+    print(
+        f"[RISK_CONFIG] Risk limits updated: Trade={RISK.max_loss_per_trade} | Daily={RISK.max_loss_per_day} | Max trades={RISK.max_concurrent_trades}"
+    )
 
 
 def get_config_summary() -> str:
@@ -210,7 +220,7 @@ def get_config_summary() -> str:
 ║ CAPITAL:
 ║   Total Capital:                ₹{CAPITAL.total_capital:,.0f}
 ║   Free Cash Floor:              ₹{CAPITAL.free_cash_floor:,.0f}
-║   Max Margin Utilization:       {CAPITAL.max_margin_utilization_pct*100:.0f}%
+║   Max Margin Utilization:       {CAPITAL.max_margin_utilization_pct * 100:.0f}%
 ║
 ║ RISK LIMITS:
 ║   Max Loss per Trade:           ₹{RISK.max_loss_per_trade:,.0f}
@@ -225,7 +235,7 @@ def get_config_summary() -> str:
 ║   Live Mode Enabled:            {EXECUTION.live_mode_enabled}
 ║
 ║ POSITION MANAGEMENT:
-║   TSL Activation:               {POSITION.tsl_activation_threshold_pct*100:.0f}% of max profit
+║   TSL Activation:               {POSITION.tsl_activation_threshold_pct * 100:.0f}% of max profit
 ║   Bullish Threshold:            {POSITION.morph_bullish_threshold}
 ║   Bearish Threshold:            {POSITION.morph_bearish_threshold}
 ║

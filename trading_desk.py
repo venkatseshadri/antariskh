@@ -858,7 +858,9 @@ class ListenTriggers:
 
         if cmd == "MODIFY":
             new_price = command.get("new_trigger", 0.0)
-            logger.info(f"[PAPER] EXECUTIONER: MODIFY order {order_id} → trigger={new_price}")
+            logger.info(
+                f"[PAPER] EXECUTIONER: MODIFY order {order_id} → trigger={new_price}"
+            )
             return {
                 "flow": "Executioner → Risk Agent",
                 "action": "MODIFY_CONFIRMED",
@@ -926,8 +928,11 @@ def shifter_evaluate() -> str:
 
     # Get real LTP from broker feed (stored on each tick) — no DuckDB lock
     # Use average of latest LTPs from all open legs
-    ltps = [desk.latest_ltps.get(token, avg_entry * 0.40)
-            for token in handoff.order_ids.values() if token]
+    ltps = [
+        desk.latest_ltps.get(token, avg_entry * 0.40)
+        for token in handoff.order_ids.values()
+        if token
+    ]
     current_ltp = sum(ltps) / max(len(ltps), 1) if ltps else avg_entry * 0.40
 
     premium_erosion = (
@@ -1120,12 +1125,16 @@ def order_agent_place_order(
         reason=reason,
     )
 
-    logger.info(f"[ORDER_AGENT] PLACED: {action_type} {quantity}x {symbol} @ {price} ({component})")
+    logger.info(
+        f"[ORDER_AGENT] PLACED: {action_type} {quantity}x {symbol} @ {price} ({component})"
+    )
     return json.dumps(result)
 
 
 @tool
-def order_agent_modify_order(order_id: str, new_trigger: Optional[float] = None, reason: str = "") -> str:
+def order_agent_modify_order(
+    order_id: str, new_trigger: Optional[float] = None, reason: str = ""
+) -> str:
     """
     Order Agent: Modify an existing order (SL/TP update).
 
@@ -1137,7 +1146,9 @@ def order_agent_modify_order(order_id: str, new_trigger: Optional[float] = None,
 
     result = modify_order(order_id=order_id, new_trigger=new_trigger, reason=reason)
 
-    logger.info(f"[ORDER_AGENT] MODIFIED: {order_id} → trigger={new_trigger} ({reason})")
+    logger.info(
+        f"[ORDER_AGENT] MODIFIED: {order_id} → trigger={new_trigger} ({reason})"
+    )
     return json.dumps(result)
 
 
@@ -1262,7 +1273,12 @@ executioner_agent = Agent(
         "When they command CANCEL, you use order_agent_cancel. When they command EXIT, you close via Order Agent. "
         "You NEVER decide what to do — you execute commands through the Order Agent."
     ),
-    tools=[execute_orders, order_agent_place_order, order_agent_modify_order, order_agent_cancel_order],
+    tools=[
+        execute_orders,
+        order_agent_place_order,
+        order_agent_modify_order,
+        order_agent_cancel_order,
+    ],
     allow_delegation=False,
     verbose=True,
     memory=True,
@@ -1336,14 +1352,14 @@ order_agent = Agent(
     goal=(
         "Centralize ALL order management for paper and live trading. "
         "Route orders from Executioner (ENTRY), Leg Shifter (SHIFT_OPEN/CLOSE), Risk Agent (MODIFY/CANCEL/EXIT). "
-        "Maintain /tmp/order_ledger.json with complete order lifecycle. "
+        "Maintain data/order_ledger.json with complete order lifecycle. "
         "In PAPER: mark orders FILLED immediately. In LIVE: forward to Shoonya, track broker order_id. "
         "Be the SINGLE SOURCE OF TRUTH for all fills, modifications, and cancellations."
     ),
     backstory=(
         "You are the CENTRAL ORDER HUB — all orders flow through YOU. "
         "Your AUTHORITY: Components don't call brokers directly. They ALWAYS call YOU. "
-        "Your LEDGER: Every order gets an order_id (ORD-YYYYMMDD-NNNN) and lives in /tmp/order_ledger.json "
+        "Your LEDGER: Every order gets an order_id (ORD-YYYYMMDD-NNNN) and lives in data/order_ledger.json "
         "  Fields tracked: symbol, action_type (BUY/SELL), quantity, price, order_type, component, "
         "  trade_id, reason, timestamp, status, execution_time\n"
         "Your LIFECYCLE:\n"
@@ -1458,7 +1474,7 @@ order_agent_task = Task(
         "ORDER ROUTING — Central order management (all phases).\n\n"
         "Responsibilities:\n"
         "1. Route orders from all components (Executioner, Leg Shifter, Risk Agent, Position Manager)\n"
-        "2. In PAPER mode: Update /tmp/order_ledger.json immediately\n"
+        "2. In PAPER mode: Update data/order_ledger.json immediately\n"
         "3. In LIVE mode: Forward to Shoonya API, track broker order_id\n"
         "4. Maintain single source of truth for all fills and order status\n"
         "5. Support order lifecycle: PLACE → MODIFY → CANCEL\n"
@@ -1823,6 +1839,7 @@ def test_listen_triggers() -> Dict:
 # ======================================================================
 # AGENT & TOOLS REGISTRY INITIALIZATION
 # ======================================================================
+
 
 # Register all agents and tools on module import
 def _initialize_registries():

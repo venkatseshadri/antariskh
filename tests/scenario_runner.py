@@ -21,7 +21,9 @@ import antariksh.crew_structure as crew
 class ScenarioRunner:
     """Context manager that patches system under test with scenario-specific mocks."""
 
-    def __init__(self, scenario_id: str, log_prefix: str = "/tmp/antariksh_test"):
+    def __init__(self, scenario_id: str, log_prefix: str = None):
+        if log_prefix is None:
+            log_prefix = str(Path(__file__).parent.parent / "data" / "test_logs")
         self.scenario_id = scenario_id
         self._tempdir = tempfile.mkdtemp(prefix=f"antariksh_{scenario_id}_")
         self._log_dir = Path(self._tempdir) / "logs"
@@ -38,13 +40,25 @@ class ScenarioRunner:
 
         # Reset in-memory state
         crew.market_state.clear()
-        crew.market_state.update({
-            "vix": None, "nifty_spot": None, "atm_strike": None,
-            "trade_plan": None, "gate_pass": False, "gate_reason": "",
-            "positions": {}, "mtd_pnl": 0.0, "session_pnl": 0.0,
-            "alerts": [], "audit_entries": [], "halt": False,
-            "risk_ok": True, "re_entries_used": 0, "max_re_entries": 1,
-        })
+        crew.market_state.update(
+            {
+                "vix": None,
+                "nifty_spot": None,
+                "atm_strike": None,
+                "trade_plan": None,
+                "gate_pass": False,
+                "gate_reason": "",
+                "positions": {},
+                "mtd_pnl": 0.0,
+                "session_pnl": 0.0,
+                "alerts": [],
+                "audit_entries": [],
+                "halt": False,
+                "risk_ok": True,
+                "re_entries_used": 0,
+                "max_re_entries": 1,
+            }
+        )
         return self
 
     def __exit__(self, *args):
@@ -56,6 +70,7 @@ class ScenarioRunner:
             if k.startswith("ANTARIKSH_") and k not in self._original_env:
                 del os.environ[k]
         import shutil
+
         shutil.rmtree(self._tempdir, ignore_errors=True)
 
     # ── Setup methods ────────────────────────────────────
@@ -63,6 +78,7 @@ class ScenarioRunner:
     def set_time(self, iso_str: str):
         os.environ["ANTARIKSH_MOCK_TIME"] = iso_str
         from datetime import datetime as real_dt
+
         mock_dt = real_dt.fromisoformat(iso_str)
         p = mock.patch("antariksh.crew_structure.datetime")
         m = p.start()
@@ -82,6 +98,7 @@ class ScenarioRunner:
 
     def seed_history(self, days: int, daily_pnl: List[float] = None):
         from tests.fixtures.seed_history import seed_jsonl
+
         if daily_pnl is None:
             daily_pnl = [0.0] * days
         seed_jsonl(self._log_dir, days, daily_pnl)
@@ -146,6 +163,7 @@ class ScenarioRunner:
 
     def assert_jsonl(self, contains: Dict):
         import glob
+
         for path in glob.glob(str(self._log_dir / "cfo_audit_*.jsonl")):
             with open(path) as f:
                 data = json.load(f)

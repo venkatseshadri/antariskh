@@ -44,7 +44,29 @@ def check_entry(index: str = "NIFTY") -> dict:
         f"  Trend: {trend.get('score', 0):.1f} ({trend['_method']}) | TL: {tl.get('score', 0)} ({tl['_method']})"
     )
 
-    Path("/tmp/entry_check_latest.json").write_text(json.dumps(decision, indent=2))
+    # Write to persistent location only
+    persistent_path = Path("/home/trading_ceo/antariksh/logs/entry_check_latest.json")
+    persistent_path.parent.mkdir(parents=True, exist_ok=True)
+    persistent_path.write_text(json.dumps(decision, indent=2))
+
+    # Append to daily history log (one line per run — easy to grep)
+    history_path = Path(
+        f"/home/trading_ceo/antariksh/logs/entry_check_{datetime.now().strftime('%Y%m%d')}.log"
+    )
+    history_line = (
+        f"{decision['timestamp']} | "
+        f"{'GO' if decision['go'] else 'NO-GO'} | "
+        f"{decision['signal']} {decision['confidence']}% | "
+        f"T:{decision['trend_signal']}({decision['trend_confidence']}%) "
+        f"TL:{decision['traffic_light_signal']}({decision['traffic_light_confidence']}%) | "
+        f"ema_src={decision.get('ema_source', '?')} | "
+        f"tl_pattern={decision.get('traffic_light_pattern', '?')} | "
+        f"trade={decision.get('suggested_trade', '?')} | "
+        f"reason={decision.get('reasoning', '?')}\n"
+    )
+    with open(history_path, "a") as f:
+        f.write(history_line)
+
     return decision
 
 

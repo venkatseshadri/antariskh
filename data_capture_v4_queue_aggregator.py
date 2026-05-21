@@ -32,7 +32,9 @@ class MultiTFAggregatorQueue:
 
         if duckdb_path is None:
             # v4 uses SEPARATE database file (no locking conflict with v3)
-            duckdb_path = "/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb"
+            duckdb_path = (
+                "/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb"
+            )
 
         self.db_path = Path(duckdb_path)
         self.log(f"DuckDB (v4): {self.db_path}")
@@ -40,7 +42,9 @@ class MultiTFAggregatorQueue:
         # Initialize Redis connection
         self.redis_client = None
         try:
-            self.redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+            self.redis_client = redis.Redis(
+                host="localhost", port=6379, db=0, decode_responses=True
+            )
             self.redis_client.ping()
             self.log("✅ Redis queue connected")
         except Exception as e:
@@ -115,7 +119,9 @@ class MultiTFAggregatorQueue:
             )
 
             conn.close()
-            self.log("✅ Table market_data_multitf ready (Batch 1 + Batch 2 indicators)")
+            self.log(
+                "✅ Table market_data_multitf ready (Batch 1 + Batch 2 indicators)"
+            )
 
         except Exception as e:
             self.log(f"⚠️ Table creation: {e}")
@@ -148,7 +154,9 @@ class MultiTFAggregatorQueue:
                 except Exception as e:
                     self.log(f"Error parsing queue item: {e}")
 
-            self.log(f"✅ Read {len(bars)} bars from queue")
+            self.log(
+                f"✅ Read {len(bars)} bars from queue ({queue_length} total in queue)"
+            )
             return bars
 
         except Exception as e:
@@ -166,7 +174,7 @@ class MultiTFAggregatorQueue:
             return bars
 
         try:
-            with open(log_file_path, 'r') as f:
+            with open(log_file_path, "r") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -192,7 +200,9 @@ class MultiTFAggregatorQueue:
 
         # If queue has < 5 bars, fall back to log file
         if len(bars) < 5:
-            self.log(f"Queue has {len(bars)} bars (< 5), checking log file for backup...")
+            self.log(
+                f"Queue has {len(bars)} bars (< 5), checking log file for backup..."
+            )
             log_bars = self.read_from_log(index_name)
 
             if len(log_bars) > len(bars):
@@ -230,7 +240,9 @@ class MultiTFAggregatorQueue:
             if bar_day != current_day:
                 if current_bucket:
                     # Pass all bars up to current for context (gap-capable indicators)
-                    agg_bar = self._aggregate_bucket(current_bucket, 1440, all_bars=bars[:i])
+                    agg_bar = self._aggregate_bucket(
+                        current_bucket, 1440, all_bars=bars[:i]
+                    )
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_day = bar_day
@@ -272,7 +284,9 @@ class MultiTFAggregatorQueue:
             if hour_key != current_hour_key:
                 if current_bucket:
                     # Pass all bars up to current for context (gap-capable indicators)
-                    agg_bar = self._aggregate_bucket(current_bucket, 60, all_bars=bars[:i])
+                    agg_bar = self._aggregate_bucket(
+                        current_bucket, 60, all_bars=bars[:i]
+                    )
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_hour_key = hour_key
@@ -312,13 +326,17 @@ class MultiTFAggregatorQueue:
                 minutes_elapsed = int((bar_time - market_open).total_seconds() / 60)
                 # Which bucket does this fall into?
                 bucket_number = minutes_elapsed // timeframe_min
-                bucket_start = market_open + timedelta(minutes=bucket_number * timeframe_min)
+                bucket_start = market_open + timedelta(
+                    minutes=bucket_number * timeframe_min
+                )
 
             # New bucket - finalize previous bucket if it exists
             if bucket_start != current_bucket_start:
                 if current_bucket:
                     # Pass all bars up to current for context (gap-capable indicators)
-                    agg_bar = self._aggregate_bucket(current_bucket, timeframe_min, all_bars=bars[:i])
+                    agg_bar = self._aggregate_bucket(
+                        current_bucket, timeframe_min, all_bars=bars[:i]
+                    )
                     if agg_bar:
                         aggregated.append(agg_bar)
                 current_bucket_start = bucket_start
@@ -329,13 +347,17 @@ class MultiTFAggregatorQueue:
 
         # Finalize last bucket (still open/in-progress for current timeframe)
         if current_bucket:
-            agg_bar = self._aggregate_bucket(current_bucket, timeframe_min, all_bars=bars)
+            agg_bar = self._aggregate_bucket(
+                current_bucket, timeframe_min, all_bars=bars
+            )
             if agg_bar:
                 aggregated.append(agg_bar)
 
         return aggregated
 
-    def _aggregate_bucket(self, bars: list, timeframe_min: int, all_bars: list = None) -> dict:
+    def _aggregate_bucket(
+        self, bars: list, timeframe_min: int, all_bars: list = None
+    ) -> dict:
         """Aggregate bucket of bars to one timeframe bar with gap-capable indicators."""
         if not bars:
             return None
@@ -367,11 +389,20 @@ class MultiTFAggregatorQueue:
         macd_result = self._calculate_macd(context_closes)
 
         # Batch 2: Gap-Sensitive Indicators (need intraday buildup, return None if insufficient)
-        adx_result = self._calculate_adx(context_highs, context_lows, context_closes, 14)
+        adx_result = self._calculate_adx(
+            context_highs, context_lows, context_closes, 14
+        )
         bb_result = self._calculate_bollinger_bands(context_closes, 20)
-        obv = self._calculate_obv(context_closes, [b.get("volume", 0) for b in (bars if all_bars is None else all_bars)])
-        context_volumes = [b.get("volume", 0) for b in (bars if all_bars is None else all_bars)]
-        cmf = self._calculate_cmf(context_highs, context_lows, context_closes, context_volumes, 20)
+        obv = self._calculate_obv(
+            context_closes,
+            [b.get("volume", 0) for b in (bars if all_bars is None else all_bars)],
+        )
+        context_volumes = [
+            b.get("volume", 0) for b in (bars if all_bars is None else all_bars)
+        ]
+        cmf = self._calculate_cmf(
+            context_highs, context_lows, context_closes, context_volumes, 20
+        )
         cci = self._calculate_cci(context_highs, context_lows, context_closes, 20)
 
         return {
@@ -448,7 +479,9 @@ class MultiTFAggregatorQueue:
 
         return round(rsi, 1)
 
-    def _calculate_supertrend(self, closes: list, highs: list, lows: list, period: int = 14) -> str:
+    def _calculate_supertrend(
+        self, closes: list, highs: list, lows: list, period: int = 14
+    ) -> str:
         if len(closes) < period:
             return "NEUTRAL"
 
@@ -472,7 +505,9 @@ class MultiTFAggregatorQueue:
             return None
         return round(sum(closes[-period:]) / period, 2)
 
-    def _calculate_atr(self, highs: list, lows: list, closes: list, period: int = 14) -> float:
+    def _calculate_atr(
+        self, highs: list, lows: list, closes: list, period: int = 14
+    ) -> float:
         """Calculate Average True Range. Gap-capable (gap is part of TR)."""
         if len(closes) < 2:
             return None
@@ -490,7 +525,9 @@ class MultiTFAggregatorQueue:
 
         return round(sum(trs[-period:]) / period, 2)
 
-    def _calculate_macd(self, closes: list, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+    def _calculate_macd(
+        self, closes: list, fast: int = 12, slow: int = 26, signal: int = 9
+    ) -> dict:
         """Calculate MACD. Gap-capable (uses all data)."""
         if len(closes) < slow:
             return {"macd": None, "signal": None, "histogram": None}
@@ -515,7 +552,9 @@ class MultiTFAggregatorQueue:
 
         # Signal line (EMA of MACD)
         # For simplicity, use a simple approximation
-        signal_line = macd_line  # Simplified; proper implementation would track MACD history
+        signal_line = (
+            macd_line  # Simplified; proper implementation would track MACD history
+        )
         histogram = macd_line - signal_line
 
         return {
@@ -524,7 +563,9 @@ class MultiTFAggregatorQueue:
             "histogram": round(histogram, 2),
         }
 
-    def _calculate_adx(self, highs: list, lows: list, closes: list, period: int = 14) -> dict:
+    def _calculate_adx(
+        self, highs: list, lows: list, closes: list, period: int = 14
+    ) -> dict:
         """Calculate ADX and Directional Indicators. Gap-sensitive (needs continuous buildup)."""
         if len(closes) < period:
             return {"adx": None, "di_plus": None, "di_minus": None}
@@ -558,7 +599,9 @@ class MultiTFAggregatorQueue:
         # Calculate DI+ and DI-
         tr_sum = sum(trs[-period:]) if len(trs) >= period else sum(trs)
         plus_dm_sum = sum(plus_dm[-period:]) if len(plus_dm) >= period else sum(plus_dm)
-        minus_dm_sum = sum(minus_dm[-period:]) if len(minus_dm) >= period else sum(minus_dm)
+        minus_dm_sum = (
+            sum(minus_dm[-period:]) if len(minus_dm) >= period else sum(minus_dm)
+        )
 
         di_plus = (100 * plus_dm_sum / tr_sum) if tr_sum > 0 else 0
         di_minus = (100 * minus_dm_sum / tr_sum) if tr_sum > 0 else 0
@@ -574,7 +617,9 @@ class MultiTFAggregatorQueue:
             "di_minus": round(di_minus, 2),
         }
 
-    def _calculate_bollinger_bands(self, closes: list, period: int = 20, std_dev: float = 2.0) -> dict:
+    def _calculate_bollinger_bands(
+        self, closes: list, period: int = 20, std_dev: float = 2.0
+    ) -> dict:
         """Calculate Bollinger Bands. Gap-sensitive (needs period bars)."""
         if len(closes) < period:
             return {"bb_upper": None, "bb_middle": None, "bb_lower": None}
@@ -582,7 +627,7 @@ class MultiTFAggregatorQueue:
         recent = closes[-period:]
         sma = sum(recent) / period
         variance = sum((x - sma) ** 2 for x in recent) / period
-        std = variance ** 0.5
+        std = variance**0.5
 
         upper = sma + (std_dev * std)
         lower = sma - (std_dev * std)
@@ -607,7 +652,9 @@ class MultiTFAggregatorQueue:
 
         return round(obv, 0) if obv != 0 else 0
 
-    def _calculate_cmf(self, highs: list, lows: list, closes: list, volumes: list, period: int = 20) -> float:
+    def _calculate_cmf(
+        self, highs: list, lows: list, closes: list, volumes: list, period: int = 20
+    ) -> float:
         """Calculate Chaikin Money Flow. Gap-sensitive (needs period bars)."""
         if len(closes) < period or len(volumes) < period:
             return None
@@ -627,7 +674,9 @@ class MultiTFAggregatorQueue:
         cmf = (mfv_sum / vol_sum) if vol_sum > 0 else 0
         return round(cmf, 4)
 
-    def _calculate_cci(self, highs: list, lows: list, closes: list, period: int = 20) -> float:
+    def _calculate_cci(
+        self, highs: list, lows: list, closes: list, period: int = 20
+    ) -> float:
         """Calculate Commodity Channel Index. Gap-sensitive (needs period bars)."""
         if len(closes) < period:
             return None
@@ -735,12 +784,18 @@ class MultiTFAggregatorQueue:
         self.log(f"Aggregating {len(bars)} 1-min bars")
 
         # Update EMA for 1-min bars (all closed bars)
+        ema_1min_updated = 0
         for bar in bars:
             try:
                 update_ema(bar["close"], tf="1min")
+                ema_1min_updated += 1
             except Exception as e:
                 self.log(f"⚠️ EMA 1min update failed: {e}")
 
+        if ema_1min_updated:
+            self.log(f"✅ EMA 1min: {ema_1min_updated} bars updated")
+
+        ema_mtf_updated = {}
         for tf in timeframes:
             agg_bars = self.aggregate_bars(bars, tf)
             self.write_aggregated_bars(agg_bars, index_name, tf)
@@ -749,14 +804,94 @@ class MultiTFAggregatorQueue:
             # Update EMA for newly closed bars (exclude last bar which may still be forming)
             tf_name = self._get_ema_timeframe_name(tf)
             if tf_name and len(agg_bars) > 1:
+                tf_updated = 0
                 # Only update for bars that are closed (exclude the last/current bar)
                 for bar in agg_bars[:-1]:
                     try:
                         update_ema(bar["close"], tf=tf_name)
+                        tf_updated += 1
                     except Exception as e:
                         self.log(f"⚠️ EMA {tf_name} update failed: {e}")
+                ema_mtf_updated[tf_name] = tf_updated
+
+        # Log EMA update summary
+        if ema_mtf_updated:
+            parts = [f"EMA updates:"] + [
+                f"  {tf}: {n} bars" for tf, n in ema_mtf_updated.items()
+            ]
+            self.log("\n  ".join(parts))
+
+        # Clear Redis queue AFTER successful DuckDB write + EMA update
+        # Safe: DuckDB uses ON CONFLICT DO UPDATE (idempotent re-processing)
+        if self.redis_client:
+            queue_key = f"v4_1min_queue_{index_name}"
+            try:
+                queue_length = self.redis_client.llen(queue_key)
+                self.redis_client.delete(queue_key)
+                self.log(f"✅ Queue cleared after processing ({queue_length} bars)")
+            except Exception as e:
+                self.log(f"⚠️ Queue cleanup failed: {e}")
 
         self.log("Aggregation complete")
+
+    # ── Health Checks ─────────────────────────────────────────
+    def health_check(self, index_name: str = "NIFTY"):
+        """Run health checks after each aggregation cycle. Logs only warnings."""
+        now = datetime.now()
+
+        # 1. Queue size: warn if Redis queue growing too large
+        if self.redis_client:
+            queue_key = f"v4_1min_queue_{index_name}"
+            try:
+                qlen = self.redis_client.llen(queue_key)
+                if qlen > 500:
+                    self.log(f"⚠️ HEALTH: Redis queue has {qlen} bars (>500 threshold)")
+            except Exception:
+                pass
+
+        # 2. EMA file age: warn if stale >5 minutes
+        ema_file = Path("/home/trading_ceo/brahmand/data/ema_state/60min/ema_20.json")
+        if ema_file.exists():
+            try:
+                state = json.loads(ema_file.read_text())
+                ts_str = state.get("timestamp")
+                if ts_str:
+                    age = (now - datetime.fromisoformat(ts_str)).total_seconds()
+                    if age > 300 and state.get("available"):
+                        self.log(f"⚠️ HEALTH: 60min EMA20 is {age:.0f}s old (>5 min)")
+            except Exception:
+                pass
+
+        # 3. v3.1→v4 lag: compare oldest queue bar vs now
+        if self.redis_client:
+            v3_queue = "v3_ohlcv_queue"
+            try:
+                raw = self.redis_client.lrange(v3_queue, -1, -1)
+                if raw:
+                    bar = json.loads(raw[0]) if isinstance(raw[0], str) else raw[0]
+                    ts = bar.get("timestamp", "")
+                    if ts:
+                        bar_time = datetime.fromisoformat(ts)
+                        lag = (now - bar_time).total_seconds()
+                        if lag > 600:
+                            self.log(f"⚠️ HEALTH: v3.1→v4 lag is {lag:.0f}s (>10 min)")
+            except Exception:
+                pass
+
+        # 4. Entry check age: warn if latest signal >5 minutes old
+        ec_file = Path("/home/trading_ceo/antariksh/logs/entry_check_latest.json")
+        if ec_file.exists():
+            try:
+                state = json.loads(ec_file.read_text())
+                ts_str = state.get("timestamp")
+                if ts_str:
+                    age = (now - datetime.fromisoformat(ts_str)).total_seconds()
+                    if age > 300:
+                        self.log(
+                            f"⚠️ HEALTH: entry_check stale — {age:.0f}s since last signal"
+                        )
+            except Exception:
+                pass
 
 
 def main():
@@ -767,7 +902,9 @@ def main():
 
     print("\n[V4] Starting continuous aggregation loop...")
     print("[V4] Aggregating every 60 seconds (9:15-15:30 IST)")
-    print("[V4] Entry check will run every 5 minutes on 00/05/10/15/20/25/30/35/40/45/50/55")
+    print(
+        "[V4] Entry check will run every 5 minutes on 00/05/10/15/20/25/30/35/40/45/50/55"
+    )
 
     last_entry_check_minute = -1
 
@@ -795,14 +932,20 @@ def main():
 
         print(f"[V4] Aggregation complete at {now.strftime('%H:%M:%S')}")
 
+        # ── Health Checks (every cycle, warns only on issues) ──
+        aggregator.health_check("NIFTY")
+
         # ── Entry Check: Run every 5 minutes (on 00/05/10/15/20/25/30/35/40/45/50/55) ──
         # This ensures fresh entry signals are available whenever kickoff.py runs
         if minute % 5 == 0 and minute != last_entry_check_minute:
             try:
                 from agents.entry.entry_check import check_entry
+
                 decision = check_entry("NIFTY")
                 icon = "🟢 GO" if decision.get("go") else "🔴 NO-GO"
-                print(f"[V4→ENTRY] {icon} | {decision.get('signal')} {decision.get('confidence')}% [{now.strftime('%H:%M:%S')}]")
+                print(
+                    f"[V4→ENTRY] {icon} | {decision.get('signal')} {decision.get('confidence')}% [{now.strftime('%H:%M:%S')}]"
+                )
                 last_entry_check_minute = minute
             except Exception as e:
                 print(f"[V4→ENTRY] ⚠️  Entry check failed: {e}")

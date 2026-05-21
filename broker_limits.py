@@ -28,17 +28,21 @@ class BrokerLimits:
     """Live limits fetched from broker."""
 
     timestamp: str  # When fetched from broker
-    total_margin_available: float  # Total margin available
+    total_margin_available: float  # Total margin available (cash + usable collateral)
     used_margin: float  # Currently used
     free_margin: float  # Available for new trades
-    cash_available: float  # Free cash (not locked in positions)
+    cash_available: float  # Free cash
+    collateral_value: float  # Total pledged collateral (shares + MF)
+    gross_collateral: float  # Collateral after haircut (usable for margin)
+    cash_collateral: float  # Cash portion of collateral
+    mf_collateral: float  # Mutual fund collateral
+    margin_required_derivatives: float  # Margin blocked for derivatives segment
     margin_multiplier: float  # Broker's margin multiplier (changes with VIX)
     symbol: str = "NIFTY"
     account_id: str = ""
 
     def get_net_available_margin(self) -> float:
         """Get available margin after safety buffer."""
-        # Keep 10% buffer for VIX spikes
         return self.free_margin * 0.90
 
     def is_sufficient_for_trade(self, required_margin: float) -> bool:
@@ -47,12 +51,11 @@ class BrokerLimits:
 
     def get_safety_buffer_pct(self) -> float:
         """Get recommended safety margin % based on multiplier."""
-        # Higher multiplier = higher volatility = larger buffer
         base_buffer = 0.10  # 10% minimum
         if self.margin_multiplier > 1.5:
-            return 0.20  # 20% buffer for high volatility
+            return 0.20
         elif self.margin_multiplier > 1.2:
-            return 0.15  # 15% buffer for moderate volatility
+            return 0.15
         return base_buffer
 
 
@@ -77,6 +80,11 @@ def _save_broker_limits(limits: BrokerLimits):
             "used_margin": limits.used_margin,
             "free_margin": limits.free_margin,
             "cash_available": limits.cash_available,
+            "collateral_value": limits.collateral_value,
+            "gross_collateral": limits.gross_collateral,
+            "cash_collateral": limits.cash_collateral,
+            "mf_collateral": limits.mf_collateral,
+            "margin_required_derivatives": limits.margin_required_derivatives,
             "margin_multiplier": limits.margin_multiplier,
             "symbol": limits.symbol,
             "account_id": limits.account_id,
@@ -111,12 +119,29 @@ def fetch_live_limits_from_broker(api) -> Optional[BrokerLimits]:
             return None
 
         # Parse response (Shoonya response format)
-        margin_available = float(limits_resp.get("marginallowed", 0))
-        used_margin = float(limits_resp.get("marginused", 0))
-        free_margin = margin_available - used_margin
+        # API returns "cash" (available capital) but NOT "marginallowed" pre-market.
+        # Fall back chain for margin_available:
+        #   marginavailable → marginallowed → cash + grcoll → cash → brkcollamt → 0
         cash_available = float(limits_resp.get("cash", 0))
+        used_margin = float(limits_resp.get("marginused", 0))
+        collateral_value = float(limits_resp.get("collateral", 0))
+        gross_collateral = float(limits_resp.get("grcoll", 0))
+        cash_collateral = float(limits_resp.get("cash_coll", 0))
+        mf_collateral = float(limits_resp.get("mf_coll", 0))
+        margin_required_derivatives = float(limits_resp.get("mr_der_a", 0))
+
+        margin_available = float(
+            limits_resp.get(
+                "marginavailable",
+                limits_resp.get(
+                    "marginallowed",
+                    cash_available + collateral_value,
+                ),
+            )
+        )
+        free_margin = margin_available - used_margin
         mult = float(limits_resp.get("multiplier", 1.0))
-        account_id = limits_resp.get("accountid", "N/A")
+        account_id = limits_resp.get("accountid", limits_resp.get("actid", "N/A"))
 
         limits = BrokerLimits(
             timestamp=datetime.now().isoformat(),
@@ -124,6 +149,11 @@ def fetch_live_limits_from_broker(api) -> Optional[BrokerLimits]:
             used_margin=used_margin,
             free_margin=free_margin,
             cash_available=cash_available,
+            collateral_value=collateral_value,
+            gross_collateral=gross_collateral,
+            cash_collateral=cash_collateral,
+            mf_collateral=mf_collateral,
+            margin_required_derivatives=margin_required_derivatives,
             margin_multiplier=mult,
             symbol="NIFTY",
             account_id=str(account_id),
@@ -133,11 +163,17 @@ def fetch_live_limits_from_broker(api) -> Optional[BrokerLimits]:
         _save_broker_limits(limits)
 
         print(f"[BROKER_LIMITS] Fetched from broker at {limits.timestamp}")
-        print(f"  Total margin available: {format_inr(margin_available)}")
-        print(f"  Used margin: {format_inr(used_margin)}")
-        print(f"  Free margin: {format_inr(free_margin)}")
-        print(f"  Cash available: {format_inr(cash_available)}")
-        print(f"  Margin multiplier: {mult}x (VIX effect)")
+        print(f"  Cash:              {format_inr(cash_available)}")
+        print(f"  Collateral:        {format_inr(collateral_value)} (total pledged)")
+        print(f"    Cash coll:       {format_inr(cash_collateral)}")
+        print(f"    MF coll:         {format_inr(mf_collateral)}")
+        print(f"  Gross coll (haircut): {format_inr(gross_collateral)}")
+        print(f"  Margin req. FO:      {format_inr(margin_required_derivatives)}")
+        print(f"  ———")
+        print(f"  Total (cash+coll): {format_inr(margin_available)}")
+        print(f"  Used margin:       {format_inr(used_margin)}")
+        print(f"  Free margin:       {format_inr(free_margin)}")
+        print(f"  Multiplier:        {mult}x (VIX effect)")
 
         return limits
 
@@ -183,14 +219,20 @@ def print_limits_summary():
 ║              BROKER LIMITS — {freshness_marker}
 ╠════════════════════════════════════════════════════════════════╣
 ║ Timestamp:                      {limits.timestamp}
-║ Total Margin Available:         ₹{limits.total_margin_available:,.0f}
-║ Used Margin:                    ₹{limits.used_margin:,.0f}
-║ Free Margin:                    ₹{limits.free_margin:,.0f}
-║ Cash Available:                 ₹{limits.cash_available:,.0f}
-║ Margin Multiplier:              {limits.margin_multiplier}x (VIX effect)
+║ Cash:                           {format_inr(limits.cash_available, 0)}
+║ Collateral (pledged):           {format_inr(limits.collateral_value, 0)}
+║   Cash collateral:              {format_inr(limits.cash_collateral, 0)}
+║   MF collateral:                {format_inr(limits.mf_collateral, 0)}
+║   Gross (haircut):              {format_inr(limits.gross_collateral, 0)}
+║ Margin required FO:             {format_inr(limits.margin_required_derivatives, 0)}
+║ ──────────────────────────────────────────────────────────────
+║ Total Available:                {format_inr(limits.total_margin_available, 0)}
+║ Used Margin:                    {format_inr(limits.used_margin, 0)}
+║ Free Margin:                    {format_inr(limits.free_margin, 0)}
+║ Multiplier:                     {limits.margin_multiplier}x (VIX)
 ║
-║ Recommended Safety Buffer:      {limits.get_safety_buffer_pct() * 100:.0f}%
-║ Net Available (with buffer):    ₹{limits.get_net_available_margin():,.0f}
+║ Safety Buffer:                  {limits.get_safety_buffer_pct() * 100:.0f}%
+║ Net Available (buffer):         {format_inr(limits.get_net_available_margin(), 0)}
 ║
 ║ Account:                        {limits.account_id}
 ║ Symbol:                         {limits.symbol}
@@ -222,7 +264,7 @@ def sync_with_config():
     CAPITAL.free_cash_floor = 0  # Broker reports free_margin directly
 
     print(f"[BROKER_LIMITS] Synced with risk_config:")
-    print(f"  CAPITAL.total_capital = ₹{CAPITAL.total_capital:,.0f}")
+    print(f"  CAPITAL.total_capital = {format_inr(CAPITAL.total_capital, 0)}")
 
 
 if __name__ == "__main__":

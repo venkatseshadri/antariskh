@@ -9,6 +9,7 @@ Asset manager sets these values based on firm policy.
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any
+from format_utils import format_inr
 
 # ======================================================================
 # CAPITAL CONFIGURATION
@@ -189,7 +190,7 @@ def update_capital_limits(
     if max_margin_utilization_pct is not None:
         CAPITAL.max_margin_utilization_pct = max_margin_utilization_pct
     print(
-        f"[RISK_CONFIG] Capital limits updated: ₹{CAPITAL.total_capital} | Floor: ₹{CAPITAL.free_cash_floor}"
+        f"[RISK_CONFIG] Capital limits updated: {format_inr(CAPITAL.total_capital, 0)} | Floor: {format_inr(CAPITAL.free_cash_floor, 0)}"
     )
 
 
@@ -218,13 +219,13 @@ def get_config_summary() -> str:
 ║           RISK MANAGEMENT CONFIGURATION SUMMARY               ║
 ╠════════════════════════════════════════════════════════════════╣
 ║ CAPITAL:
-║   Total Capital:                ₹{CAPITAL.total_capital:,.0f}
-║   Free Cash Floor:              ₹{CAPITAL.free_cash_floor:,.0f}
+║   Total Capital:                {format_inr(CAPITAL.total_capital, 0)}
+║   Free Cash Floor:              {format_inr(CAPITAL.free_cash_floor, 0)}
 ║   Max Margin Utilization:       {CAPITAL.max_margin_utilization_pct * 100:.0f}%
 ║
 ║ RISK LIMITS:
-║   Max Loss per Trade:           ₹{RISK.max_loss_per_trade:,.0f}
-║   Max Loss per Day:             ₹{RISK.max_loss_per_day:,.0f}
+║   Max Loss per Trade:           {format_inr(RISK.max_loss_per_trade, 0)}
+║   Max Loss per Day:             {format_inr(RISK.max_loss_per_day, 0)}
 ║   Max Concurrent Trades:        {RISK.max_concurrent_trades}
 ║   Max Shifts per Trade:         {RISK.max_shifts_per_trade}
 ║

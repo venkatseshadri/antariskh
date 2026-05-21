@@ -62,7 +62,10 @@ def format_inr(amount: float, decimals: int = 2) -> str:
         indian_format = ",".join(groups) + "," + last_three
 
     # Reconstruct with decimals
-    result = f"₹{indian_format}.{dec_part}"
+    if decimals > 0:
+        result = f"₹{indian_format}.{dec_part}"
+    else:
+        result = f"₹{indian_format}"
 
     # Add negative sign if needed
     if is_negative:

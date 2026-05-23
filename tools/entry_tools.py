@@ -1,5 +1,4 @@
-"""
-Entry Agent Tools — deterministic data-access for the 7-family entry crew.
+"""Entry Agent Tools — deterministic data-access for the 7-family entry crew.
 
 Each family gets a focused tool that queries the relevant DuckDB (v3.1 or v4),
 pre-processes indicator data, and returns structured JSON for the LLM agent.
@@ -17,14 +16,36 @@ Design rule (CHARTER Rule 2): deterministic, no LLM in tool execution.
 Each tool returns pure data — the agent applies judgment.
 """
 
-import json
+import json as _json
 import os
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime as _dt
+from pathlib import Path as _Path
 from typing import Optional
+import time as _time
+
+try:
+    import duckdb
+except ImportError:
+    duckdb = None
+
+try:
+    import redis as _redis
+except ImportError:
+    _redis = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
 
 # DB paths — project-normalized
-_PROJECT_ROOT = Path("/home/trading_ceo/python-trader")
+_PROJECT_ROOT = _Path("/home/trading_ceo/python-trader")
 _V31_NIFTY = _PROJECT_ROOT / "varaha" / "data" / "varaha_data.duckdb"
 _V4_MULTITF = _PROJECT_ROOT / "varaha" / "data" / "market_data_multitf.duckdb"
 
@@ -48,7 +69,7 @@ def _open_db(path: str):
         import duckdb
     except ImportError:
         return None
-    if not Path(path).exists():
+    if not _Path(path).exists():
         return None
     # Retry up to 3 times with short backoff for write-lock contention
     for attempt in range(3):
@@ -56,7 +77,6 @@ def _open_db(path: str):
             return duckdb.connect(path, read_only=True)
         except duckdb.IOException:
             if attempt < 2:
-                import time as _time
 
                 _time.sleep(0.5)
             else:
@@ -818,7 +838,6 @@ def query_traffic_light(index: str = "NIFTY") -> str:
 def _redis_connect():
     """Connect to local Redis. Returns client or None."""
     try:
-        import redis as _redis
 
         r = _redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
         r.ping()
@@ -839,7 +858,6 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
     Returns:
         {latest_1m: {open,high,low,close,volume}, candles_by_tf: {5m:GREEN/RED,...}, n_bars}
     """
-    from datetime import datetime as _dt
 
     r = _redis_connect()
     if not r:
@@ -861,7 +879,6 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
             }
 
         # Parse bars, filter by index
-        import json as _json
 
         bars = []
         for b in bars_raw:
@@ -952,9 +969,6 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     Returns:
         {family, signal, score, confidence, reasoning, key_indicators}
     """
-    import json as _json
-    from datetime import datetime as _dt
-    from pathlib import Path as _Path
 
     cfg = _load_weights().get("trend", {})
     tf_weights = cfg.get(
@@ -1220,7 +1234,6 @@ def _compute_sma_from_bars(bars: list, tf_minutes: int, periods: list = None) ->
     if len(bucket_closes) < max(periods):
         return None, None
 
-    import numpy as np
 
     closes = np.array(
         bucket_closes[: min(len(bucket_closes), max(periods))], dtype=float
@@ -1314,8 +1327,6 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     Uses get_live_candles() for per-TF candle colors, pattern matches.
     Includes 7th parameter: gap direction (GREEN if gap up, RED if gap down).
     """
-    import json as _json
-    from datetime import datetime as _dt
 
     cfg = _load_weights().get("traffic_light", {})
     pattern_cfg = cfg.get("patterns", {})
@@ -1453,8 +1464,6 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
 
 def _load_weights():
     """Load entry_weights.json from config dir."""
-    import json as _json
-    from pathlib import Path as _Path
 
     cfg = _Path(__file__).parent.parent / "config" / "entry_weights.json"
     if cfg.exists():
@@ -1468,8 +1477,6 @@ def score_trend(index: str = "NIFTY") -> dict:
     Reads DuckDB, applies TF weights + ADX gates + ST boost from config.
     Returns {family, signal, score, confidence, reasoning}.
     """
-    import json as _json
-    from datetime import datetime as _dt
 
     cfg = _load_weights().get("trend", {})
     tf_weights = cfg.get(
@@ -1587,8 +1594,6 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
     Reads pattern from query_traffic_light, applies pattern scores from config.
     Returns {family, signal, score, confidence, reasoning}.
     """
-    import json as _json
-    from datetime import datetime as _dt
 
     cfg = _load_weights().get("traffic_light", {})
     pattern_cfg = cfg.get("patterns", {})
@@ -1640,12 +1645,13 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
     }
 
 
-def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
+def combine_entry_scores(trend_score: dict, tl_score: dict, market_ctx: dict = None) -> dict:
     """
-    Merge deterministic Trend + Traffic Light scores into GO/NO-GO.
+    Merge deterministic Trend + Traffic Light + Market Context scores into GO/NO-GO.
     Pure Python — no LLM. Reads weights from config.
+
+    market_ctx: Optional dict with {vix, pcr_total, adx, matching_patterns, ...}
     """
-    from datetime import datetime as _dt
 
     cfg = _load_weights().get("combine", {})
     rules = cfg.get("rules", {})
@@ -1711,6 +1717,42 @@ def combine_entry_scores(trend_score: dict, tl_score: dict) -> dict:
         confidence = int((t_conf * t_conf + tl_conf * tl_conf) / total_weight * mult)
     else:
         confidence = 0
+
+    # Market context adjustment (VIX, PCR, patterns)
+    market_adjust = 1.0
+    market_reason = ""
+    if market_ctx:
+        # VIX adjustment: high VIX reduces confidence on caution trades
+        vix = market_ctx.get("vix")
+        if vix and vix > 20:
+            vix_weight = market_ctx.get("vix_weight", 0.15)
+            market_adjust *= (1.0 - vix_weight * min(1.0, (vix - 20) / 10))
+            market_reason += f" [VIX={vix:.1f}, adj={market_adjust:.2f}]"
+
+        # PCR adjustment: extremes influence direction confidence
+        pcr = market_ctx.get("pcr_total")
+        if pcr:
+            pcr_weight = market_ctx.get("pcr_weight", 0.10)
+            if pcr > 1.15 and signal == "BULLISH":  # High PCR + bullish = conflict
+                market_adjust *= (1.0 - pcr_weight)
+                market_reason += f" [PCR={pcr:.2f} conflicts BULLISH, adj={market_adjust:.2f}]"
+            elif pcr < 0.85 and signal == "BEARISH":  # Low PCR + bearish = conflict
+                market_adjust *= (1.0 - pcr_weight)
+                market_reason += f" [PCR={pcr:.2f} conflicts BEARISH, adj={market_adjust:.2f}]"
+
+        # Research patterns boost/suppress confidence
+        patterns = market_ctx.get("matching_patterns", [])
+        if patterns:
+            pattern_weight = market_ctx.get("pattern_weight", 0.10)
+            # Multi-indicator patterns (ST_ADX_VIX) get higher boost
+            multi_patterns = [p for p in patterns if "VIX" in p or ("ADX" in p and "ST" in p)]
+            if multi_patterns:
+                market_adjust *= (1.0 + pattern_weight * len(multi_patterns))
+                market_reason += f" [patterns={patterns}, boost={market_adjust:.2f}]"
+
+    if market_adjust != 1.0:
+        confidence = int(confidence * market_adjust)
+        reason += market_reason
 
     # Compute combined score (weighted by confidence)
     if total_weight > 0:
@@ -1787,9 +1829,6 @@ def rl_update_weights(session_results: list[dict]) -> dict:
     - If ADX thresholds let through bad trades → raise thresholds
     - If pattern scores misranked → reorder patterns
     """
-    import json as _json
-    from pathlib import Path as _Path
-    from datetime import datetime as _dt
 
     cfg_path = _Path(__file__).parent.parent / "config" / "entry_weights.json"
     current_weights = _json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
@@ -1811,8 +1850,6 @@ def rl_update_weights(session_results: list[dict]) -> dict:
         }
 
     try:
-        from crewai import Agent, Task, Crew, Process
-        from crewai.llm import LLM
 
         llm = LLM(
             model="deepseek/deepseek-chat",
@@ -1925,8 +1962,6 @@ def llm_entry_decision(trend_score: dict, tl_score: dict) -> dict:
 
     Returns: same decision dict but with LLM-annotated reasoning.
     """
-    import json as _json
-    from datetime import datetime as _dt
 
     # Only call LLM if API key is configured
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -1937,8 +1972,6 @@ def llm_entry_decision(trend_score: dict, tl_score: dict) -> dict:
         return det
 
     try:
-        from crewai import Agent, Task, Crew, Process
-        from crewai.llm import LLM
 
         llm = LLM(
             model="deepseek/deepseek-chat",

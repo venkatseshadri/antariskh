@@ -14,6 +14,7 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
+sys.path.insert(0, str(PROJECT_ROOT.parent / "brahmand"))
 
 from tools.entry_tools import (
     score_trend_redis,
@@ -21,15 +22,35 @@ from tools.entry_tools import (
     combine_entry_scores,
 )
 
+# Import research agent broker for market context + pattern matching
+try:
+    from entry_signal_broker import EntrySignalBroker
+    _broker = EntrySignalBroker()
+except Exception as e:
+    logger_temp = logging.getLogger("EntryCheck")
+    logger_temp.warning(f"Could not load EntrySignalBroker: {e} — continuing without research patterns")
+    _broker = None
+
 logger = logging.getLogger("EntryCheck")
 
 
 def check_entry(index: str = "NIFTY") -> dict:
-    logger.info(f"Entry gate for {index} (Redis-only, 0 DuckDB, 0 LLM)")
+    logger.info(f"Entry gate for {index} (Redis + research patterns)")
 
     trend = score_trend_redis(index)
     tl = score_traffic_light_redis(index)
-    decision = combine_entry_scores(trend, tl)
+
+    # Get market context (VIX, PCR, patterns) from research broker if available
+    market_ctx = None
+    if _broker:
+        try:
+            market_ctx = _broker.get_full_context(index)
+            if market_ctx.get("matching_patterns"):
+                logger.info(f"  Research patterns matched: {market_ctx['matching_patterns']}")
+        except Exception as e:
+            logger.warning(f"Market context lookup failed: {e}")
+
+    decision = combine_entry_scores(trend, tl, market_ctx)
 
     decision["timestamp"] = datetime.now().isoformat()
     decision["index"] = index
@@ -43,6 +64,12 @@ def check_entry(index: str = "NIFTY") -> dict:
     logger.info(
         f"  Trend: {trend.get('score', 0):.1f} ({trend['_method']}) | TL: {tl.get('score', 0)} ({tl['_method']})"
     )
+    if market_ctx:
+        logger.info(
+            f"  Market Context: VIX={market_ctx.get('vix', '?')}, "
+            f"PCR={market_ctx.get('pcr_total', '?')}, "
+            f"ADX={market_ctx.get('adx', '?')}"
+        )
 
     # Write to persistent location only
     persistent_path = Path("/home/trading_ceo/antariksh/logs/entry_check_latest.json")

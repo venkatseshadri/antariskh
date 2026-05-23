@@ -11,12 +11,14 @@ import os, sys, json, logging
 from pathlib import Path
 from datetime import datetime
 
+# Ensure project paths are available (add BEFORE any imports)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+TOOLS_PATH = PROJECT_ROOT / "tools"
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
-sys.path.insert(0, str(PROJECT_ROOT.parent / "brahmand"))
+sys.path.insert(0, str(TOOLS_PATH))
 
-from tools.entry_tools import (
+# Now import after paths are set
+from entry_tools import (
     score_trend_redis,
     score_traffic_light_redis,
     combine_entry_scores,

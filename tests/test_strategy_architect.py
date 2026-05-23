@@ -1,11 +1,18 @@
 """E2E test: Strategy Architect — regime → strategy → strike selection.
 
+import os, sys
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from crews.ta_crew import strategy_architect as _architect, load_skill_file
+from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
+from dotenv import load_dotenv
+
+
 Feeds the Architect a TRENDING_BEAR signal from the Technical Scout
 and verifies it maps to a Call Credit Spread using DuckDB data + skill file.
 """
 
-import os, sys
-from pathlib import Path
 
 # Load .env
 env_path = Path(__file__).parent.parent / ".env"
@@ -24,10 +31,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from crews.ta_crew import strategy_architect as _architect, load_skill_file
-from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

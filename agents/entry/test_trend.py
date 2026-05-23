@@ -1,4 +1,16 @@
 """
+
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+        import duckdb
+    from tools.entry_tools import query_trend
+    from tools.entry_tools import query_trend
+    from agents.entry.trend_agent import run_trend_analysis
+from dotenv import load_dotenv
+
 Test Trend Agent — standalone and mock.
 
 Coverage:
@@ -6,11 +18,6 @@ Coverage:
   2. Agent integration: run_trend_analysis (requires DEEPSEEK_API_KEY, skipped if absent)
 """
 
-import json
-import os
-import sys
-import tempfile
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -38,7 +45,6 @@ def test_trend_tool_with_mock_db():
         print("SKIP: duckdb not installed")
         return
 
-    from tools.entry_tools import query_trend
 
     # Create temp DuckDB files — use paths that don't exist yet
     v4_path = tempfile.mktemp(suffix=".duckdb")
@@ -112,7 +118,6 @@ def test_trend_tool_with_mock_db():
 
 def test_trend_tool_handles_missing_db():
     """query_trend should return valid JSON even when DBs don't exist."""
-    from tools.entry_tools import query_trend
 
     os.environ["ENTRY_V31_DB"] = "/nonexistent/path.duckdb"
     os.environ["ENTRY_V4_DB"] = "/nonexistent/path.duckdb"
@@ -144,7 +149,6 @@ def test_trend_agent_output_schema():
         )
         return
 
-    from agents.entry.trend_agent import run_trend_analysis
 
     result = run_trend_analysis("NIFTY")
 

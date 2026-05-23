@@ -1,20 +1,10 @@
 """QA Tester Crew — validation and quality gates.
 
-Single agent validating CTO-approved, Dev-implemented changes.
-Runs test suites, checks for regressions, tests specific scenarios,
-and produces signed QA reports. Nothing deploys without QA PASS.
-
-Reports to CTO.
-"""
-
 import os
 import sys
-
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.qa_tools import (
     run_test_suite as _run_test_suite,
@@ -23,6 +13,20 @@ from tools.qa_tools import (
     compare_outputs as _compare_outputs,
     generate_qa_report as _generate_qa_report,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+Single agent validating CTO-approved, Dev-implemented changes.
+Runs test suites, checks for regressions, tests specific scenarios,
+and produces signed QA reports. Nothing deploys without QA PASS.
+
+Reports to CTO.
+"""
+
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 qa_llm = LLM(

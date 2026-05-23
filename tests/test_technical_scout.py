@@ -3,6 +3,17 @@
 import os, sys
 from pathlib import Path
 from datetime import datetime, timedelta
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from crews.ta_crew import (
+    technical_scout as _scout,
+    detect_market_regime,
+    load_skill_file,
+)
+from dotenv import load_dotenv
+load_dotenv()
+
+
 
 # Load .env
 env_path = Path(__file__).parent.parent / ".env"
@@ -22,13 +33,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from crews.ta_crew import (
-    technical_scout as _scout,
-    detect_market_regime,
-    load_skill_file,
-)
 
 # Standalone agent needs its own LLM (hierarchical mode uses manager_llm)
 ds_llm = LLM(

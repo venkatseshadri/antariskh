@@ -1,5 +1,25 @@
 """CTO Crew — technical strategy, gatekeeping, and Dev/QA pipeline orchestration.
 
+import os
+import sys
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+from config_loader import load_agent_config
+from tools.cto_tools import (
+    assess_change_risk as _assess_change_risk,
+    preview_diff as _preview_diff,
+    cto_signoff as _cto_signoff,
+    generate_cto_brief as _generate_cto_brief,
+    validate_change_spec as _validate_change_spec,
+    scout_technology as _scout_technology,
+    evaluate_architecture as _evaluate_architecture,
+    design_poc_plan as _design_poc_plan,
+)
+from dotenv import load_dotenv
+load_dotenv()
+
+
 Single agent (CTO) with all technical authority:
 - Scouts new tools/frameworks to reduce cost and maintenance
 - Evaluates architecture and proposes improvements
@@ -12,25 +32,9 @@ The CTO is a MANAGER agent in Process.hierarchical mode.
 It receives change requests and delegates to Dev and QA agents.
 """
 
-import os
-import sys
 
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_loader import load_agent_config
-from tools.cto_tools import (
-    assess_change_risk as _assess_change_risk,
-    preview_diff as _preview_diff,
-    cto_signoff as _cto_signoff,
-    generate_cto_brief as _generate_cto_brief,
-    validate_change_spec as _validate_change_spec,
-    scout_technology as _scout_technology,
-    evaluate_architecture as _evaluate_architecture,
-    design_poc_plan as _design_poc_plan,
-)
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 manager_llm = LLM(

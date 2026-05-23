@@ -1,14 +1,9 @@
 """Post-Mortem Analyst Crew — 2-agent trade review + PM recommendations.
 
-Agents: TradeReviewer, PatternAnalyst.
-"""
-
 import os, sys
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.pa_tools import (
     review_trade as _review_trade,
@@ -27,6 +22,15 @@ from tools.pa_tools import (
     track_missed_opportunities as _track_missed_opportunities,
     generate_pa_recommendations as _generate_pa_recommendations,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+Agents: TradeReviewer, PatternAnalyst.
+"""
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 manager_llm = LLM(
     model="deepseek/deepseek-chat",

@@ -1,24 +1,12 @@
 """Trading Analyst Crew — 4-agent trade validation (Varaha model: Scout → Execution → Analyst → Reporter).
 
-Agents:
-  - Technical Scout: market regime from DuckDB (ADX, SuperTrend, VIX)
-  - Trade Execution Validator: spec conformance, slippage, duplicates
-  - Quantitative Options Analyst: Greeks, strikes, SL vs volatility
-  - Compliance Reporter: PM + AM reports
-
-Uses CrewAI Process.hierarchical. Deterministic tools from tools/ta_tools.py.
-"""
-
 import os
 import sys
 from typing import Type
-
 from pydantic import BaseModel, Field
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import BaseTool, tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.ta_tools import (
     detect_market_regime as _detect_market_regime,
@@ -51,6 +39,22 @@ from tools.risk_tools import (
     TradeCommandHandlerTool,
     WebSocketSubscriptionTool,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+Agents:
+  - Technical Scout: market regime from DuckDB (ADX, SuperTrend, VIX)
+  - Trade Execution Validator: spec conformance, slippage, duplicates
+  - Quantitative Options Analyst: Greeks, strikes, SL vs volatility
+  - Compliance Reporter: PM + AM reports
+
+Uses CrewAI Process.hierarchical. Deterministic tools from tools/ta_tools.py.
+"""
+
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 manager_llm = LLM(

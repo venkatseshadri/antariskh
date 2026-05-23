@@ -1,11 +1,19 @@
 """Validate Contract Specialist — full pipeline test.
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from crews.ta_crew import contract_specialist as _librarian, load_skill_file
+from tools.contract_tools import LibrarianContractTool, EnrichTradePlanTool
+from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
+from dotenv import load_dotenv
+
+
 Simulates: Architect trade plan → Librarian resolves each leg → PM-ready enriched payload.
 Runs against live DuckDB (ATTACH READ_ONLY — zero lock contention with capture script).
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -23,11 +31,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from crews.ta_crew import contract_specialist as _librarian, load_skill_file
-from tools.contract_tools import LibrarianContractTool, EnrichTradePlanTool
-from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-05-22T08:30:04.718485",
+  "total_margin_available": 574684.15,
+  "used_margin": 0.0,
+  "free_margin": 574684.15,
+  "cash_available": 58350.23,
+  "collateral_value": 516333.92,
+  "gross_collateral": 351120.75,
+  "cash_collateral": 52349.25,
+  "mf_collateral": 198594.41,
+  "margin_required_derivatives": 46680.18,
+  "margin_multiplier": 1.0,
+  "symbol": "NIFTY",
+  "account_id": "N/A"
+}

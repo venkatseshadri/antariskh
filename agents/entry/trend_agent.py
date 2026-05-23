@@ -1,4 +1,16 @@
 """
+
+import os
+import sys
+import json
+import logging
+from pathlib import Path
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+from tools.entry_tools import query_trend as _query_trend
+from dotenv import load_dotenv
+
 Entry Crew — Trend Agent (Family 1 of 7).
 
 Analyzes EMA/SMA alignment + SuperTrend across 6 timeframes.
@@ -11,20 +23,11 @@ Usage:
     python -m agents.entry.trend_agent
 """
 
-import os
-import sys
-import json
-import logging
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
 
-from tools.entry_tools import query_trend as _query_trend
 
 # ============================================================
 # LLM Config

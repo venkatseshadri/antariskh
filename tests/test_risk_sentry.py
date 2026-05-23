@@ -1,10 +1,17 @@
 """E2E test: Risk Sentry monitors a position and triggers exits.
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.risk_tools import MonitorPnLGreeksTool, TSLEngineTool, TradeCommandHandlerTool
+from crews.ta_crew import load_skill_file
+from dotenv import load_dotenv
+
+
 Simulates: Entry → monitoring cycle → SL/TP/TSL check → exit signal.
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -22,10 +29,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.risk_tools import MonitorPnLGreeksTool, TSLEngineTool, TradeCommandHandlerTool
-from crews.ta_crew import load_skill_file
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

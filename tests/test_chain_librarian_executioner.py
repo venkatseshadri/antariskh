@@ -1,12 +1,19 @@
 """Chain test: Librarian resolves contract → Executioner places paper trade.
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.contract_tools import LibrarianContractTool
+from tools.execution_tools import ExecuteTradeTool
+from dotenv import load_dotenv
+
+
 Validates the full assembly line:
   Architect request → Librarian lookup → Token/Symbol/Lot → Executioner paper order
 All against live DuckDB (ATTACH READ_ONLY — zero lock contention).
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -24,10 +31,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.contract_tools import LibrarianContractTool
-from tools.execution_tools import ExecuteTradeTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

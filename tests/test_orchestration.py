@@ -1,13 +1,54 @@
 """Orchestration Tests — ORCH-01 through ORCH-20.
 
+import os
+import sys
+import pytest
+    from crews.om_crew import build_om_crew
+    from crews.ta_crew import build_ta_crew
+    from crews.am_crew import financial_tracker, financial_reporter
+    from crews.ceo_crew import guardian, reporter
+    from crews.om_crew import build_om_crew
+    from crews.ta_crew import build_ta_crew
+    from crews.pm_crew import build_pm_crew
+    from crews.am_crew import build_am_crew
+    from crews.pa_crew import build_pa_crew
+    from crews.ceo_crew import build_ceo_crew
+    from crews.om_crew import pre_flight_agent, cron_watchdog as om_reporter_ag
+    from crews.om_crew import reporter as om_reporter
+    from crews.ta_crew import trade_validator, compliance_reporter
+    from crews.pm_crew import strategist, strategy_reporter
+    from crews.am_crew import financial_tracker, financial_reporter
+    from crews.pa_crew import reviewer, analyst
+    from crews.ceo_crew import guardian, reporter as ceo_reporter
+    from unittest.mock import patch
+    from crewai import Crew
+    from crews.am_crew import build_am_crew
+    from unittest.mock import patch
+    from crewai import Crew
+    from crews.pm_crew import build_pm_crew
+    from unittest.mock import patch
+    from crewai import Crew
+    from crews.om_crew import build_om_crew
+    from crews.am_crew import build_am_crew
+    from crews.om_crew import build_om_crew
+    from crews.pm_crew import build_pm_crew
+    from crews.om_crew import build_om_crew
+    from crews.pm_crew import build_pm_crew
+    from crews.ta_crew import build_ta_crew
+    from crews.om_crew import build_om_crew
+    from crews.ta_crew import build_ta_crew
+    from crews.pm_crew import build_pm_crew
+    from crews.am_crew import build_am_crew
+    from crews.pa_crew import build_pa_crew
+    from crews.ceo_crew import build_ceo_crew
+from dotenv import load_dotenv
+
+
 CrewAI cross-crew orchestration: query routing, task delegation structure,
 mock LLM integration, real LLM end-to-end, and full pipeline integration.
 """
 
-import os
-import sys
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -182,7 +223,6 @@ def test_ORCH_06_query_routing_unknown_fallback():
 @pytest.mark.orchestration
 def test_ORCH_07_om_crew_has_3_tasks():
     """OM crew: 3 agents, 3 tasks, hierarchical process."""
-    from crews.om_crew import build_om_crew
 
     crew = build_om_crew()
     assert len(crew.agents) == 3, f"OM has 3 agents, got {len(crew.agents)}"
@@ -196,7 +236,6 @@ def test_ORCH_07_om_crew_has_3_tasks():
 @pytest.mark.orchestration
 def test_ORCH_08_ta_crew_has_2_tasks():
     """TA crew: 2 agents, 2 tasks, hierarchical process."""
-    from crews.ta_crew import build_ta_crew
 
     crew = build_ta_crew()
     assert len(crew.agents) == 2, f"TA has 2 agents, got {len(crew.agents)}"
@@ -210,7 +249,6 @@ def test_ORCH_08_ta_crew_has_2_tasks():
 @pytest.mark.orchestration
 def test_ORCH_09_am_crew_tools_correct():
     """AM FinancialTracker has 3 tools, Reporter has 2."""
-    from crews.am_crew import financial_tracker, financial_reporter
 
     assert len(financial_tracker.tools) == 4, (
         f"FinancialTracker has 4 tools, got {len(financial_tracker.tools)}"
@@ -224,7 +262,6 @@ def test_ORCH_09_am_crew_tools_correct():
 @pytest.mark.orchestration
 def test_ORCH_10_ceo_delegation_blocked():
     """CEO agents have allow_delegation=False — no sub-delegation."""
-    from crews.ceo_crew import guardian, reporter
 
     assert guardian.allow_delegation is False, "Guardian allow_delegation must be False"
     assert reporter.allow_delegation is False, (
@@ -236,12 +273,6 @@ def test_ORCH_10_ceo_delegation_blocked():
 @pytest.mark.orchestration
 def test_ORCH_11_all_crews_hierarchical():
     """All 6 crews use Process.hierarchical."""
-    from crews.om_crew import build_om_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.am_crew import build_am_crew
-    from crews.pa_crew import build_pa_crew
-    from crews.ceo_crew import build_ceo_crew
 
     crews = {
         "OM": build_om_crew(),
@@ -261,13 +292,6 @@ def test_ORCH_11_all_crews_hierarchical():
 @pytest.mark.orchestration
 def test_ORCH_12_agent_role_boundaries():
     """Verify each agent's can/cannot boundaries: all have allow_delegation=False."""
-    from crews.om_crew import pre_flight_agent, cron_watchdog as om_reporter_ag
-    from crews.om_crew import reporter as om_reporter
-    from crews.ta_crew import trade_validator, compliance_reporter
-    from crews.pm_crew import strategist, strategy_reporter
-    from crews.am_crew import financial_tracker, financial_reporter
-    from crews.pa_crew import reviewer, analyst
-    from crews.ceo_crew import guardian, reporter as ceo_reporter
 
     all_agents = [
         ("OM PreFlight", pre_flight_agent),
@@ -300,9 +324,6 @@ def test_ORCH_12_agent_role_boundaries():
 @pytest.mark.orchestration
 def test_ORCH_13_mock_am_margin_query():
     """Mock AM crew processes margin query — verify result structure."""
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.am_crew import build_am_crew
 
     mock_result = (
         "# AM Financial Report - 2026-05-12\n"
@@ -335,9 +356,6 @@ def test_ORCH_13_mock_am_margin_query():
 @pytest.mark.orchestration
 def test_ORCH_14_mock_pm_strategy_query():
     """Mock PM crew returns strategy spec with expected fields."""
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.pm_crew import build_pm_crew
 
     mock_result = {
         "type": "IRON_FLY",
@@ -370,9 +388,6 @@ def test_ORCH_14_mock_pm_strategy_query():
 @pytest.mark.orchestration
 def test_ORCH_15_mock_om_preflight():
     """Mock OM crew runs pre-flight and returns GO/NOGO decision."""
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.om_crew import build_om_crew
 
     mock_result = (
         "# Antariksh Pre-Flight Report - 2026-05-12 09:30 IST\n"
@@ -413,7 +428,6 @@ def test_ORCH_16_real_am_margin_query_llm():
     if not _has_real_llm_key():
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    from crews.am_crew import build_am_crew
 
     crew = build_am_crew()
     result = crew.kickoff()
@@ -436,7 +450,6 @@ def test_ORCH_17_real_om_preflight_llm():
     if not _has_real_llm_key():
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    from crews.om_crew import build_om_crew
 
     crew = build_om_crew()
     result = crew.kickoff()
@@ -457,7 +470,6 @@ def test_ORCH_18_real_pm_strategy_select_llm():
     if not _has_real_llm_key():
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    from crews.pm_crew import build_pm_crew
 
     crew = build_pm_crew()
     result = crew.kickoff()
@@ -483,9 +495,6 @@ def test_ORCH_19_full_om_pm_ta_chain():
     if not _has_real_llm_key():
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    from crews.om_crew import build_om_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.ta_crew import build_ta_crew
 
     # Phase 1: OM pre-flight
     om_crew = build_om_crew()
@@ -519,12 +528,6 @@ def test_ORCH_20_full_company_kickoff():
     if not _has_real_llm_key():
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    from crews.om_crew import build_om_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.am_crew import build_am_crew
-    from crews.pa_crew import build_pa_crew
-    from crews.ceo_crew import build_ceo_crew
 
     crews = [
         ("OM", build_om_crew()),

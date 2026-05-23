@@ -4,8 +4,6 @@ import os, sys
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.ceo_tools import (
     alignment_check as _ac,
@@ -19,6 +17,12 @@ from tools.ceo_tools import (
     market_research as _mr,
     explore_opportunity as _eo,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 manager_llm = LLM(
     model="deepseek/deepseek-chat",

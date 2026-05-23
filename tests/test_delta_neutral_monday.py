@@ -1,5 +1,14 @@
 """Prompt: "buy 1 lot of delta neutral strategy for the index with the closest weekly expiry, fyi today is monday"
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.contract_tools import LibrarianContractTool, ResolveContractTool
+from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
+from dotenv import load_dotenv
+
+
 Tests the Librarian's ability to:
 1. Identify the default index (NIFTY) when none specified
 2. Find the ATM strike from live spot
@@ -7,8 +16,6 @@ Tests the Librarian's ability to:
 4. Return token, tsym, lot_size for both legs
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -26,10 +33,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.contract_tools import LibrarianContractTool, ResolveContractTool
-from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

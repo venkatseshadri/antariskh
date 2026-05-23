@@ -1,5 +1,14 @@
 """Prompt: "execute a vega positive strategy in the next weekly at ATM +2 strikes"
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.contract_tools import LibrarianContractTool
+from tools.ta_strategy_tools import FetchOptionChainTool
+from dotenv import load_dotenv
+
+
 Tests the Librarian's ability to:
 1. Parse "vega positive" = buy options (long vega, not short)
 2. "next weekly" = NOT the current Thursday, but the one after
@@ -7,8 +16,6 @@ Tests the Librarian's ability to:
 4. Resolve BUY legs at the correct offset strike
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -26,10 +33,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.contract_tools import LibrarianContractTool
-from tools.ta_strategy_tools import FetchOptionChainTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

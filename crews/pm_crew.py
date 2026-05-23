@@ -8,12 +8,15 @@ Uses CrewAI Process.hierarchical. Deterministic tools from tools/pm_tools.py.
 
 import os
 import sys
+from dotenv import load_dotenv
 
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv()
+
 from config_loader import load_agent_config
 from tools.pm_tools import (
     select_strategy as _select_strategy,

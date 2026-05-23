@@ -1,26 +1,69 @@
 """CTO-Dev-QA Pipeline — orchestrated change management.
 
-Single hierarchical crew: CTO is manager, Dev Engineer and QA Tester are workers.
-Flow: Change Request → CTO evaluates risk → delegates to Dev → delegates to QA → final signoff.
-
-Also provides a deterministic `process_change_request()` for programmatic use.
-"""
-
 import json
 import os
 import sys
 from datetime import datetime as _dt
 from pathlib import Path
 from typing import Dict, List, Optional
-
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
+from config_loader import load_agent_config
+    from tools.cto_tools import (
+        validate_change_spec,
+        assess_change_risk,
+        cto_signoff,
+        generate_cto_brief,
+    )
+    from tools.dev_tools import preview_edit, apply_edit, commit_change, read_source
+    from tools.qa_tools import (
+        run_test_suite,
+        validate_no_regression,
+        run_scenario,
+        generate_qa_report,
+    )
+    from tools.cto_tools import preview_diff
+from tools.cto_tools import (
+    assess_change_risk,
+    preview_diff,
+    cto_signoff,
+    validate_change_spec,
+    scout_technology,
+    evaluate_architecture,
+    design_poc_plan,
+    generate_cto_brief,
+)
+from tools.dev_tools import (
+    read_source,
+    preview_edit,
+    apply_edit,
+    commit_change,
+    rollback_change,
+    run_smoke_test,
+)
+from tools.qa_tools import (
+    run_test_suite,
+    validate_no_regression,
+    run_scenario,
+    compare_outputs,
+    generate_qa_report,
+)
+from crewai.tools import tool as crew_tool
+from dotenv import load_dotenv
+
+
+Single hierarchical crew: CTO is manager, Dev Engineer and QA Tester are workers.
+Flow: Change Request → CTO evaluates risk → delegates to Dev → delegates to QA → final signoff.
+
+Also provides a deterministic `process_change_request()` for programmatic use.
+"""
+
+
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PROJECT_ROOT = Path(__file__).parent
 
-from config_loader import load_agent_config
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 manager_llm = LLM(
@@ -51,19 +94,6 @@ def process_change_request(change_spec: Dict) -> Dict:
         {change_id, status: APPROVED|REJECTED|DEPLOYED|FAILED_QA,
          steps: [{step, status, details}], final_report}
     """
-    from tools.cto_tools import (
-        validate_change_spec,
-        assess_change_risk,
-        cto_signoff,
-        generate_cto_brief,
-    )
-    from tools.dev_tools import preview_edit, apply_edit, commit_change, read_source
-    from tools.qa_tools import (
-        run_test_suite,
-        validate_no_regression,
-        run_scenario,
-        generate_qa_report,
-    )
 
     steps = []
     cid = change_spec.get("change_id", "UNKNOWN")
@@ -90,7 +120,6 @@ def process_change_request(change_spec: Dict) -> Dict:
     steps.append({"step": "assess_risk", "status": "PASS", "details": risk})
 
     # ── Step 3: Preview diffs ──
-    from tools.cto_tools import preview_diff
 
     diffs = preview_diff(change_spec)
     steps.append({"step": "preview_diff", "status": "PASS", "details": diffs})
@@ -278,33 +307,7 @@ def process_change_request(change_spec: Dict) -> Dict:
 # CTO Pipeline Crew (hierarchical — CTO manages Dev + QA)
 # ============================================================
 
-from tools.cto_tools import (
-    assess_change_risk,
-    preview_diff,
-    cto_signoff,
-    validate_change_spec,
-    scout_technology,
-    evaluate_architecture,
-    design_poc_plan,
-    generate_cto_brief,
-)
-from tools.dev_tools import (
-    read_source,
-    preview_edit,
-    apply_edit,
-    commit_change,
-    rollback_change,
-    run_smoke_test,
-)
-from tools.qa_tools import (
-    run_test_suite,
-    validate_no_regression,
-    run_scenario,
-    compare_outputs,
-    generate_qa_report,
-)
 
-from crewai.tools import tool as crew_tool
 
 
 # CTO tools

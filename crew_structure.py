@@ -1,5 +1,20 @@
-#!/usr/bin/env python3
 """
+
+import sys
+import os
+import json
+import logging
+from pathlib import Path
+from datetime import datetime as _dt, time as dt_time
+from typing import Dict, Optional, Tuple, List
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+        from trading_desk import engine_scout_regime
+    import argparse
+from dotenv import load_dotenv
+
+#!/usr/bin/env python3
 Antariksh Phase 2 — CrewAI Multi-Agent Trading System
 7 agents: Orchestrator, Scanner, Strategist, Executor, Sentinel, Risk Guard, Auditor
 Hierarchical crew with Orchestrator as manager, Risk Guard with veto power.
@@ -9,24 +24,14 @@ Usage:
     python crew_structure.py --mock --trace
 """
 
-import sys
-import os
-import json
-import logging
-from pathlib import Path
-from datetime import datetime as _dt, time as dt_time
 
 # Alias for mock patching compatibility (ScenarioRunner patches 'datetime')
 datetime = _dt
-from typing import Dict, Optional, Tuple, List
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "python-trader"))
 sys.path.insert(0, str(PROJECT_ROOT / "antariksh"))
 
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
 
 # ============================================================
 # LLM Configuration
@@ -119,7 +124,6 @@ def scan_market() -> str:
             os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0)
         )
     else:
-        from trading_desk import engine_scout_regime
 
         regime = engine_scout_regime()
         vix = regime.vix
@@ -1033,7 +1037,6 @@ def run_risk_halt_test() -> Dict:
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser(description="Antariksh Phase 2 CrewAI")
     parser.add_argument("--mock", action="store_true", help="Enable mock mode")

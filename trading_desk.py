@@ -1,5 +1,33 @@
-#!/usr/bin/env python3
 """
+
+import sys
+import os
+import json
+import logging
+import time
+import threading
+from pathlib import Path
+from datetime import datetime as _dt, timedelta
+from typing import Dict, Optional, List, Tuple, Any
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+            import math
+        import duckdb
+        from pathlib import Path
+    from tools.contract_tools import get_weekly_expiry, build_tsym
+    from backtester import IronFlyBacktester
+    from brahmand.order_agent import place_order
+    from brahmand.order_agent import modify_order
+    from brahmand.order_agent import cancel_order
+        from agent_registry import register_trading_desk_agents
+        from tools_registry import register_trading_desk_tools
+    import argparse
+from dotenv import load_dotenv
+
+#!/usr/bin/env python3
 Antariksh Trading Desk — Unified Multi-Agent Options Trading System.
 
 Full Desk Hierarchy (State Machine):
@@ -27,26 +55,12 @@ Usage:
     python trading_desk.py --show-flows
 """
 
-import sys
-import os
-import json
-import logging
-import time
-import threading
-from pathlib import Path
-from datetime import datetime as _dt, timedelta
-from typing import Dict, Optional, List, Tuple, Any
-from dataclasses import dataclass, field
-from enum import Enum, auto
 
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
 
 # ======================================================================
 # LLM Configuration
@@ -299,7 +313,6 @@ def engine_scout_regime(
         # ── PRODUCTION PATH: read from DuckDB capture pipeline ──
         db_row = _read_live_market_data()
         if db_row:
-            import math
 
             nifty = (
                 float(db_row[3])
@@ -368,8 +381,6 @@ def _read_live_market_data():
     Uses READ_ONLY + ATTACH pattern to avoid locking the capture writer.
     """
     try:
-        import duckdb
-        from pathlib import Path
 
         db_path = Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb")
         if not db_path.exists():
@@ -526,7 +537,6 @@ def engine_execute_basket(order: AuthorizedOrder = None) -> HandoffReport:
     if order is None or order.status != "AUTHORIZED":
         raise ValueError("No authorized order to execute")
 
-    from tools.contract_tools import get_weekly_expiry, build_tsym
 
     spec = order.spec
     legs = spec.get("legs", [])
@@ -1024,7 +1034,6 @@ def researcher_backtest_shift() -> str:
     max_loss = desk.setup.max_loss if desk.setup else 3000
     lots = desk.setup.lots if desk.setup else 1
 
-    from backtester import IronFlyBacktester
 
     new_plan = {
         "spot": spot,
@@ -1112,7 +1121,6 @@ def order_agent_place_order(
     Action: Route order to broker (LIVE) or update ledger (PAPER).
     Returns: order_id, status, execution_time.
     """
-    from brahmand.order_agent import place_order
 
     result = place_order(
         symbol=symbol,
@@ -1142,7 +1150,6 @@ def order_agent_modify_order(
     Action: Update order in ledger (PAPER) or call broker API (LIVE).
     Returns: order_id, status.
     """
-    from brahmand.order_agent import modify_order
 
     result = modify_order(order_id=order_id, new_trigger=new_trigger, reason=reason)
 
@@ -1161,7 +1168,6 @@ def order_agent_cancel_order(order_id: str, reason: str = "") -> str:
     Action: Cancel order in ledger (PAPER) or call broker API (LIVE).
     Returns: order_id, status.
     """
-    from brahmand.order_agent import cancel_order
 
     result = cancel_order(order_id=order_id, reason=reason)
 
@@ -1845,8 +1851,6 @@ def test_listen_triggers() -> Dict:
 def _initialize_registries():
     """Initialize agent and tools registries."""
     try:
-        from agent_registry import register_trading_desk_agents
-        from tools_registry import register_trading_desk_tools
 
         register_trading_desk_agents()
         register_trading_desk_tools()
@@ -1864,7 +1868,6 @@ _initialize_registries()
 # ======================================================================
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="Antariksh Trading Desk — Multi-Agent Options Trading System",

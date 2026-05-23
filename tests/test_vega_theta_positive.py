@@ -1,5 +1,15 @@
 """Prompt: "both vega and theta positive, ATM strikes"
 
+import os, sys, json
+from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.contract_tools import LibrarianContractTool
+from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
+from crews.ta_crew import load_skill_file
+from dotenv import load_dotenv
+
+
 This is a contradiction test:
 - Vega positive = BUY options (long = positive vega)
 - Theta positive = SELL options (short = positive theta, collect time decay)
@@ -8,8 +18,6 @@ At a single ATM strike, they're OPPOSITE. The agent must identify this.
 Can the agent propose a valid spread structure that reconciles both?
 """
 
-import os, sys, json
-from pathlib import Path
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -27,11 +35,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.contract_tools import LibrarianContractTool
-from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
-from crews.ta_crew import load_skill_file
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

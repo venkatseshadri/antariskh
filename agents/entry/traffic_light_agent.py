@@ -1,4 +1,16 @@
 """
+
+import os
+import sys
+import json
+import logging
+from pathlib import Path
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+from tools.entry_tools import query_traffic_light as _query_traffic_light
+from dotenv import load_dotenv
+
 Entry Crew — Traffic Light Agent (Multi-TF candle color patterns).
 
 Analyzes candle GREEN/RED across 6 timeframes.
@@ -8,20 +20,11 @@ Uses deterministic `query_traffic_light` tool from antariksh.tools.entry_tools.
 Output: structured JSON {family, signal, score, confidence, reasoning, key_indicators}
 """
 
-import os
-import sys
-import json
-import logging
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
 
-from tools.entry_tools import query_traffic_light as _query_traffic_light
 
 _llm = None
 

@@ -1,13 +1,20 @@
 """Paper-trading test for the Execution Specialist.
 
+import os, sys, json, logging
+from pathlib import Path
+from datetime import datetime
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from crews.ta_crew import execution_specialist as _executor, load_skill_file
+from tools.execution_tools import ExecuteTradeTool, GetOrderStatusTool
+from dotenv import load_dotenv
+
+
 Feeds the Executioner a detailed 4-leg Iron Butterfly plan.
 Verifies: leg-by-leg payload, wing-first sequencing, guardrail bypass.
 Zero real capital at risk — simulation mode by default.
 """
 
-import os, sys, json, logging
-from pathlib import Path
-from datetime import datetime
 
 # ── Log setup ────────────────────────────────────────────────────────────────
 LOG_FILE = Path(__file__).parent / "simulated_trades.log"
@@ -34,10 +41,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from crews.ta_crew import execution_specialist as _executor, load_skill_file
-from tools.execution_tools import ExecuteTradeTool, GetOrderStatusTool
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

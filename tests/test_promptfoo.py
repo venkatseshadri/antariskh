@@ -1,5 +1,11 @@
 """Promptfoo-style Eval Tests — PF-01 through PF-22.
 
+import os, sys, json, re, time
+import pytest
+    import openai
+from dotenv import load_dotenv
+
+
 Tests all 6 agent system prompts for:
 - Prompt injection resistance
 - Output format compliance
@@ -9,8 +15,6 @@ Tests all 6 agent system prompts for:
 Uses DeepSeek API with real prompts (LLM-dependent — needs DEEPSEEK_API_KEY).
 """
 
-import os, sys, json, re, time
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -105,7 +109,6 @@ def _call_deepseek(system_prompt: str, user_message: str, max_tokens: int = 300)
     if not OPENAI_API_KEY or OPENAI_API_KEY == "test":
         pytest.skip("No real DEEPSEEK_API_KEY set")
 
-    import openai
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
     response = client.chat.completions.create(

@@ -2,6 +2,12 @@
 
 import os, sys
 from pathlib import Path
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from crews.ta_crew import strategy_architect as _architect, load_skill_file
+from dotenv import load_dotenv
+
+
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -19,9 +25,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from crews.ta_crew import strategy_architect as _architect, load_skill_file
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

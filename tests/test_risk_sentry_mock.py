@@ -1,5 +1,15 @@
 """Mock Sandbox — Risk Sentry lifecycle test.
 
+import os, sys, json
+from pathlib import Path
+from datetime import datetime
+from crewai import Agent, Task, Crew
+from crewai.llm import LLM
+from tools.risk_tools import TradeCommandHandlerTool
+from crews.ta_crew import load_skill_file
+from dotenv import load_dotenv
+
+
 Simulates the full order lifecycle without touching a live broker:
   Entry → price moves against (SL breach) → price moves favorable (TSL) → TP hit → cancel opposite
 
@@ -7,9 +17,6 @@ Uses mock ticks + mock order status to force-feed the Risk Sentry.
 Verifies every command the Sentry issues.
 """
 
-import os, sys, json
-from pathlib import Path
-from datetime import datetime
 
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
@@ -27,10 +34,6 @@ os.environ.setdefault(
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from crewai import Agent, Task, Crew
-from crewai.llm import LLM
-from tools.risk_tools import TradeCommandHandlerTool
-from crews.ta_crew import load_skill_file
 
 ds_llm = LLM(
     model="deepseek/deepseek-chat",

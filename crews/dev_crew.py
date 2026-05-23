@@ -1,19 +1,10 @@
 """Dev Engineer Crew — source code implementation.
 
-Single agent implementing CTO-approved changes. Reads source, previews edits,
-applies changes with auto-rollback on syntax error, commits atomically.
-
-Reports to CTO. Never works on changes without CTO signoff.
-"""
-
 import os
 import sys
-
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.dev_tools import (
     read_source as _read_source,
@@ -23,6 +14,19 @@ from tools.dev_tools import (
     rollback_change as _rollback_change,
     run_smoke_test as _run_smoke_test,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+Single agent implementing CTO-approved changes. Reads source, previews edits,
+applies changes with auto-rollback on syntax error, commits atomically.
+
+Reports to CTO. Never works on changes without CTO signoff.
+"""
+
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 dev_llm = LLM(

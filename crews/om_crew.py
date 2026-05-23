@@ -1,19 +1,10 @@
 """Operations Manager Crew — 3-agent pre-flight infrastructure watchdog.
 
-Agents: PreFlightAgent (5 infra checks), CronWatchdog (cron health),
-        Reporter (evidence-backed GO/NOGO report).
-
-Uses CrewAI Process.hierarchical. Deterministic tools from tools/om_tools.py.
-"""
-
 import os
 import sys
-
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from crewai.tools import tool
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_loader import load_agent_config
 from tools.om_tools import (
     token_refresh_status as _token_refresh_status,
@@ -24,6 +15,19 @@ from tools.om_tools import (
     cron_health_check as _cron_health_check,
     aggregate_health_report as _aggregate_health_report,
 )
+from dotenv import load_dotenv
+load_dotenv()
+
+
+Agents: PreFlightAgent (5 infra checks), CronWatchdog (cron health),
+        Reporter (evidence-backed GO/NOGO report).
+
+Uses CrewAI Process.hierarchical. Deterministic tools from tools/om_tools.py.
+"""
+
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MOCK_MODE = os.environ.get("ANTARIKSH_MOCK_MODE", "0") == "1"
 

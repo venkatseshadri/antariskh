@@ -77,7 +77,6 @@ def _open_db(path: str):
             return duckdb.connect(path, read_only=True)
         except duckdb.IOException:
             if attempt < 2:
-
                 _time.sleep(0.5)
             else:
                 return None
@@ -838,7 +837,6 @@ def query_traffic_light(index: str = "NIFTY") -> str:
 def _redis_connect():
     """Connect to local Redis. Returns client or None."""
     try:
-
         r = _redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
         r.ping()
         return r
@@ -1233,7 +1231,6 @@ def _compute_sma_from_bars(bars: list, tf_minutes: int, periods: list = None) ->
 
     if len(bucket_closes) < max(periods):
         return None, None
-
 
     closes = np.array(
         bucket_closes[: min(len(bucket_closes), max(periods))], dtype=float
@@ -1645,7 +1642,9 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
     }
 
 
-def combine_entry_scores(trend_score: dict, tl_score: dict, market_ctx: dict = None) -> dict:
+def combine_entry_scores(
+    trend_score: dict, tl_score: dict, market_ctx: dict = None
+) -> dict:
     """
     Merge deterministic Trend + Traffic Light + Market Context scores into GO/NO-GO.
     Pure Python — no LLM. Reads weights from config.
@@ -1726,7 +1725,7 @@ def combine_entry_scores(trend_score: dict, tl_score: dict, market_ctx: dict = N
         vix = market_ctx.get("vix")
         if vix and vix > 20:
             vix_weight = market_ctx.get("vix_weight", 0.15)
-            market_adjust *= (1.0 - vix_weight * min(1.0, (vix - 20) / 10))
+            market_adjust *= 1.0 - vix_weight * min(1.0, (vix - 20) / 10)
             market_reason += f" [VIX={vix:.1f}, adj={market_adjust:.2f}]"
 
         # PCR adjustment: extremes influence direction confidence
@@ -1734,21 +1733,28 @@ def combine_entry_scores(trend_score: dict, tl_score: dict, market_ctx: dict = N
         if pcr:
             pcr_weight = market_ctx.get("pcr_weight", 0.10)
             if pcr > 1.15 and signal == "BULLISH":  # High PCR + bullish = conflict
-                market_adjust *= (1.0 - pcr_weight)
-                market_reason += f" [PCR={pcr:.2f} conflicts BULLISH, adj={market_adjust:.2f}]"
+                market_adjust *= 1.0 - pcr_weight
+                market_reason += (
+                    f" [PCR={pcr:.2f} conflicts BULLISH, adj={market_adjust:.2f}]"
+                )
             elif pcr < 0.85 and signal == "BEARISH":  # Low PCR + bearish = conflict
-                market_adjust *= (1.0 - pcr_weight)
-                market_reason += f" [PCR={pcr:.2f} conflicts BEARISH, adj={market_adjust:.2f}]"
+                market_adjust *= 1.0 - pcr_weight
+                market_reason += (
+                    f" [PCR={pcr:.2f} conflicts BEARISH, adj={market_adjust:.2f}]"
+                )
 
-        # Research patterns boost/suppress confidence
+        # Research patterns boost/suppress confidence (hit_rate-scaled, not flat)
         patterns = market_ctx.get("matching_patterns", [])
         if patterns:
-            pattern_weight = market_ctx.get("pattern_weight", 0.10)
-            # Multi-indicator patterns (ST_ADX_VIX) get higher boost
-            multi_patterns = [p for p in patterns if "VIX" in p or ("ADX" in p and "ST" in p)]
-            if multi_patterns:
-                market_adjust *= (1.0 + pattern_weight * len(multi_patterns))
-                market_reason += f" [patterns={patterns}, boost={market_adjust:.2f}]"
+            pattern_quality = market_ctx.get("pattern_quality", {})
+            pattern_weight_base = market_ctx.get("pattern_weight", 0.10)
+            # Boost per pattern scaled by its hit_rate: 0.10 * hit_rate
+            total_boost = 0.0
+            for p in patterns:
+                hit_rate = pattern_quality.get(p, 0.5)  # default 50% if unknown
+                total_boost += pattern_weight_base * hit_rate
+            market_adjust *= 1.0 + total_boost
+            market_reason += f" [patterns={patterns}, boost={market_adjust:.2f}]"
 
     if market_adjust != 1.0:
         confidence = int(confidence * market_adjust)
@@ -1850,7 +1856,6 @@ def rl_update_weights(session_results: list[dict]) -> dict:
         }
 
     try:
-
         llm = LLM(
             model="deepseek/deepseek-chat",
             base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
@@ -1972,7 +1977,6 @@ def llm_entry_decision(trend_score: dict, tl_score: dict) -> dict:
         return det
 
     try:
-
         llm = LLM(
             model="deepseek/deepseek-chat",
             base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),

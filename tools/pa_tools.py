@@ -370,7 +370,9 @@ def analyze_strategy_selection(
         if_win_rate = sum(1 for t in iron_fly_trades if t.get("pnl", 0) > 0) / len(
             iron_fly_trades
         )
-        if_avg_pnl = sum(t.get("pnl", 0) for t in iron_fly_trades) / len(iron_fly_trades)
+        if_avg_pnl = sum(t.get("pnl", 0) for t in iron_fly_trades) / len(
+            iron_fly_trades
+        )
     else:
         if_win_rate, if_avg_pnl = 0.0, 0.0
 
@@ -584,9 +586,7 @@ def track_missed_opportunities(
         return {"success": False, "message": f"Failed to track: {str(e)}"}
 
 
-def score_confidence(
-    snapshot: Dict, direction: str = "UP"
-) -> Dict:
+def score_confidence(snapshot: Dict, direction: str = "UP") -> Dict:
     """Score how confident the setup is (0-100%).
 
     Counts how many indicators align with the direction.
@@ -752,7 +752,9 @@ def score_confidence(
             max_indicators += 1
 
         # === CALCULATE CONFIDENCE ===
-        confidence_pct = (len(aligned) / max_indicators * 100) if max_indicators > 0 else 0
+        confidence_pct = (
+            (len(aligned) / max_indicators * 100) if max_indicators > 0 else 0
+        )
 
         # Recommendation
         if confidence_pct >= 80:
@@ -873,8 +875,16 @@ def snapshot_indicators(timestamp: str, index_name: str = "NIFTY") -> Dict:
         spot = result[0]
         pivot_pp, pivot_r1, pivot_s1 = result[26], result[27], result[28]
         swing_high, swing_low = result[29], result[30]
-        support = max(pivot_s1, swing_low) if pivot_s1 and swing_low else pivot_s1 or swing_low
-        resistance = min(pivot_r1, swing_high) if pivot_r1 and swing_high else pivot_r1 or swing_high
+        support = (
+            max(pivot_s1, swing_low)
+            if pivot_s1 and swing_low
+            else pivot_s1 or swing_low
+        )
+        resistance = (
+            min(pivot_r1, swing_high)
+            if pivot_r1 and swing_high
+            else pivot_r1 or swing_high
+        )
 
         snapshot = {
             "success": True,
@@ -995,7 +1005,7 @@ def write_trade_review_to_rag(
         minutes = int(hh) * 60 + int(mm)
         window_start = (minutes // 30) * 30
         w_hh, w_mm = window_start // 60, window_start % 60
-        entry_window = f"{w_hh:02d}:{w_mm:02d}-{(w_hh)%24:02d}:{(w_mm+30)%60:02d}"
+        entry_window = f"{w_hh:02d}:{w_mm:02d}-{(w_hh) % 24:02d}:{(w_mm + 30) % 60:02d}"
 
     # Build lesson learned
     lesson = ""
@@ -1062,9 +1072,13 @@ def write_trade_review_to_rag(
             "success": True,
             "doc_id": doc_id,
             "learning_dimensions": [
-                f"strategy_success: {trade_review_obj.strategy_score:.0%}" if trade_review_obj.strategy_score else None,
+                f"strategy_success: {trade_review_obj.strategy_score:.0%}"
+                if trade_review_obj.strategy_score
+                else None,
                 f"entry_window: {trade_review_obj.entry_window}",
-                f"sl_improvement: ₹{trade_review_obj.sl_improvement:+,.0f}" if trade_review_obj.sl_improvement else None,
+                f"sl_improvement: ₹{trade_review_obj.sl_improvement:+,.0f}"
+                if trade_review_obj.sl_improvement
+                else None,
                 f"vix_ceiling: {trade_review_obj.vix_ceiling}",
                 f"lot_recommendation: {trade_review_obj.recommended_lots} lots",
             ],
@@ -1129,7 +1143,7 @@ def query_similar_trades_from_rag(
                 for t in trades
             ],
             "evidence": f"Found {len(trades)} similar {strategy_filter or 'any'} trades. "
-            f"Win rate: {wins}/{len(trades)} ({wins/len(trades):.0%}). "
+            f"Win rate: {wins}/{len(trades)} ({wins / len(trades):.0%}). "
             f"Avg P&L: ₹{avg_pnl:+,.0f}.",
         }
     except Exception as e:
@@ -1314,10 +1328,15 @@ def snapshot_multitf(timestamp: str, index_name: str = "NIFTY") -> Dict:
         import duckdb
         from pathlib import Path
 
-        # Use v4 database with rolling multi-TF aggregates
-        db_path = Path("/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb")
+        # Use v4 per-index database with rolling multi-TF aggregates
+        db_path = Path(
+            f"/home/trading_ceo/python-trader/varaha/data/market_data_multitf_{index_name.lower()}.duckdb"
+        )
         if not db_path.exists():
-            return {"success": False, "message": f"V4 multi-TF database not found at {db_path}"}
+            return {
+                "success": False,
+                "message": f"V4 multi-TF database not found at {db_path}",
+            }
 
         db = duckdb.connect(str(db_path), read_only=True)
 
@@ -1460,7 +1479,9 @@ def analyze_ohlc_shape(ohlc: Dict) -> Dict:
             wick_ratio = 0
 
         # ADX interpretation
-        adx_interpretation = "STRONG" if adx > 25 else "WEAK" if adx < 20 else "BORDERLINE"
+        adx_interpretation = (
+            "STRONG" if adx > 25 else "WEAK" if adx < 20 else "BORDERLINE"
+        )
 
         return {
             "success": True,
@@ -1540,8 +1561,13 @@ def compare_ohlc_sequence(bars: list) -> Dict:
 
             # Check if ADX is increasing (accelerating) or decreasing (decelerating)
             adx_trend = "UP" if curr_adx > prev_prev_adx else "DOWN"
-            momentum = "ACCELERATING" if adx_trend == "UP" and direction != "MIXED" else \
-                       "DECELERATING" if adx_trend == "DOWN" else "STABLE"
+            momentum = (
+                "ACCELERATING"
+                if adx_trend == "UP" and direction != "MIXED"
+                else "DECELERATING"
+                if adx_trend == "DOWN"
+                else "STABLE"
+            )
         else:
             momentum = "STABLE"  # Can't determine with only 2 bars
 
@@ -1562,8 +1588,9 @@ def compare_ohlc_sequence(bars: list) -> Dict:
             pattern = "BEAR_CONTINUATION"
         elif direction == "MIXED":
             pattern = "CONSOLIDATION"
-        elif (prev_close > curr_open and curr_close < prev_close) or \
-             (prev_close < curr_open and curr_close > prev_close):
+        elif (prev_close > curr_open and curr_close < prev_close) or (
+            prev_close < curr_open and curr_close > prev_close
+        ):
             pattern = "REVERSAL"
         else:
             pattern = "CONTINUATION"

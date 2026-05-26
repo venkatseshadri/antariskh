@@ -17,14 +17,51 @@ from crewai.tools import tool
 
 # Project-relative DB paths
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-_V31_DB = _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "varaha_data.duckdb"
-_V4_DB = (
-    _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "market_data_multitf.duckdb"
+_SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
+if _SANDBOX:
+    _V31_DB = Path(_SANDBOX) / "varaha_data.duckdb"
+    _V4_NIFTY_DB = Path(_SANDBOX) / "market_data_multitf_nifty.duckdb"
+    _V4_SENSEX_DB = Path(_SANDBOX) / "market_data_multitf_sensex.duckdb"
+    _V31_SENSEX_DB = Path(_SANDBOX) / "varaha_data_sensex.duckdb"
+else:
+    _V31_DB = _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "varaha_data.duckdb"
+    _V4_NIFTY_DB = (
+        _PROJECT_ROOT
+        / "python-trader"
+        / "varaha"
+        / "data"
+        / "market_data_multitf_nifty.duckdb"
+    )
+    _V4_SENSEX_DB = (
+        _PROJECT_ROOT
+        / "python-trader"
+        / "varaha"
+        / "data"
+        / "market_data_multitf_sensex.duckdb"
+    )
+    _V31_SENSEX_DB = (
+        _PROJECT_ROOT
+        / "python-trader"
+        / "varaha"
+        / "data"
+        / "varaha_data_sensex.duckdb"
+    )
+_V4_SENSEX_DB = (
+    _PROJECT_ROOT
+    / "python-trader"
+    / "varaha"
+    / "data"
+    / "market_data_multitf_sensex.duckdb"
+)
+_V31_SENSEX_DB = (
+    _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "varaha_data_sensex.duckdb"
 )
 
 # Allow override via env for testing
 V31_DB_PATH = os.environ.get("ANTARIKSH_V31_DB", str(_V31_DB))
-V4_DB_PATH = os.environ.get("ANTARIKSH_V4_DB", str(_V4_DB))
+V31_SENSEX_DB_PATH = os.environ.get("ANTARIKSH_V31_SENSEX_DB", str(_V31_SENSEX_DB))
+V4_DB_PATH = os.environ.get("ANTARIKSH_V4_NIFTY_DB", str(_V4_NIFTY_DB))
+V4_SENSEX_DB_PATH = os.environ.get("ANTARIKSH_V4_SENSEX_DB", str(_V4_SENSEX_DB))
 
 
 def _db_connect(db_path: str, read_only: bool = True):

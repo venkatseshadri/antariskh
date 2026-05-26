@@ -14,7 +14,16 @@ from datetime import datetime
 from collections import defaultdict
 
 V31_DB = "/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb"
-V4_DB = "/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb"
+V31_SENSEX_DB = "/home/trading_ceo/python-trader/varaha/data/varaha_data_sensex.duckdb"
+
+
+def _v31_db_path(index_name: str) -> str:
+    return V31_SENSEX_DB if index_name.upper() == "SENSEX" else V31_DB
+
+
+def _v4_db_path(index_name: str) -> str:
+    return f"/home/trading_ceo/python-trader/varaha/data/market_data_multitf_{index_name.lower()}.duckdb"
+
 
 def get_latest_timestamp(conn, index_name, timeframe_min):
     """Get the latest timestamp for a given index+timeframe in v4."""
@@ -23,6 +32,7 @@ def get_latest_timestamp(conn, index_name, timeframe_min):
         WHERE index_name = '{index_name}' AND timeframe_min = {timeframe_min}
     """).fetchone()
     return result[0] if result[0] else None
+
 
 def get_missing_bars(v31_conn, v4_conn, index_name, last_timestamp):
     """Get all bars from v3.1 AFTER the last v4 bar."""
@@ -44,6 +54,7 @@ def get_missing_bars(v31_conn, v4_conn, index_name, last_timestamp):
         """
 
     return v31_conn.execute(query).fetchall()
+
 
 def aggregate_bars(bars, timeframe_min):
     """Aggregate 1-min bars to a specific timeframe."""
@@ -76,7 +87,7 @@ def aggregate_bars(bars, timeframe_min):
                     "high": max(b[4] for b in current_bucket),
                     "low": min(b[5] for b in current_bucket),
                     "close": current_bucket[-1][5],
-                    "volume": sum(b[6] for b in current_bucket)
+                    "volume": sum(b[6] for b in current_bucket),
                 }
                 aggregated.append(agg_bar)
 
@@ -94,11 +105,12 @@ def aggregate_bars(bars, timeframe_min):
             "high": max(b[4] for b in current_bucket),
             "low": min(b[5] for b in current_bucket),
             "close": current_bucket[-1][5],
-            "volume": sum(b[6] for b in current_bucket)
+            "volume": sum(b[6] for b in current_bucket),
         }
         aggregated.append(agg_bar)
 
     return aggregated
+
 
 def write_to_v4(v4_conn, bars, index_name, timeframe_min):
     """Write aggregated bars to v4 database."""
@@ -108,7 +120,8 @@ def write_to_v4(v4_conn, bars, index_name, timeframe_min):
     count = 0
     for bar in bars:
         try:
-            v4_conn.execute(f"""
+            v4_conn.execute(
+                f"""
                 INSERT INTO market_data_multitf
                 (timestamp, index_name, timeframe_min, open, high, low, close, volume,
                  sma20, sma50, sma200, rsi, atr, macd, macd_signal, macd_histogram,
@@ -121,21 +134,31 @@ def write_to_v4(v4_conn, bars, index_name, timeframe_min):
                     low = EXCLUDED.low,
                     close = EXCLUDED.close,
                     volume = EXCLUDED.volume
-            """, (bar["timestamp"], bar["index_name"], timeframe_min,
-                  bar["open"], bar["high"], bar["low"], bar["close"], bar["volume"]))
+            """,
+                (
+                    bar["timestamp"],
+                    bar["index_name"],
+                    timeframe_min,
+                    bar["open"],
+                    bar["high"],
+                    bar["low"],
+                    bar["close"],
+                    bar["volume"],
+                ),
+            )
             count += 1
         except Exception as e:
             print(f"  Error writing bar {bar['timestamp']}: {e}")
 
     return count
 
+
 def backfill(index_name="NIFTY"):
     """Backfill v4 database from v3.1 for missing bars."""
     print(f"=== BACKFILLING {index_name} ===\n")
 
-    # Connect to databases
-    v31_conn = duckdb.connect(V31_DB, read_only=True)
-    v4_conn = duckdb.connect(V4_DB, read_only=False)
+    v31_conn = duckdb.connect(_v31_db_path(index_name), read_only=True)
+    v4_conn = duckdb.connect(_v4_db_path(index_name), read_only=False)
 
     timeframes = [5, 15, 30, 60, 240, 1440]
     total_written = 0
@@ -168,9 +191,10 @@ def backfill(index_name="NIFTY"):
     v4_conn.close()
     v31_conn.close()
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"✅ BACKFILL COMPLETE: {total_written} bars written to v4")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
+
 
 if __name__ == "__main__":
     index = sys.argv[1] if len(sys.argv) > 1 else "NIFTY"

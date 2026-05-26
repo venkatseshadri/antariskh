@@ -10,7 +10,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_FILE="$PROJECT_DIR/logs/token_refresh_$(date +%Y%m%d).log"
-LOCK_FILE="/tmp/token_refresh.lock"
+LOCK_FILE="$PROJECT_DIR/locks/token_refresh.lock"
+mkdir -p "$(dirname "$LOCK_FILE")"
 PYTHON_BIN="/usr/bin/python3"
 
 exec {LOCK_FD}>"$LOCK_FILE"

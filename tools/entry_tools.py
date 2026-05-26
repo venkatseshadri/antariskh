@@ -47,15 +47,34 @@ except ImportError:
 # DB paths — project-normalized
 _PROJECT_ROOT = _Path("/home/trading_ceo/python-trader")
 _V31_NIFTY = _PROJECT_ROOT / "varaha" / "data" / "varaha_data.duckdb"
-_V4_MULTITF = _PROJECT_ROOT / "varaha" / "data" / "market_data_multitf.duckdb"
+_V31_SENSEX = _PROJECT_ROOT / "varaha" / "data" / "varaha_data_sensex.duckdb"
+
+_SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
 
 
-# Allow test override via env — lazy so tests can set env after import
-def _v4_db_path():
-    return os.environ.get("ENTRY_V4_DB", str(_V4_MULTITF))
+def _v4_db_path(index: str = "NIFTY"):
+    if _SANDBOX:
+        return os.environ.get(
+            "ENTRY_V4_DB",
+            str(_Path(_SANDBOX) / f"market_data_multitf_{index.lower()}.duckdb"),
+        )
+    path = (
+        _PROJECT_ROOT
+        / "varaha"
+        / "data"
+        / f"market_data_multitf_{index.lower()}.duckdb"
+    )
+    return os.environ.get("ENTRY_V4_DB", str(path))
 
 
-def _v31_db_path():
+def _v31_db_path(index: str = "NIFTY"):
+    if _SANDBOX:
+        suffix = "_sensex" if index.upper() == "SENSEX" else ""
+        return os.environ.get(
+            "ENTRY_V31_DB", str(_Path(_SANDBOX) / f"varaha_data{suffix}.duckdb")
+        )
+    if index.upper() == "SENSEX":
+        return os.environ.get("ENTRY_V31_DB", str(_V31_SENSEX))
     return os.environ.get("ENTRY_V31_DB", str(_V31_NIFTY))
 
 
@@ -100,8 +119,8 @@ def query_trend(index: str = "NIFTY") -> str:
     Returns JSON:
       { family, timestamp, timeframes: { 5m: {sma20,sma50,position,st,...}, ... } }
     """
-    v4 = _open_db(_v4_db_path())
-    v31 = _open_db(_v31_db_path())
+    v4 = _open_db(_v4_db_path(index))
+    v31 = _open_db(_v31_db_path(index))
 
     result = {
         "family": "Trend",
@@ -212,8 +231,8 @@ def query_trend(index: str = "NIFTY") -> str:
 
 def query_momentum(index: str = "NIFTY") -> str:
     """Query RSI14 across all timeframes from v4 + v3.1."""
-    v4 = _open_db(_v4_db_path())
-    v31 = _open_db(_v31_db_path())
+    v4 = _open_db(_v4_db_path(index))
+    v31 = _open_db(_v31_db_path(index))
 
     result = {
         "family": "Momentum",
@@ -289,8 +308,8 @@ def query_momentum(index: str = "NIFTY") -> str:
 
 def query_volatility(index: str = "NIFTY") -> str:
     """Query ATR14, BB width, and volatility context across TFs."""
-    v4 = _open_db(_v4_db_path())
-    v31 = _open_db(_v31_db_path())
+    v4 = _open_db(_v4_db_path(index))
+    v31 = _open_db(_v31_db_path(index))
 
     result = {
         "family": "Volatility",
@@ -352,8 +371,8 @@ def query_volatility(index: str = "NIFTY") -> str:
 
 def query_volume(index: str = "NIFTY") -> str:
     """Query volume indicators from v4 (OBV/CMF) + v3.1 (VWAP/volume)."""
-    v4 = _open_db(_v4_db_path())
-    v31 = _open_db(_v31_db_path())
+    v4 = _open_db(_v4_db_path(index))
+    v31 = _open_db(_v31_db_path(index))
 
     result = {
         "family": "Volume",
@@ -430,7 +449,7 @@ def query_volume(index: str = "NIFTY") -> str:
 
 def query_options(index: str = "NIFTY") -> str:
     """Query options market sentiment from v3.1 DuckDB."""
-    v31 = _open_db(_v31_db_path())
+    v31 = _open_db(_v31_db_path(index))
     result = {
         "family": "Options",
         "index": index,
@@ -521,7 +540,7 @@ def query_flow(index: str = "NIFTY") -> str:
     FII_fut_5d_change: requires external FII/DII data feed (currently unavailable).
     PCR_change: computed from sequential v3.1 rows.
     """
-    v31 = _open_db(_v31_db_path())
+    v31 = _open_db(_v31_db_path(index))
     result = {
         "family": "Flow",
         "index": index,
@@ -569,7 +588,7 @@ def query_flow(index: str = "NIFTY") -> str:
 
 def query_macro(index: str = "NIFTY") -> str:
     """Query macro indicators: VIX, gap, session state, pivots."""
-    v31 = _open_db(_v31_db_path())
+    v31 = _open_db(_v31_db_path(index))
     result = {
         "family": "Macro",
         "index": index,
@@ -691,7 +710,7 @@ def query_traffic_light(index: str = "NIFTY") -> str:
         - Shifting from all-Green → mixed = EXHAUSTION / TOPPING
       - Shifting from all-Red → mixed = BOTTOMING / REVERSAL SIGNAL
     """
-    v4 = _open_db(_v4_db_path())
+    v4 = _open_db(_v4_db_path(index))
 
     result = {
         "family": "TrafficLight",
@@ -837,11 +856,21 @@ def query_traffic_light(index: str = "NIFTY") -> str:
 def _redis_connect():
     """Connect to local Redis. Returns client or None."""
     try:
-        r = _redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+        redis_db = int(os.environ.get("BRAHMAND_REPLAY_REDIS_DB", "0"))
+        r = _redis.Redis(
+            host="localhost", port=6379, db=redis_db, decode_responses=True
+        )
         r.ping()
         return r
     except Exception:
         return None
+
+
+def _redis_queue_key(index: str = "NIFTY") -> str:
+    """Return the Redis queue key, overridden by REPLAY env for debugging."""
+    if os.environ.get("REPLAY", "").lower() == "true":
+        return f"v3_ohlcv_queue_{index}_replay"
+    return f"v3_ohlcv_queue_{index}"
 
 
 def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
@@ -867,7 +896,10 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         }
 
     try:
-        bars_raw = r.lrange(f"v3_ohlcv_queue_{index}", 0, lookback_bars - 1)
+        # Try per-index key first, fall back to shared key (backward compat)
+        bars_raw = r.lrange(_redis_queue_key(index), 0, lookback_bars - 1)
+        if not bars_raw:
+            bars_raw = r.lrange(_redis_queue_key(index), 0, lookback_bars - 1)
         if not bars_raw:
             return {
                 "latest_1m": None,
@@ -1059,7 +1091,9 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
         }
 
     try:
-        bars_raw = r.lrange(f"v3_ohlcv_queue_{index}", 0, 0)
+        bars_raw = r.lrange(_redis_queue_key(index), 0, 0)
+        if not bars_raw:
+            bars_raw = r.lrange(_redis_queue_key(index), 0, 0)
         if not bars_raw:
             return {
                 "family": "Trend",

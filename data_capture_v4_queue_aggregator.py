@@ -31,13 +31,15 @@ class MultiTFAggregatorQueue:
         self.verbose = verbose
 
         if duckdb_path is None:
-            # v4 uses SEPARATE database file (no locking conflict with v3)
             duckdb_path = (
                 "/home/trading_ceo/python-trader/varaha/data/market_data_multitf.duckdb"
             )
 
         self.db_path = Path(duckdb_path)
         self.log(f"DuckDB (v4): {self.db_path}")
+
+        # Track last EMA-updated bar to prevent duplicate feeding every 60s cycle
+        self._last_ema_ts = None
 
         # Initialize Redis connection
         self.redis_client = None
@@ -127,16 +129,12 @@ class MultiTFAggregatorQueue:
             self.log(f"⚠️ Table creation: {e}")
 
     def read_from_queue(self, index_name: str = "NIFTY") -> list:
-        """Read 1-min bars from Redis queue."""
-        bars = []
-
+        """Read bars from Redis queue for a specific index."""
         if not self.redis_client:
-            self.log("⚠️ Redis not available, skipping queue read")
-            return bars
+            return []
 
         try:
-            # Get all bars from queue for this index
-            queue_key = f"v3_ohlcv_queue"
+            queue_key = f"v3_ohlcv_queue_{index_name}"
             queue_length = self.redis_client.llen(queue_key)
 
             if queue_length == 0:
@@ -146,14 +144,28 @@ class MultiTFAggregatorQueue:
             # Read bars from queue (get all, then filter by index)
             queue_data = self.redis_client.lrange(queue_key, 0, -1)
 
+            required = ("open", "high", "low", "close", "volume")
+            skipped = 0
             for item in queue_data:
                 try:
                     bar = json.loads(item)
-                    if bar.get("index") == index_name:
-                        bars.append(bar)
+                    if bar.get("index") != index_name:
+                        continue
+                    # Thin/legacy queue bars (OHLC only, no volume) crash
+                    # aggregation in _aggregate_bucket. Skip incomplete bars so
+                    # read_bars falls back to the rich log (v3_ohlcv_<index>.log,
+                    # which carries volume + indicators).
+                    if not all(k in bar for k in required):
+                        skipped += 1
+                        continue
+                    bars.append(bar)
                 except Exception as e:
                     self.log(f"Error parsing queue item: {e}")
 
+            if skipped:
+                self.log(
+                    f"Skipped {skipped} incomplete queue bars (missing OHLCV) — will prefer log"
+                )
             self.log(
                 f"✅ Read {len(bars)} bars from queue ({queue_length} total in queue)"
             )
@@ -783,14 +795,21 @@ class MultiTFAggregatorQueue:
 
         self.log(f"Aggregating {len(bars)} 1-min bars")
 
-        # Update EMA for 1-min bars (all closed bars)
+        # Update EMA for 1-min bars (only new bars since last cycle)
         ema_1min_updated = 0
+        last_ts = None
         for bar in bars:
+            ts = bar.get("timestamp", "")
+            if self._last_ema_ts and ts <= self._last_ema_ts:
+                continue
             try:
                 update_ema(bar["close"], tf="1min")
                 ema_1min_updated += 1
+                last_ts = ts
             except Exception as e:
                 self.log(f"⚠️ EMA 1min update failed: {e}")
+        if last_ts:
+            self._last_ema_ts = last_ts
 
         if ema_1min_updated:
             self.log(f"✅ EMA 1min: {ema_1min_updated} bars updated")
@@ -821,18 +840,9 @@ class MultiTFAggregatorQueue:
             ]
             self.log("\n  ".join(parts))
 
-        # Clear Redis queue AFTER successful DuckDB write + EMA update
-        # Safe: DuckDB uses ON CONFLICT DO UPDATE (idempotent re-processing)
-        if self.redis_client:
-            queue_key = f"v4_1min_queue_{index_name}"
-            try:
-                queue_length = self.redis_client.llen(queue_key)
-                self.redis_client.delete(queue_key)
-                self.log(f"✅ Queue cleared after processing ({queue_length} bars)")
-            except Exception as e:
-                self.log(f"⚠️ Queue cleanup failed: {e}")
-
-        self.log("Aggregation complete")
+        # Queue bars are preserved for downstream consumers (entry check, replay, kickoff).
+        # Do NOT delete — the queue is the source of truth for live and replay systems.
+        self.log("Aggregation complete (queue preserved for downstream)")
 
     # ── Health Checks ─────────────────────────────────────────
     def health_check(self, index_name: str = "NIFTY"):
@@ -841,7 +851,7 @@ class MultiTFAggregatorQueue:
 
         # 1. Queue size: warn if Redis queue growing too large
         if self.redis_client:
-            queue_key = f"v4_1min_queue_{index_name}"
+            queue_key = f"v3_ohlcv_queue_{index_name}"
             try:
                 qlen = self.redis_client.llen(queue_key)
                 if qlen > 500:
@@ -864,7 +874,7 @@ class MultiTFAggregatorQueue:
 
         # 3. v3.1→v4 lag: compare oldest queue bar vs now
         if self.redis_client:
-            v3_queue = "v3_ohlcv_queue"
+            v3_queue = f"v3_ohlcv_queue_{index_name}"
             try:
                 raw = self.redis_client.lrange(v3_queue, -1, -1)
                 if raw:
@@ -895,16 +905,37 @@ class MultiTFAggregatorQueue:
 
 
 def main():
+    import argparse
     import time
     from datetime import datetime
 
-    aggregator = MultiTFAggregatorQueue(verbose=True)
-
-    print("\n[V4] Starting continuous aggregation loop...")
-    print("[V4] Aggregating every 60 seconds (9:15-15:30 IST)")
-    print(
-        "[V4] Entry check will run every 5 minutes on 00/05/10/15/20/25/30/35/40/45/50/55"
+    parser = argparse.ArgumentParser(
+        description="v4 Multi-TF aggregator — one index per process (per-index DuckDB)"
     )
+    parser.add_argument(
+        "--index",
+        choices=["NIFTY", "SENSEX"],
+        default="NIFTY",
+        help="Index to aggregate. Run one process per index.",
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="DuckDB path. Default: per-index market_data_multitf_<index>.duckdb",
+    )
+    args = parser.parse_args()
+
+    index_name = args.index
+    db_path = args.db or (
+        "/home/trading_ceo/python-trader/varaha/data/"
+        f"market_data_multitf_{index_name.lower()}.duckdb"
+    )
+
+    aggregator = MultiTFAggregatorQueue(duckdb_path=db_path, verbose=True)
+
+    print(f"\n[V4:{index_name}] Starting continuous aggregation loop...")
+    print(f"[V4:{index_name}] DB: {db_path}")
+    print(f"[V4:{index_name}] Aggregating every 60 seconds (9:15-15:30 IST)")
 
     last_entry_check_minute = -1
 
@@ -917,38 +948,43 @@ def main():
 
         # Stop after market hours
         if weekday >= 5 or (hour > 15) or (hour == 15 and minute >= 31):
-            print(f"\n[V4] Market closed, exiting at {now.strftime('%H:%M:%S')}")
+            print(
+                f"\n[V4:{index_name}] Market closed, exiting at {now.strftime('%H:%M:%S')}"
+            )
             break
 
         # Skip before market opens
         if hour < 9 or (hour == 9 and minute < 15):
-            print(f"[V4] Market not open yet ({now.strftime('%H:%M:%S')}), waiting...")
+            print(
+                f"[V4:{index_name}] Market not open yet ({now.strftime('%H:%M:%S')}), waiting..."
+            )
             time.sleep(60)
             continue
 
-        # Aggregate all timeframes for both indices
-        aggregator.run_all_timeframes(index_name="NIFTY")
-        aggregator.run_all_timeframes(index_name="SENSEX")
+        # Aggregate all timeframes for this process's index
+        aggregator.run_all_timeframes(index_name=index_name)
 
-        print(f"[V4] Aggregation complete at {now.strftime('%H:%M:%S')}")
+        print(f"[V4:{index_name}] Aggregation complete at {now.strftime('%H:%M:%S')}")
 
-        # ── Health Checks (every cycle, warns only on issues) ──
-        aggregator.health_check("NIFTY")
+        # ── Health + Entry checks: NIFTY only (preserves prior single-process
+        # behavior; SENSEX entry-check is a separate product decision). ──
+        if index_name == "NIFTY":
+            aggregator.health_check("NIFTY")
 
-        # ── Entry Check: Run every 5 minutes (on 00/05/10/15/20/25/30/35/40/45/50/55) ──
-        # This ensures fresh entry signals are available whenever kickoff.py runs
-        if minute % 5 == 0 and minute != last_entry_check_minute:
-            try:
-                from agents.entry.entry_check import check_entry
+            # Entry Check: every 5 minutes (on 00/05/.../55) so fresh entry
+            # signals are available whenever kickoff.py runs.
+            if minute % 5 == 0 and minute != last_entry_check_minute:
+                try:
+                    from agents.entry.entry_check import check_entry
 
-                decision = check_entry("NIFTY")
-                icon = "🟢 GO" if decision.get("go") else "🔴 NO-GO"
-                print(
-                    f"[V4→ENTRY] {icon} | {decision.get('signal')} {decision.get('confidence')}% [{now.strftime('%H:%M:%S')}]"
-                )
-                last_entry_check_minute = minute
-            except Exception as e:
-                print(f"[V4→ENTRY] ⚠️  Entry check failed: {e}")
+                    decision = check_entry("NIFTY")
+                    icon = "🟢 GO" if decision.get("go") else "🔴 NO-GO"
+                    print(
+                        f"[V4→ENTRY] {icon} | {decision.get('signal')} {decision.get('confidence')}% [{now.strftime('%H:%M:%S')}]"
+                    )
+                    last_entry_check_minute = minute
+                except Exception as e:
+                    print(f"[V4→ENTRY] ⚠️  Entry check failed: {e}")
 
         # Wait 60 seconds before next aggregation
         time.sleep(60)

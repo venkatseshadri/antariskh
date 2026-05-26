@@ -867,7 +867,7 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         }
 
     try:
-        bars_raw = r.lrange("v3_ohlcv_queue", 0, lookback_bars - 1)
+        bars_raw = r.lrange(f"v3_ohlcv_queue_{index}", 0, lookback_bars - 1)
         if not bars_raw:
             return {
                 "latest_1m": None,
@@ -1059,7 +1059,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
         }
 
     try:
-        bars_raw = r.lrange("v3_ohlcv_queue", 0, 0)  # Just get latest bar
+        bars_raw = r.lrange(f"v3_ohlcv_queue_{index}", 0, 0)
         if not bars_raw:
             return {
                 "family": "Trend",

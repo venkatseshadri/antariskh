@@ -1002,7 +1002,8 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
         else:
             ema_status[period] = "file_not_found"
 
-    # Staleness check: if 60min EMA timestamp is >30 min old, fall back to 1min
+    # Staleness check: if 60min EMA timestamp >24h old → pipeline likely dead → fallback
+    # Overnight/weekend gaps do not trigger fallback (charting systems carry EMA across days)
     ema_timestamp = None
     ema20_file = ema_dir / "ema_20.json"
     if ema20_file.exists():
@@ -1017,7 +1018,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     use_1min_fallback = False
     if ema_timestamp:
         age_seconds = (_dt.now() - ema_timestamp).total_seconds()
-        if age_seconds > 1800:  # 30 minutes
+        if age_seconds > 86400:  # 24 hours (pipeline dead, not market close)
             use_1min_fallback = True
 
     if use_1min_fallback:

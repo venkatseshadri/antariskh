@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Ralph Loop Scheduler Daemon — runs continuously, polls run_ralph_cycle() every 60s.
+This is what makes Antariksh autonomous — no external cron needed.
+
+Systemd service: deploy/antariskh-ralph-scheduler.service
 """
 
 import os
@@ -6,20 +12,13 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
-        import yaml
-    from ralph.ralph_loop import run_ralph_cycle
-                            from tools.notifications import push_ralph_escalation
-from dotenv import load_dotenv
-
-#!/usr/bin/env python3
-Ralph Loop Scheduler Daemon — runs continuously, polls run_ralph_cycle() every 60s.
-This is what makes Antariksh autonomous — no external cron needed.
-
-Systemd service: deploy/antariskh-ralph-scheduler.service
-"""
-
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import yaml
+from ralph.ralph_loop import run_ralph_cycle
+from tools.notifications import push_ralph_escalation
+from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +35,6 @@ logger = logging.getLogger("RalphSchedulerDaemon")
 # Environment — load API key for DeepSeek
 if not os.environ.get("DEEPSEEK_API_KEY"):
     try:
-
         with open("/root/.picoclaw/.security.yml") as f:
             s = yaml.safe_load(f)
         keys = s.get("model_list", {}).get("deepseek:0", {}).get("api_keys", [])
@@ -82,7 +80,6 @@ def main():
         logger.info(f"Syncing to wall clock — sleeping {sleep_ms:.0f}s")
         time.sleep(sleep_ms)
 
-
     consecutive_empty = 0  # track idle cycles (no roles due)
 
     while True:
@@ -107,7 +104,6 @@ def main():
                             f"ESCALATION: {role} has {count} consecutive PRD failures"
                         )
                         try:
-
                             push_ralph_escalation(role, count, r.get("metrics", []))
                         except Exception as e:
                             logger.error(f"Failed to push escalation: {e}")

@@ -1825,6 +1825,14 @@ def combine_entry_scores(
     t_score = trend_score.get("score", 0)
     tl_score_val = tl_score.get("score", 0)
 
+    # Low-confidence signals are noise, not real direction.
+    # A BULLISH at 13% confidence is really "I don't know" → downgrade to NEUTRAL.
+    min_conf = cfg.get("min_family_confidence", 30)
+    if t_conf < min_conf:
+        t_sig = "NEUTRAL"
+    if tl_conf < min_conf:
+        tl_sig = "NEUTRAL"
+
     if t_sig == "BULLISH" and tl_sig == "BULLISH":
         rule = rules.get("both_bullish", {})
         go, mult = rule.get("go", True), rule.get("confidence_mult", 1.0)

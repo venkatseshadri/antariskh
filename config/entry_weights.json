@@ -6,11 +6,12 @@
   "trend": {
     "description": "EMA alignment within 60min TF. Traffic Light handles multi-TF diversification.",
     "ema_weights": {
-      "5": 0.35,
-      "20": 0.30,
-      "50": 0.25,
-      "100": 0.20,
-      "200": 0.15
+      "5": 0.25,
+      "20": 1.00,
+      "50": 0.75,
+      "100": 0.00,
+      "200": 0.00,
+      "_note": "5=timing, 20=session trend, 50=conviction. 100/200=zero until research proves S/R value."
     },
     "tf_weights": {
       "_note": "Used by DuckDB score_trend() only — not the Redis live path",

@@ -1189,82 +1189,39 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
             "_method": "ema_file_based",
         }
 
-    # Score based on EMA values (5 periods: 5, 20, 50, 100, 200)
+    # Score based on EMA alignment + distance weighting.
+    # Longer EMAs carry more structural weight (100/200 = 0 until research proves).
+    # Distance factor: a 0.01% gap is noise, a 1% gap is full conviction.
     score = 0.0
     ema_aligned = 0
     available_count = 0
     reasoning_parts = []
 
-    # EMA5 scoring (shortest, most reactionary)
-    if 5 in ema_values:
-        available_count += 1
-        if current_price > ema_values[5]:
-            ema_aligned += 1
-            score += 0.35
-            reasoning_parts.append("EMA5:BULLISH(+0.35)")
-        else:
-            score += -0.35
-            reasoning_parts.append("EMA5:BEARISH(-0.35)")
-    else:
-        reasoning_parts.append("EMA5:not_ready")
+    ema_weights = cfg.get(
+        "ema_weights",
+        {"5": 0.25, "20": 1.00, "50": 0.75, "100": 0.00, "200": 0.00},
+    )
+    dist_threshold = 0.005  # 0.5% gap = full conviction for weight
 
-    # EMA20 scoring (primary)
-    if 20 in ema_values:
-        ema20 = ema_values[20]
-        available_count += 1
-        if current_price > ema20:
-            ema_aligned += 1
-            tf_score = 0.30
-            reasoning_parts.append(f"EMA20:BULLISH(+0.30)")
+    for period in [5, 20, 50, 100, 200]:
+        w = ema_weights.get(str(period), 0)
+        if period in ema_values and ema_values[period]:
+            available_count += 1
+            ema_val = ema_values[period]
+            gap_pct = (current_price - ema_val) / ema_val
+            dist_factor = min(abs(gap_pct) / dist_threshold, 1.0)
+            contrib = w * dist_factor * (1 if gap_pct > 0 else -1)
+            score += contrib
+            if gap_pct > 0:
+                ema_aligned += 1
+            direction = "BULLISH" if gap_pct > 0 else "BEARISH"
+            reasoning_parts.append(
+                f"EMA{period}:{direction}({contrib:+.3f} w={w} gap={gap_pct:+.3%})"
+            )
         else:
-            tf_score = -0.30
-            reasoning_parts.append(f"EMA20:BEARISH(-0.30)")
-        score += tf_score
-    else:
-        reasoning_parts.append(f"EMA20:not_ready")
-
-    # EMA50 scoring (confirmation)
-    if 50 in ema_values:
-        ema50 = ema_values[50]
-        available_count += 1
-        if current_price > ema50:
-            ema_aligned += 1
-            tf_score = 0.25
-            reasoning_parts.append(f"EMA50:BULLISH(+0.25)")
-        else:
-            tf_score = -0.25
-            reasoning_parts.append(f"EMA50:BEARISH(-0.25)")
-        score += tf_score
-    else:
-        reasoning_parts.append(f"EMA50:not_ready")
-
-    # EMA100 scoring (long-term)
-    if 100 in ema_values:
-        ema100 = ema_values[100]
-        available_count += 1
-        if current_price > ema100:
-            ema_aligned += 1
-            tf_score = 0.20
-            reasoning_parts.append(f"EMA100:BULLISH(+0.20)")
-        else:
-            tf_score = -0.20
-            reasoning_parts.append(f"EMA100:BEARISH(-0.20)")
-        score += tf_score
-    else:
-        reasoning_parts.append(f"EMA100:not_ready")
-
-    # EMA200 scoring (longest, slowest)
-    if 200 in ema_values:
-        available_count += 1
-        if current_price > ema_values[200]:
-            ema_aligned += 1
-            score += 0.15
-            reasoning_parts.append("EMA200:BULLISH(+0.15)")
-        else:
-            score += -0.15
-            reasoning_parts.append("EMA200:BEARISH(-0.15)")
-    else:
-        reasoning_parts.append("EMA200:not_ready")
+            reasoning_parts.append(
+                f"EMA{period}:not_ready" if w > 0 else f"EMA{period}:zero_weight"
+            )
 
     # Determine signal
     if available_count == 0:

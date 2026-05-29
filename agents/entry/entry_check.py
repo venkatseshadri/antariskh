@@ -27,10 +27,13 @@ from entry_tools import (
 # Import research agent broker for market context + pattern matching
 try:
     from entry_signal_broker import EntrySignalBroker
+
     _broker = EntrySignalBroker()
 except Exception as e:
     logger_temp = logging.getLogger("EntryCheck")
-    logger_temp.warning(f"Could not load EntrySignalBroker: {e} — continuing without research patterns")
+    logger_temp.warning(
+        f"Could not load EntrySignalBroker: {e} — continuing without research patterns"
+    )
     _broker = None
 
 logger = logging.getLogger("EntryCheck")
@@ -48,7 +51,9 @@ def check_entry(index: str = "NIFTY") -> dict:
         try:
             market_ctx = _broker.get_full_context(index)
             if market_ctx.get("matching_patterns"):
-                logger.info(f"  Research patterns matched: {market_ctx['matching_patterns']}")
+                logger.info(
+                    f"  Research patterns matched: {market_ctx['matching_patterns']}"
+                )
         except Exception as e:
             logger.warning(f"Market context lookup failed: {e}")
 
@@ -87,7 +92,8 @@ def check_entry(index: str = "NIFTY") -> dict:
         f"{'GO' if decision['go'] else 'NO-GO'} | "
         f"{decision['signal']} {decision['confidence']}% | "
         f"T:{decision['trend_signal']}({decision['trend_confidence']}%) "
-        f"TL:{decision['traffic_light_signal']}({decision['traffic_light_confidence']}%) | "
+        f"TL:{decision['traffic_light_signal']}({decision['traffic_light_confidence']}%) "
+        f"R:{decision.get('regime_signal', '?')} | "
         f"ema_src={decision.get('ema_source', '?')} | "
         f"tl_pattern={decision.get('traffic_light_pattern', '?')} | "
         f"trade={decision.get('suggested_trade', '?')} | "

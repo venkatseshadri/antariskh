@@ -1677,6 +1677,70 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
     }
 
 
+def score_regime(market_ctx: dict = None) -> dict:
+    """
+    Deterministic regime assessment from VIX and ADX.
+    Pure Python — no LLM. Evaluates trend quality and risk environment.
+
+    Returns: {signal: ENTER|CAUTION|SKIP, confidence, reason, vix, adx}
+    """
+    if not market_ctx:
+        return {
+            "signal": "CAUTION",
+            "confidence": 50,
+            "reason": "no_regime_context",
+            "vix": None,
+            "adx": None,
+        }
+
+    vix = market_ctx.get("vix") or 0
+    adx = market_ctx.get("adx") or 0
+
+    if vix > 25:
+        return {
+            "signal": "SKIP",
+            "confidence": 95,
+            "reason": f"VIX={vix:.1f} panic — no entries in stress regime",
+            "vix": vix,
+            "adx": adx,
+        }
+
+    if adx and adx < 20:
+        return {
+            "signal": "SKIP",
+            "confidence": 85,
+            "reason": f"ADX={adx:.1f} <20 — no trend, directional signals unreliable",
+            "vix": vix,
+            "adx": adx,
+        }
+
+    if vix > 18:
+        return {
+            "signal": "CAUTION",
+            "confidence": 65,
+            "reason": f"VIX={vix:.1f} elevated — reduce size",
+            "vix": vix,
+            "adx": adx,
+        }
+
+    if adx and adx < 25:
+        return {
+            "signal": "CAUTION",
+            "confidence": 60,
+            "reason": f"ADX={adx:.1f} <25 — weak trend, reduce conviction",
+            "vix": vix,
+            "adx": adx,
+        }
+
+    return {
+        "signal": "ENTER",
+        "confidence": 85,
+        "reason": f"VIX={vix:.1f}, ADX={adx:.1f} — clear trending regime",
+        "vix": vix,
+        "adx": adx,
+    }
+
+
 def combine_entry_scores(
     trend_score: dict, tl_score: dict, market_ctx: dict = None
 ) -> dict:
@@ -1743,6 +1807,20 @@ def combine_entry_scores(
         go, mult = rule.get("go", True), rule.get("confidence_mult", 0.5)
         signal = "NEUTRAL"
         reason = "Both NEUTRAL — Iron Butterfly"
+
+    # ── Regime gate (VIX + ADX) — gates directional trades only ──
+    regime = score_regime(market_ctx)
+    if go and signal != "NEUTRAL":
+        if regime["signal"] == "SKIP":
+            go = False
+            reason = f"REGIME SKIP: {regime['reason']}"
+        elif regime["signal"] == "CAUTION":
+            mult *= 0.70
+            reason += f" [REGIME CAUTION: {regime['reason']}]"
+    elif go and signal == "NEUTRAL":
+        if regime.get("vix") and regime["vix"] > 25:
+            go = False
+            reason = f"REGIME SKIP: VIX={regime['vix']:.1f} panic — no entries"
 
     # Confidence-weighted: low-confidence families contribute less
     # A family with 5% confidence saying NEUTRAL is "I don't know", not a bearish signal
@@ -1842,6 +1920,8 @@ def combine_entry_scores(
     result["traffic_light_pattern"] = tl_score.get("key_indicators", {}).get(
         "pattern", "?"
     )
+    result["regime_signal"] = regime.get("signal", "?")
+    result["regime_reason"] = regime.get("reason", "?")
 
     return result
 

@@ -1767,12 +1767,12 @@ def combine_entry_scores(
         pcr = market_ctx.get("pcr_total")
         if pcr:
             pcr_weight = market_ctx.get("pcr_weight", 0.10)
-            if pcr > 1.15 and signal == "BULLISH":  # High PCR + bullish = conflict
+            if pcr >= 1.15 and signal == "BULLISH":  # High PCR + bullish = conflict
                 market_adjust *= 1.0 - pcr_weight
                 market_reason += (
                     f" [PCR={pcr:.2f} conflicts BULLISH, adj={market_adjust:.2f}]"
                 )
-            elif pcr < 0.85 and signal == "BEARISH":  # Low PCR + bearish = conflict
+            elif pcr <= 0.85 and signal == "BEARISH":  # Low PCR + bearish = conflict
                 market_adjust *= 1.0 - pcr_weight
                 market_reason += (
                     f" [PCR={pcr:.2f} conflicts BEARISH, adj={market_adjust:.2f}]"
@@ -1794,6 +1794,8 @@ def combine_entry_scores(
     if market_adjust != 1.0:
         confidence = int(confidence * market_adjust)
         reason += market_reason
+
+    confidence = min(confidence, 100)
 
     # Compute combined score (weighted by confidence)
     if total_weight > 0:

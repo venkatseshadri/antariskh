@@ -1752,8 +1752,8 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
 
 def score_regime(market_ctx: dict = None) -> dict:
     """
-    Deterministic regime assessment from VIX and ADX.
-    Pure Python — no LLM. Evaluates trend quality and risk environment.
+    Deterministic regime assessment from VIX (entry gate) + ADX (morpher/position).
+    ADX does NOT gate entry — it passes through for position manager.
 
     Returns: {signal: ENTER|CAUTION|SKIP, confidence, reason, vix, adx}
     """
@@ -1778,14 +1778,12 @@ def score_regime(market_ctx: dict = None) -> dict:
             "adx": adx,
         }
 
-    if adx and adx < 20:
-        return {
-            "signal": "SKIP",
-            "confidence": 85,
-            "reason": f"ADX={adx:.1f} <20 — no trend, directional signals unreliable",
-            "vix": vix,
-            "adx": adx,
-        }
+    # ADX: dummy pass-through. Does not gate entry.
+    # ADX < 20 → morpher tightens stops (trend weak, expect reversals)
+    # ADX > 30 → morpher loosens stops (trend strong, let it run)
+    # Uncomment when position manager consumes this:
+    # if adx and adx < 20:
+    #     return {"signal": "ENTER", "confidence": 70, "adx_quality": "low", ...}
 
     if vix > 18:
         return {
@@ -1796,19 +1794,10 @@ def score_regime(market_ctx: dict = None) -> dict:
             "adx": adx,
         }
 
-    if adx and adx < 25:
-        return {
-            "signal": "CAUTION",
-            "confidence": 60,
-            "reason": f"ADX={adx:.1f} <25 — weak trend, reduce conviction",
-            "vix": vix,
-            "adx": adx,
-        }
-
     return {
         "signal": "ENTER",
         "confidence": 85,
-        "reason": f"VIX={vix:.1f}, ADX={adx:.1f} — clear trending regime",
+        "reason": f"VIX={vix:.1f} — clear risk environment",
         "vix": vix,
         "adx": adx,
     }

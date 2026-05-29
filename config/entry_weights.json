@@ -35,8 +35,8 @@
     },
     "st_boost": 2.0,
     "signal_thresholds": {
-      "bullish": 3.0,
-      "bearish": -3.0
+      "bullish": 0.50,
+      "bearish": -0.50
     },
     "confidence": {
       "_note": "Used by DuckDB score_trend() only. Redis path uses inline math.",

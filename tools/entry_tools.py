@@ -1069,6 +1069,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     ema_dir = ema_base_dir / "60min"
     ema_values = {}
     ema_status = {}
+    ema_states = {}
     ema_source = "60min"
 
     for period in [5, 20, 50, 100, 200]:
@@ -1079,6 +1080,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
                 if state.get("available"):
                     ema_values[period] = state.get("ema_value")
                     ema_status[period] = "ready"
+                    ema_states[period] = state
                 else:
                     ema_status[period] = (
                         f"not_enough_data ({state.get('buffer_count', 0)}/{period})"
@@ -1111,6 +1113,7 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
         ema_dir = ema_base_dir / "1min"
         ema_values = {}
         ema_status = {}
+        ema_states = {}
         ema_source = "1min (fallback — 60min stale)"
         for period in [5, 20, 50, 100, 200]:
             ema_file = ema_dir / f"ema_{period}.json"
@@ -1207,41 +1210,57 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
         w = ema_weights.get(str(period), 0)
         if period in ema_values and ema_values[period]:
             available_count += 1
-            ema_val = ema_values[period]
-            gap_pct = (current_price - ema_val) / ema_val
-            dist_factor = min(abs(gap_pct) / dist_threshold, 1.0)
-            contrib = w * dist_factor * (1 if gap_pct > 0 else -1)
+            state = ema_states.get(period, {})
+            ema_curr = ema_values[period]
+
+            # Slope = per-bar rate of change of the EMA itself.
+            # EMA_new = close × α + EMA_prev × (1 − α)
+            # → EMA_prev = (EMA_new − close × α) / (1 − α)
+            # → slope = (EMA_new − EMA_prev) / EMA_new
+            alpha = state.get("multiplier", 2 / (period + 1))
+            latest_close = (state.get("last_bars") or [ema_curr])[0]
+            ema_prev = (ema_curr - latest_close * alpha) / (1 - alpha)
+            slope = (ema_curr - ema_prev) / ema_curr if ema_curr != 0 else 0
+
+            # Slope thresholds: ~±0.01% per 60min bar = sustained trend.
+            slope_factor = min(abs(slope) / 0.0001, 1.0)
+            contrib = w * slope_factor * (1 if slope > 0 else -1)
             score += contrib
-            if gap_pct > 0:
+            if slope > 0:
                 ema_aligned += 1
-            direction = "BULLISH" if gap_pct > 0 else "BEARISH"
+            direction = "BULLISH" if slope > 0 else "BEARISH"
             reasoning_parts.append(
-                f"EMA{period}:{direction}({contrib:+.3f} w={w} gap={gap_pct:+.3%})"
+                f"EMA{period}:{direction}({contrib:+.3f} w={w} slope={slope:+.4%})"
             )
         else:
             reasoning_parts.append(
                 f"EMA{period}:not_ready" if w > 0 else f"EMA{period}:zero_weight"
             )
 
-    # Determine signal
+    # Determine signal from score + thresholds
     if available_count == 0:
         signal = "NEUTRAL"
         confidence = 5
         reason_str = "no_ema_data_yet"
     else:
-        alignment_pct = ema_aligned / available_count
+        bullish_thresh = thresholds.get("bullish", 0.50)
+        bearish_thresh = thresholds.get("bearish", -0.50)
 
-        if alignment_pct >= 0.75:
+        if score >= bullish_thresh:
             signal = "BULLISH"
-            confidence = min(90, 50 + (alignment_pct * 40))
-        elif alignment_pct <= 0.25:
+        elif score <= bearish_thresh:
             signal = "BEARISH"
-            confidence = min(90, 50 + ((1 - alignment_pct) * 40))
         else:
             signal = "NEUTRAL"
-            confidence = 40
 
-        reason_str = f"EMA alignment {int(ema_aligned)}/{available_count}"
+        weighted_count = sum(1 for p in [5, 20, 50] if ema_weights.get(str(p), 0) > 0)
+        ema_ready = sum(1 for p in [5, 20, 50] if p in ema_values)
+        confidence = (
+            min(90, int(ema_ready / weighted_count * 100)) if weighted_count > 0 else 40
+        )
+        reason_str = (
+            f"EMA alignment {int(ema_aligned)}/{available_count} score={score:.2f}"
+        )
 
     return {
         "family": "Trend",

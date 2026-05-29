@@ -1441,17 +1441,30 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         c = candles.get(tf, "no_data")
         colors[tf] = c if c in ("GREEN", "RED") else "neutral"
 
-    green_c = sum(1 for c in colors.values() if c == "GREEN")
-    red_c = sum(1 for c in colors.values() if c == "RED")
+    # Weighted: higher TFs carry more structural significance.
+    # 1m/5m are micro (noise), 1440m/240m are macro (structure).
+    tf_weights = {
+        "1m": 0.5,
+        "5m": 0.5,
+        "15m": 1.0,
+        "30m": 1.0,
+        "60m": 1.5,
+        "240m": 2.0,
+        "1440m": 3.0,
+    }
+    total_weight = sum(tf_weights.values())
+    green_weight = sum(tf_weights[tf] for tf, c in colors.items() if c == "GREEN")
+    red_weight = sum(tf_weights[tf] for tf, c in colors.items() if c == "RED")
+
     daily_c = colors.get("1440m", "neutral")
     h4_c = colors.get("240m", "neutral")
     h1_c = colors.get("60m", "neutral")
     m30_c = colors.get("30m", "neutral")
 
     pattern = "mixed"
-    if green_c == 7:
+    if green_weight >= 8.0:
         pattern = "MOMENTUM_PEAK"
-    elif red_c == 7:
+    elif red_weight >= 8.0:
         pattern = "STRONG_BEAR_CONTINUATION"
     elif daily_c == "GREEN" and h4_c == "RED" and h1_c == "GREEN":
         pattern = "BULLISH_PULLBACK_RESUMING"
@@ -1466,17 +1479,15 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         pattern = "BULLISH_DEEP_PULLBACK_BOUNCING"
     elif daily_c == "RED" and h1_c == "GREEN" and colors.get("15m") == "GREEN":
         pattern = "DEAD_CAT_BOUNCE"
-    elif daily_c == "GREEN" and green_c >= 5:
+    elif daily_c == "GREEN" and green_weight >= 6.0:
         pattern = "BULLISH_CONTINUATION"
-    elif daily_c == "RED" and red_c >= 5:
+    elif daily_c == "RED" and red_weight >= 6.0:
         pattern = "BEARISH_CONTINUATION"
-    elif green_c >= 5:
+    elif green_weight >= 6.0:
         pattern = "BULLISH_STRUCTURE"
-    elif red_c >= 5:
+    elif red_weight >= 6.0:
         pattern = "BEARISH_STRUCTURE"
-    elif green_c == 3 and red_c == 4:
-        pattern = "CHOPPY_INDECISION"
-    elif green_c == 4 and red_c == 3:
+    elif 3.5 <= green_weight <= 5.5 and 3.5 <= red_weight <= 5.5:
         pattern = "CHOPPY_INDECISION"
 
     pat_data = pattern_cfg.get(
@@ -1524,9 +1535,9 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
 
     story = " | ".join(
         f"{tf}={colors.get(tf, '?')}"
-        for tf in ["1440m", "240m", "60m", "30m", "15m", "5m"]
+        for tf in ["1440m", "240m", "60m", "30m", "15m", "5m", "1m"]
     )
-    story += f" | G={green_c}/6 R={red_c}/6 | GAP={gap_info.get('direction', '?')}"
+    story += f" | GW={green_weight:.1f}/{total_weight} RW={red_weight:.1f}/{total_weight} | GAP={gap_info.get('direction', '?')}"
 
     # Completion-weighted confidence: a 15m candle from 1 bar has ~7% weight
     completion = live.get("completion_by_tf", {})

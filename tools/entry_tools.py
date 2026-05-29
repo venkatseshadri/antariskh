@@ -877,11 +877,14 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
     """
     Read live 1-min OHLCV bars from Redis `v3_ohlcv_queue`.
     Returns dict of per-TF candle colors + recent 1-min bar.
+    Intraday TFs (5m–60m) use only today's bars.
+    Longer TFs (240m, 1440m) include yesterday's close for context,
+    but 1440m is built from today's open → current close, not yesterday's.
     No DuckDB dependency — pure Redis.
 
     Args:
         index: NIFTY or SENSEX
-        lookback_bars: how many 1-min bars to fetch for SMA/aggregation (default 360 = 6h)
+        lookback_bars: how many 1-min bars to fetch for SMA/aggregation (default 360)
     Returns:
         {latest_1m: {open,high,low,close,volume}, candles_by_tf: {5m:GREEN/RED,...}, n_bars}
     """
@@ -896,7 +899,6 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         }
 
     try:
-        # Try per-index key first, fall back to shared key (backward compat)
         bars_raw = r.lrange(_redis_queue_key(index), 0, lookback_bars - 1)
         if not bars_raw:
             bars_raw = r.lrange(_redis_queue_key(index), 0, lookback_bars - 1)
@@ -907,8 +909,6 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
                 "n_bars": 0,
                 "error": "empty_queue",
             }
-
-        # Parse bars, filter by index
 
         bars = []
         for b in bars_raw:
@@ -935,14 +935,22 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
                 "error": "no_bars_for_index",
             }
 
-        latest = bars[0]  # newest is at head (LPUSH)
+        latest = bars[0]
 
-        # Aggregate to multi-TF candles
+        # Split bars by trading day (YYYY-MM-DD from timestamp prefix)
+        today_str = _dt.now().strftime("%Y-%m-%d")
+        today_bars = [b for b in bars if b.get("timestamp", "")[:10] == today_str]
+        yesterday_bars = [b for b in bars if b.get("timestamp", "")[:10] != today_str]
+
         candles_by_tf = {}
-        tf_minutes = {"5m": 5, "15m": 15, "30m": 30, "60m": 60, "240m": 240}
+        tf_minutes = {"5m": 5, "15m": 15, "30m": 30, "60m": 60}
 
         for tf_label, tf_mins in tf_minutes.items():
-            agg = _aggregate_redis_bars(bars, tf_mins)
+            if len(today_bars) >= tf_mins:
+                agg = _aggregate_redis_bars(today_bars, tf_mins)
+            else:
+                agg = _aggregate_redis_bars(today_bars, len(today_bars))
+
             if agg:
                 candles_by_tf[tf_label] = (
                     "GREEN" if agg["close"] > agg["open"] else "RED"
@@ -950,19 +958,36 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
             else:
                 candles_by_tf[tf_label] = "no_data"
 
-        # Daily candle: from all bars today
-        candles_by_tf["1440m"] = (
-            "GREEN"
-            if latest["close"] > bars[-1]["open"]
-            else "RED"
-            if len(bars) > 1
-            else "no_data"
-        )
+        # 240m: today's bars + yesterday's last 240m bar for context
+        if len(today_bars) >= 240:
+            agg = _aggregate_redis_bars(today_bars, 240)
+        elif today_bars and yesterday_bars:
+            needed = min(240 - len(today_bars), len(yesterday_bars))
+            combined = today_bars + yesterday_bars[:needed]
+            agg = _aggregate_redis_bars(combined, len(today_bars) + needed)
+        elif today_bars:
+            agg = _aggregate_redis_bars(today_bars, len(today_bars))
+        else:
+            agg = None
+
+        if agg:
+            candles_by_tf["240m"] = "GREEN" if agg["close"] > agg["open"] else "RED"
+        else:
+            candles_by_tf["240m"] = "no_data"
+
+        # Daily (1440m): today's open → current close (not yesterday's candle)
+        if today_bars:
+            today_open = today_bars[-1]["open"]
+            today_close = today_bars[0]["close"]
+            candles_by_tf["1440m"] = "GREEN" if today_close > today_open else "RED"
+        else:
+            candles_by_tf["1440m"] = "no_data"
 
         return {
             "latest_1m": latest,
             "candles_by_tf": candles_by_tf,
             "n_bars": len(bars),
+            "n_today_bars": len(today_bars),
             "latest_timestamp": latest["timestamp"],
         }
     except Exception as e:

@@ -943,13 +943,23 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         yesterday_bars = [b for b in bars if b.get("timestamp", "")[:10] != today_str]
 
         candles_by_tf = {}
+        completion_by_tf = {}
+
+        # 1m candle: single latest bar, always 100% complete when data exists
+        if today_bars:
+            b = today_bars[0]
+            candles_by_tf["1m"] = "GREEN" if b["close"] > b["open"] else "RED"
+            completion_by_tf["1m"] = 1.0
+        else:
+            candles_by_tf["1m"] = "no_data"
+            completion_by_tf["1m"] = 0.0
+
         tf_minutes = {"5m": 5, "15m": 15, "30m": 30, "60m": 60}
 
         for tf_label, tf_mins in tf_minutes.items():
-            if len(today_bars) >= tf_mins:
-                agg = _aggregate_redis_bars(today_bars, tf_mins)
-            else:
-                agg = _aggregate_redis_bars(today_bars, len(today_bars))
+            n_bars = min(len(today_bars), tf_mins)
+            completion_by_tf[tf_label] = n_bars / tf_mins if tf_mins > 0 else 0.0
+            agg = _aggregate_redis_bars(today_bars, n_bars)
 
             if agg:
                 candles_by_tf[tf_label] = (
@@ -964,28 +974,47 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         elif today_bars and yesterday_bars:
             needed = min(240 - len(today_bars), len(yesterday_bars))
             combined = today_bars + yesterday_bars[:needed]
-            agg = _aggregate_redis_bars(combined, len(today_bars) + needed)
+            total_bars = len(today_bars) + needed
+            agg = _aggregate_redis_bars(combined, total_bars)
+            completion_by_tf["240m"] = total_bars / 240 if total_bars > 0 else 0.0
         elif today_bars:
             agg = _aggregate_redis_bars(today_bars, len(today_bars))
+            completion_by_tf["240m"] = len(today_bars) / 240
         else:
             agg = None
+            completion_by_tf["240m"] = 0.0
 
         if agg:
             candles_by_tf["240m"] = "GREEN" if agg["close"] > agg["open"] else "RED"
         else:
             candles_by_tf["240m"] = "no_data"
 
-        # Daily (1440m): today's open → current close (not yesterday's candle)
-        if today_bars:
+        # Daily (1440m): compare today's current close against yesterday's close
+        # so the gap is baked into the candle color. A gap-down open produces RED
+        # until price recovers above prev_close.
+        prev_close = None
+        if yesterday_bars:
+            prev_close = yesterday_bars[0]["close"]
+        if today_bars and prev_close:
+            today_close = today_bars[0]["close"]
+            candles_by_tf["1440m"] = "GREEN" if today_close > prev_close else "RED"
+            days_ago_open = today_bars[-1]["open"]
+            if today_close > days_ago_open:
+                pass
+            completion_by_tf["1440m"] = min(len(today_bars), 375) / 375
+        elif today_bars:
             today_open = today_bars[-1]["open"]
             today_close = today_bars[0]["close"]
             candles_by_tf["1440m"] = "GREEN" if today_close > today_open else "RED"
+            completion_by_tf["1440m"] = min(len(today_bars), 375) / 375
         else:
             candles_by_tf["1440m"] = "no_data"
+            completion_by_tf["1440m"] = 0.0
 
         return {
             "latest_1m": latest,
             "candles_by_tf": candles_by_tf,
+            "completion_by_tf": completion_by_tf,
             "n_bars": len(bars),
             "n_today_bars": len(today_bars),
             "latest_timestamp": latest["timestamp"],
@@ -1408,7 +1437,7 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     gap_info = _get_gap_from_redis(index, live.get("latest_1m", {}))
 
     colors = {}
-    for tf in ["5m", "15m", "30m", "60m", "240m", "1440m"]:
+    for tf in ["1m", "5m", "15m", "30m", "60m", "240m", "1440m"]:
         c = candles.get(tf, "no_data")
         colors[tf] = c if c in ("GREEN", "RED") else "neutral"
 
@@ -1420,9 +1449,9 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     m30_c = colors.get("30m", "neutral")
 
     pattern = "mixed"
-    if green_c == 6:
+    if green_c == 7:
         pattern = "MOMENTUM_PEAK"
-    elif red_c == 6:
+    elif red_c == 7:
         pattern = "STRONG_BEAR_CONTINUATION"
     elif daily_c == "GREEN" and h4_c == "RED" and h1_c == "GREEN":
         pattern = "BULLISH_PULLBACK_RESUMING"
@@ -1437,15 +1466,17 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         pattern = "BULLISH_DEEP_PULLBACK_BOUNCING"
     elif daily_c == "RED" and h1_c == "GREEN" and colors.get("15m") == "GREEN":
         pattern = "DEAD_CAT_BOUNCE"
-    elif daily_c == "GREEN" and green_c >= 4:
+    elif daily_c == "GREEN" and green_c >= 5:
         pattern = "BULLISH_CONTINUATION"
-    elif daily_c == "RED" and red_c >= 4:
+    elif daily_c == "RED" and red_c >= 5:
         pattern = "BEARISH_CONTINUATION"
-    elif green_c >= 4:
+    elif green_c >= 5:
         pattern = "BULLISH_STRUCTURE"
-    elif red_c >= 4:
+    elif red_c >= 5:
         pattern = "BEARISH_STRUCTURE"
-    elif green_c == 3 and red_c == 3:
+    elif green_c == 3 and red_c == 4:
+        pattern = "CHOPPY_INDECISION"
+    elif green_c == 4 and red_c == 3:
         pattern = "CHOPPY_INDECISION"
 
     pat_data = pattern_cfg.get(
@@ -1496,6 +1527,13 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         for tf in ["1440m", "240m", "60m", "30m", "15m", "5m"]
     )
     story += f" | G={green_c}/6 R={red_c}/6 | GAP={gap_info.get('direction', '?')}"
+
+    # Completion-weighted confidence: a 15m candle from 1 bar has ~7% weight
+    completion = live.get("completion_by_tf", {})
+    if completion:
+        avg_comp = sum(completion.values()) / len(completion)
+        confidence = int(confidence * avg_comp)
+        story += f" | COMP={avg_comp:.0%}"
 
     confidence = max(5, min(100, confidence))  # Clamp to 5-100
 

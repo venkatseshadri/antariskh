@@ -60,7 +60,7 @@
       "BULLISH_DEEP_PULLBACK_BOUNCING": { "score": 4, "confidence": 55 },
       "BULLISH_STRUCTURE":          { "score": 5, "confidence": 65 },
       "BULLISH_MILD_PULLBACK":      { "score": 6, "confidence": 65 },
-      "MOMENTUM_PEAK":              { "score": 6, "confidence": 70, "note": "All 6 green = exhaustion risk. +6 by design: universal buying is a peak, not continuation." },
+      "MOMENTUM_PEAK":              { "score": 0, "confidence": 50, "note": "All 7 green = exhaustion risk. Score 0: direction determined by gap + higher TFs. Confidence 50: ambiguous on its own." },
       "BULLISH_PULLBACK_RESUMING":  { "score": 7, "confidence": 70 },
       "BULLISH_CONTINUATION":       { "score": 8, "confidence": 80 }
     },

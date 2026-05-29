@@ -1441,16 +1441,15 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         c = candles.get(tf, "no_data")
         colors[tf] = c if c in ("GREEN", "RED") else "neutral"
 
-    # Weighted: higher TFs carry more structural significance.
-    # 1m/5m are micro (noise), 1440m/240m are macro (structure).
+    # Weighted: higher TFs carry proportionally more structural significance.
     tf_weights = {
-        "1m": 0.5,
-        "5m": 0.5,
-        "15m": 1.0,
-        "30m": 1.0,
-        "60m": 1.5,
-        "240m": 2.0,
-        "1440m": 3.0,
+        "1m": 0.25,
+        "5m": 0.50,
+        "15m": 0.75,
+        "30m": 1.00,
+        "60m": 1.25,
+        "240m": 2.00,
+        "1440m": 3.00,
     }
     total_weight = sum(tf_weights.values())
     green_weight = sum(tf_weights[tf] for tf, c in colors.items() if c == "GREEN")
@@ -1462,9 +1461,9 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     m30_c = colors.get("30m", "neutral")
 
     pattern = "mixed"
-    if green_weight >= 8.0:
+    if green_weight >= 7.0:
         pattern = "MOMENTUM_PEAK"
-    elif red_weight >= 8.0:
+    elif red_weight >= 7.0:
         pattern = "STRONG_BEAR_CONTINUATION"
     elif daily_c == "GREEN" and h4_c == "RED" and h1_c == "GREEN":
         pattern = "BULLISH_PULLBACK_RESUMING"
@@ -1479,15 +1478,15 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         pattern = "BULLISH_DEEP_PULLBACK_BOUNCING"
     elif daily_c == "RED" and h1_c == "GREEN" and colors.get("15m") == "GREEN":
         pattern = "DEAD_CAT_BOUNCE"
-    elif daily_c == "GREEN" and green_weight >= 6.0:
+    elif daily_c == "GREEN" and green_weight >= 5.5:
         pattern = "BULLISH_CONTINUATION"
-    elif daily_c == "RED" and red_weight >= 6.0:
+    elif daily_c == "RED" and red_weight >= 5.5:
         pattern = "BEARISH_CONTINUATION"
-    elif green_weight >= 6.0:
+    elif green_weight >= 5.5:
         pattern = "BULLISH_STRUCTURE"
-    elif red_weight >= 6.0:
+    elif red_weight >= 5.5:
         pattern = "BEARISH_STRUCTURE"
-    elif 3.5 <= green_weight <= 5.5 and 3.5 <= red_weight <= 5.5:
+    elif 2.5 <= green_weight <= 5.0 and 2.5 <= red_weight <= 5.0:
         pattern = "CHOPPY_INDECISION"
 
     pat_data = pattern_cfg.get(

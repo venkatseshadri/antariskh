@@ -1426,7 +1426,7 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
             "family": "TrafficLight",
             "signal": "NEUTRAL",
             "score": 0,
-            "confidence": 5,
+            "confidence": 0,
             "reasoning": f"Redis error: {live.get('error', 'no data')}",
             "key_indicators": {"story": "no_data", "gap": "unknown"},
             "timestamp": _dt.now().isoformat(),
@@ -1561,7 +1561,14 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         confidence = int(confidence * weighted_comp)
         story += f" | WCOMP={weighted_comp:.0%}"
 
-    confidence = max(5, min(100, confidence))  # Clamp to 5-100
+        # No influence until enough intraday data exists.
+        # Below 20% = less than ~10 bars (~09:25) → TL has no voice.
+        if weighted_comp < 0.20:
+            confidence = 0
+            signal = "NEUTRAL"
+            story += " | WARMUP"
+
+    confidence = max(0, min(100, confidence))  # Clamp to 0-100
 
     return {
         "family": "TrafficLight",

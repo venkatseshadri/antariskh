@@ -30,12 +30,13 @@ FALLBACK_LOT_SIZE = {"NIFTY": 65, "SENSEX": 20}
 
 
 def get_weekly_expiry() -> str:
-    """Return current weekly NIFTY expiry date in DDMMMYYYY format, e.g. '15MAY2026'."""
+    """Return current weekly NIFTY expiry date in DDMMMYYYY format, e.g. '15MAY2026'.
+    NIFTY weekly expiry = Tuesday (weekday 1)."""
     today = datetime.now()
-    days_until_thu = (3 - today.weekday()) % 7
-    if days_until_thu == 0 and today.hour >= 15:
-        days_until_thu = 7
-    expiry = today + timedelta(days=days_until_thu)
+    days_until_tue = (1 - today.weekday()) % 7
+    if days_until_tue == 0 and today.hour >= 15:
+        days_until_tue = 7
+    expiry = today + timedelta(days=days_until_tue)
     if (expiry - today).days < 2:
         expiry = expiry + timedelta(days=7)
     return expiry.strftime("%d%b%Y").upper()

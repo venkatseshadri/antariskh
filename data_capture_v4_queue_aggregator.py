@@ -133,6 +133,7 @@ class MultiTFAggregatorQueue:
         if not self.redis_client:
             return []
 
+        bars = []
         try:
             queue_key = f"v3_ohlcv_queue_{index_name}"
             queue_length = self.redis_client.llen(queue_key)

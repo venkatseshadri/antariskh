@@ -63,17 +63,75 @@ V31_SENSEX_DB_PATH = os.environ.get("ANTARIKSH_V31_SENSEX_DB", str(_V31_SENSEX_D
 V4_DB_PATH = os.environ.get("ANTARIKSH_V4_NIFTY_DB", str(_V4_NIFTY_DB))
 V4_SENSEX_DB_PATH = os.environ.get("ANTARIKSH_V4_SENSEX_DB", str(_V4_SENSEX_DB))
 
+# Project Penguin — SQLite capture backend (env-gated Phase 2.3 cutover)
+# When ANTARIKSH_CAPTURE_BACKEND=sqlite, multi-TF reads come from capture_{index}.sqlite
+# instead of DuckDB. v3.1 enriched data (option_flow_macro) stays on DuckDB until enricher is built.
+CAPTURE_BACKEND = os.environ.get("ANTARIKSH_CAPTURE_BACKEND", "duckdb")
+_PENGUIN_DATA = _PROJECT_ROOT / "python-trader" / "varaha" / "data"
+_SQLITE_NIFTY_DB = str(_PENGUIN_DATA / "capture_nifty.sqlite")
+_SQLITE_SENSEX_DB = str(_PENGUIN_DATA / "capture_sensex.sqlite")
 
+if CAPTURE_BACKEND == "sqlite":
+    V4_DB_PATH = _SQLITE_NIFTY_DB
+    V4_SENSEX_DB_PATH = _SQLITE_SENSEX_DB
+    _USE_SQLITE_SCANNER = True
+else:
+    _USE_SQLITE_SCANNER = False
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
 def _db_connect(db_path: str, read_only: bool = True):
-    """Lazy DuckDB connection. Returns None if DB doesn't exist."""
+    """Context-managed DuckDB connection. Always closed after use.
+    Yields None if DB doesn't exist or duckdb not importable.
+    """
+    conn = None
     try:
         import duckdb
 
         if not Path(db_path).exists():
-            return None
-        return duckdb.connect(db_path, read_only=read_only)
+            yield None
+            return
+        conn = duckdb.connect(db_path, read_only=read_only)
+        yield conn
     except ImportError:
-        return None
+        yield None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@contextmanager
+def _db_connect_sqlite(db_path: str, table_name: str = "market_data"):
+    """Open a SQLite file via DuckDB's sqlite_scanner extension.
+    Yields a DuckDB connection that can query the SQLite tables directly.
+    Returns None if the SQLite file doesn't exist.
+    """
+    conn = None
+    try:
+        import duckdb
+
+        if not Path(db_path).exists():
+            yield None
+            return
+        conn = duckdb.connect(":memory:", read_only=True)
+        conn.execute("INSTALL sqlite_scanner")
+        conn.execute("LOAD sqlite_scanner")
+        conn.execute(f"CALL sqlite_attach('{db_path}')")
+        yield conn
+    except ImportError:
+        yield None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _safe_fetch(cursor, default="N/A"):
@@ -106,121 +164,218 @@ def query_multi_tf_trend(
     Returns:
         JSON string with trend analysis per timeframe.
     """
-    v4_db = _db_connect(V4_DB_PATH)
-    v31_db = _db_connect(V31_DB_PATH)
+    if _USE_SQLITE_SCANNER:
+        db_path = V4_DB_PATH if index.upper() == "NIFTY" else V4_SENSEX_DB_PATH
+        # SQLite multitf doesn't have full indicators yet — OHLCV only
+        mtf_result = {}
+        with _db_connect_sqlite(db_path, "market_data_multitf") as mtf_db:
+            if mtf_db:
+                for minut in TIMINGS:
+                    try:
+                        row = mtf_db.execute(
+                            "SELECT open, high, low, close, volume "
+                            "FROM market_data_multitf "
+                            "WHERE instrument = ? AND timeframe_min = ? "
+                            "ORDER BY timestamp DESC LIMIT 1",
+                            [index, minut],
+                        ).fetchone()
+                        entry = (
+                            {}
+                            if row is None
+                            else {
+                                "status": "ok",
+                                "ema_position": "unknown",
+                                "st_consensus": "NEUTRAL",
+                                "adx": row[4] or 0 if row else 0,  # volume as proxy
+                            }
+                        )
+                        if include_raw and row:
+                            entry["open"] = round(row[0], 2) if row[0] else None
+                            entry["high"] = round(row[1], 2) if row[1] else None
+                            entry["low"] = round(row[2], 2) if row[2] else None
+                            entry["close"] = round(row[3], 2) if row[3] else None
+                        mtf_result[f"{minut}m"] = (
+                            entry
+                            if entry
+                            else {"status": "no_data", "ema_position": "unknown"}
+                        )
+                    except Exception:
+                        mtf_result[f"{minut}m"] = {
+                            "status": "error",
+                            "ema_position": "unknown",
+                        }
+            result["timeframes"] = mtf_result
 
-    result = {
-        "family": "Trend",
-        "index": index,
-        "timestamp": datetime.now().isoformat(),
-        "timeframes": {},
-        "data_sources": {"v4_ok": v4_db is not None, "v3.1_ok": v31_db is not None},
-    }
+        # v3.1 enriched data stays on DuckDB (no SQLite equivalent yet)
+        with _db_connect(V31_DB_PATH) as v31_db:
+            if v31_db:
+                try:
+                    query = """
+                        SELECT ema_5, ema_20, ema_50, spot, supertrend_value, supertrend_direction,
+                               st_5min_direction, st_15min_direction, st_consensus, adx
+                        FROM market_data
+                        WHERE index_name = ?
+                        ORDER BY id DESC LIMIT 1
+                    """
+                    row = v31_db.execute(query, [index]).fetchone()
+                    if row:
+                        (
+                            ema5,
+                            ema20,
+                            ema50,
+                            spot,
+                            st_val,
+                            st_dir,
+                            st5_dir,
+                            st15_dir,
+                            st_cons,
+                            adx,
+                        ) = row
+                        pos = (
+                            "bullish"
+                            if (ema20 and ema50 and ema20 > ema50)
+                            else "bearish"
+                        )
+                        result["timeframes"]["1m_v3.1"] = {
+                            "status": "ok",
+                            "ema_position": pos,
+                            "st_direction": st_dir or "neutral",
+                            "st_5m_direction": st5_dir or "neutral",
+                            "st_15m_direction": st15_dir or "neutral",
+                            "st_consensus": st_cons or "NEUTRAL",
+                            "adx": round(adx, 1) if adx else None,
+                        }
+                        if include_raw:
+                            result["timeframes"]["1m_v3.1"]["spot"] = (
+                                round(spot, 2) if spot else None
+                            )
+                            result["timeframes"]["1m_v3.1"]["ema5"] = (
+                                round(ema5, 2) if ema5 else None
+                            )
+                            result["timeframes"]["1m_v3.1"]["ema20"] = (
+                                round(ema20, 2) if ema20 else None
+                            )
+                            result["timeframes"]["1m_v3.1"]["ema50"] = (
+                                round(ema50, 2) if ema50 else None
+                            )
+                            result["timeframes"]["1m_v3.1"]["supertrend_value"] = (
+                                round(st_val, 2) if st_val else None
+                            )
+                except Exception:
+                    pass
+    else:
+        result = {
+            "family": "Trend",
+            "index": index,
+            "timestamp": datetime.now().isoformat(),
+            "timeframes": {},
+            "data_sources": {"v4_ok": v4_db is not None, "v3.1_ok": v31_db is not None},
+        }
 
-    # --- v4: multi-TF SMA + ST consensus ---
-    if v4_db:
-        timings = [5, 15, 30, 60, 240, 1440]
-        for minut in timings:
-            query = """
-                SELECT sma20, sma50, sma200, rsi, close, st_consensus, adx, di_plus, di_minus
-                FROM market_data_multitf
-                WHERE index_name = ? AND timeframe_min = ?
-                ORDER BY timestamp DESC LIMIT 1
-            """
-            try:
-                row = v4_db.execute(query, [index, minut]).fetchone()
-                if row is None:
+        # --- v4: multi-TF SMA + ST consensus ---
+        if v4_db:
+            timings = [5, 15, 30, 60, 240, 1440]
+            for minut in timings:
+                query = """
+                    SELECT sma20, sma50, sma200, rsi, close, st_consensus, adx, di_plus, di_minus
+                    FROM market_data_multitf
+                    WHERE index_name = ? AND timeframe_min = ?
+                    ORDER BY timestamp DESC LIMIT 1
+                """
+                try:
+                    row = v4_db.execute(query, [index, minut]).fetchone()
+                    if row is None:
+                        result["timeframes"][f"{minut}m"] = {
+                            "status": "no_data",
+                            "ema_position": "unknown",
+                        }
+                        continue
+
+                    sma20, sma50, sma200, rsi, close, st, adx, di_p, di_m = row
+
+                    if sma20 and sma50:
+                        position = "bullish" if sma20 > sma50 else "bearish"
+                    else:
+                        position = "unknown"
+
+                    entry = {
+                        "status": "ok",
+                        "ema_position": position,
+                        "st_consensus": st or "NEUTRAL",
+                        "adx": round(adx, 1) if adx else None,
+                    }
+
+                    if include_raw:
+                        entry["sma20"] = round(sma20, 2) if sma20 else None
+                        entry["sma50"] = round(sma50, 2) if sma50 else None
+                        entry["sma200"] = round(sma200, 2) if sma200 else None
+                        entry["close"] = round(close, 2) if close else None
+                        entry["rsi"] = round(rsi, 1) if rsi else None
+                        entry["di_plus"] = round(di_p, 1) if di_p else None
+                        entry["di_minus"] = round(di_m, 1) if di_m else None
+
+                    result["timeframes"][f"{minut}m"] = entry
+                except Exception:
                     result["timeframes"][f"{minut}m"] = {
-                        "status": "no_data",
+                        "status": "error",
                         "ema_position": "unknown",
                     }
-                    continue
 
-                sma20, sma50, sma200, rsi, close, st, adx, di_p, di_m = row
+        # --- v3.1: 1-min EMA + ST detail ---
+        if v31_db:
+            try:
+                query = """
+                    SELECT ema_5, ema_20, ema_50, spot, supertrend_value, supertrend_direction,
+                           st_5min_direction, st_15min_direction, st_consensus, adx
+                    FROM market_data
+                    WHERE index_name = ?
+                    ORDER BY id DESC LIMIT 1
+                """
+                row = v31_db.execute(query, [index]).fetchone()
+                if row:
+                    (
+                        ema5,
+                        ema20,
+                        ema50,
+                        spot,
+                        st_val,
+                        st_dir,
+                        st5_dir,
+                        st15_dir,
+                        st_cons,
+                        adx,
+                    ) = row
+                    pos = (
+                        "bullish" if (ema20 and ema50 and ema20 > ema50) else "bearish"
+                    )
 
-                if sma20 and sma50:
-                    position = "bullish" if sma20 > sma50 else "bearish"
-                else:
-                    position = "unknown"
-
-                entry = {
-                    "status": "ok",
-                    "ema_position": position,
-                    "st_consensus": st or "NEUTRAL",
-                    "adx": round(adx, 1) if adx else None,
-                }
-
-                if include_raw:
-                    entry["sma20"] = round(sma20, 2) if sma20 else None
-                    entry["sma50"] = round(sma50, 2) if sma50 else None
-                    entry["sma200"] = round(sma200, 2) if sma200 else None
-                    entry["close"] = round(close, 2) if close else None
-                    entry["rsi"] = round(rsi, 1) if rsi else None
-                    entry["di_plus"] = round(di_p, 1) if di_p else None
-                    entry["di_minus"] = round(di_m, 1) if di_m else None
-
-                result["timeframes"][f"{minut}m"] = entry
+                    result["timeframes"]["1m_v3.1"] = {
+                        "status": "ok",
+                        "ema_position": pos,
+                        "st_direction": st_dir or "neutral",
+                        "st_5m_direction": st5_dir or "neutral",
+                        "st_15m_direction": st15_dir or "neutral",
+                        "st_consensus": st_cons or "NEUTRAL",
+                        "adx": round(adx, 1) if adx else None,
+                    }
+                    if include_raw:
+                        result["timeframes"]["1m_v3.1"]["spot"] = (
+                            round(spot, 2) if spot else None
+                        )
+                        result["timeframes"]["1m_v3.1"]["ema5"] = (
+                            round(ema5, 2) if ema5 else None
+                        )
+                        result["timeframes"]["1m_v3.1"]["ema20"] = (
+                            round(ema20, 2) if ema20 else None
+                        )
+                        result["timeframes"]["1m_v3.1"]["ema50"] = (
+                            round(ema50, 2) if ema50 else None
+                        )
+                        result["timeframes"]["1m_v3.1"]["supertrend_value"] = (
+                            round(st_val, 2) if st_val else None
+                        )
             except Exception:
-                result["timeframes"][f"{minut}m"] = {
-                    "status": "error",
-                    "ema_position": "unknown",
-                }
-        v4_db.close()
-
-    # --- v3.1: 1-min EMA + ST detail ---
-    if v31_db:
-        try:
-            query = """
-                SELECT ema_5, ema_20, ema_50, spot, supertrend_value, supertrend_direction,
-                       st_5min_direction, st_15min_direction, st_consensus, adx
-                FROM market_data
-                WHERE index_name = ?
-                ORDER BY id DESC LIMIT 1
-            """
-            row = v31_db.execute(query, [index]).fetchone()
-            if row:
-                (
-                    ema5,
-                    ema20,
-                    ema50,
-                    spot,
-                    st_val,
-                    st_dir,
-                    st5_dir,
-                    st15_dir,
-                    st_cons,
-                    adx,
-                ) = row
-                pos = "bullish" if (ema20 and ema50 and ema20 > ema50) else "bearish"
-
-                result["timeframes"]["1m_v3.1"] = {
-                    "status": "ok",
-                    "ema_position": pos,
-                    "st_direction": st_dir or "neutral",
-                    "st_5m_direction": st5_dir or "neutral",
-                    "st_15m_direction": st15_dir or "neutral",
-                    "st_consensus": st_cons or "NEUTRAL",
-                    "adx": round(adx, 1) if adx else None,
-                }
-                if include_raw:
-                    result["timeframes"]["1m_v3.1"]["spot"] = (
-                        round(spot, 2) if spot else None
-                    )
-                    result["timeframes"]["1m_v3.1"]["ema5"] = (
-                        round(ema5, 2) if ema5 else None
-                    )
-                    result["timeframes"]["1m_v3.1"]["ema20"] = (
-                        round(ema20, 2) if ema20 else None
-                    )
-                    result["timeframes"]["1m_v3.1"]["ema50"] = (
-                        round(ema50, 2) if ema50 else None
-                    )
-                    result["timeframes"]["1m_v3.1"]["supertrend_value"] = (
-                        round(st_val, 2) if st_val else None
-                    )
-        except Exception:
-            pass
-        v31_db.close()
+                pass
 
     return json.dumps(result, indent=2)
 
@@ -238,129 +393,126 @@ def query_option_flow_macro(index: str = "NIFTY") -> str:
 
     Returns JSON with: VIX, IV, PCR, OI, sentiment, greeks, max_pain, pivot, fib, gap.
     """
-    v31_db = _db_connect(V31_DB_PATH)
+    with _db_connect(V31_DB_PATH) as v31_db:
+        result = {
+            "index": index,
+            "timestamp": datetime.now().isoformat(),
+            "data_source_ok": v31_db is not None,
+            "macro": {},
+            "options": {},
+            "flow": {},
+        }
 
-    result = {
-        "index": index,
-        "timestamp": datetime.now().isoformat(),
-        "data_source_ok": v31_db is not None,
-        "macro": {},
-        "options": {},
-        "flow": {},
-    }
-
-    if not v31_db:
-        return json.dumps(result, indent=2)
-
-    try:
-        query = """
-            SELECT
-                india_vix, spot, open_price, prev_close, gap_pct,
-                iv_current, iv_rank, iv_regime, hv_20, hv_60,
-                pcr_total, pcr_atm, sentiment, max_pain_strike,
-                call_oi_concentration, put_oi_concentration, oi_skew,
-                agg_delta, agg_gamma, agg_vega, agg_theta,
-                rsi, atr, adx, ema20_slope,
-                pivot_pp, pivot_r1, pivot_r2, pivot_s1, pivot_s2,
-                fib_0, fib_236, fib_382, fib_50, fib_618, fib_786, fib_100,
-                session_phase, open_to_current_pct
-            FROM market_data
-            WHERE index_name = ?
-            ORDER BY id DESC LIMIT 1
-        """
-        row = v31_db.execute(query, [index]).fetchone()
-        if row is None:
-            v31_db.close()
+        if not v31_db:
             return json.dumps(result, indent=2)
 
-        (
-            vix,
-            spot,
-            open_p,
-            prev_c,
-            gap,
-            iv_cur,
-            iv_rank,
-            iv_reg,
-            hv20,
-            hv60,
-            pcr_t,
-            pcr_atm,
-            sent,
-            max_pain,
-            call_oi,
-            put_oi,
-            oi_sk,
-            delta,
-            gamma,
-            vega,
-            theta,
-            rsi,
-            atr,
-            adx,
-            slope,
-            pp,
-            r1,
-            r2,
-            s1,
-            s2,
-            f0,
-            f236,
-            f382,
-            f50,
-            f618,
-            f786,
-            f100,
-            sess_phase,
-            open_pct,
-        ) = row
+        try:
+            query = """
+                SELECT
+                    india_vix, spot, open_price, prev_close, gap_pct,
+                    iv_current, iv_rank, iv_regime, hv_20, hv_60,
+                    pcr_total, pcr_atm, sentiment, max_pain_strike,
+                    call_oi_concentration, put_oi_concentration, oi_skew,
+                    agg_delta, agg_gamma, agg_vega, agg_theta,
+                    rsi, atr, adx, ema20_slope,
+                    pivot_pp, pivot_r1, pivot_r2, pivot_s1, pivot_s2,
+                    fib_0, fib_236, fib_382, fib_50, fib_618, fib_786, fib_100,
+                    session_phase, open_to_current_pct
+                FROM market_data
+                WHERE index_name = ?
+                ORDER BY id DESC LIMIT 1
+            """
+            row = v31_db.execute(query, [index]).fetchone()
+            if row is None:
+                return json.dumps(result, indent=2)
 
-        result["macro"] = {
-            "vix": round(vix, 2) if vix else None,
-            "vix_change": None,  # needs prev bar for diff
-            "gift_premium": None,  # not yet captured
-            "banknifty_nifty_ratio": None,  # not yet captured
-            "gap_pct": round(gap, 2) if gap else None,
-            "session_phase": sess_phase or "unknown",
-            "open_to_current_pct": round(open_pct, 2) if open_pct else None,
-        }
+            (
+                vix,
+                spot,
+                open_p,
+                prev_c,
+                gap,
+                iv_cur,
+                iv_rank,
+                iv_reg,
+                hv20,
+                hv60,
+                pcr_t,
+                pcr_atm,
+                sent,
+                max_pain,
+                call_oi,
+                put_oi,
+                oi_sk,
+                delta,
+                gamma,
+                vega,
+                theta,
+                rsi,
+                atr,
+                adx,
+                slope,
+                pp,
+                r1,
+                r2,
+                s1,
+                s2,
+                f0,
+                f236,
+                f382,
+                f50,
+                f618,
+                f786,
+                f100,
+                sess_phase,
+                open_pct,
+            ) = row
 
-        result["options"] = {
-            "iv_current": round(iv_cur, 2) if iv_cur else None,
-            "iv_percentile": round(iv_rank, 2) if iv_rank else None,
-            "iv_regime": iv_reg or "unknown",
-            "hv_20": round(hv20, 2) if hv20 else None,
-            "pcr_total": round(pcr_t, 2) if pcr_t else None,
-            "pcr_atm": round(pcr_atm, 2) if pcr_atm else None,
-            "sentiment": sent or "neutral",
-            "max_pain_strike": max_pain,
-            "call_oi_conc": round(call_oi, 2) if call_oi else None,
-            "put_oi_conc": round(put_oi, 2) if put_oi else None,
-            "oi_skew": round(oi_sk, 2) if oi_sk else None,
-            "agg_delta": round(delta, 3) if delta else None,
-            "agg_gamma": round(gamma, 3) if gamma else None,
-            "agg_vega": round(vega, 2) if vega else None,
-            "agg_theta": round(theta, 2) if theta else None,
-        }
+            result["macro"] = {
+                "vix": round(vix, 2) if vix else None,
+                "vix_change": None,  # needs prev bar for diff
+                "gift_premium": None,  # not yet captured
+                "banknifty_nifty_ratio": None,  # not yet captured
+                "gap_pct": round(gap, 2) if gap else None,
+                "session_phase": sess_phase or "unknown",
+                "open_to_current_pct": round(open_pct, 2) if open_pct else None,
+            }
 
-        result["flow"] = {
-            "fii_fut_5d_change": None,  # not yet captured
-            "pcr_change": None,  # needs prev bar for diff
-        }
+            result["options"] = {
+                "iv_current": round(iv_cur, 2) if iv_cur else None,
+                "iv_percentile": round(iv_rank, 2) if iv_rank else None,
+                "iv_regime": iv_reg or "unknown",
+                "hv_20": round(hv20, 2) if hv20 else None,
+                "pcr_total": round(pcr_t, 2) if pcr_t else None,
+                "pcr_atm": round(pcr_atm, 2) if pcr_atm else None,
+                "sentiment": sent or "neutral",
+                "max_pain_strike": max_pain,
+                "call_oi_conc": round(call_oi, 2) if call_oi else None,
+                "put_oi_conc": round(put_oi, 2) if put_oi else None,
+                "oi_skew": round(oi_sk, 2) if oi_sk else None,
+                "agg_delta": round(delta, 3) if delta else None,
+                "agg_gamma": round(gamma, 3) if gamma else None,
+                "agg_vega": round(vega, 2) if vega else None,
+                "agg_theta": round(theta, 2) if theta else None,
+            }
 
-        result["technicals"] = {
-            "rsi": round(rsi, 1) if rsi else None,
-            "atr": round(atr, 2) if atr else None,
-            "adx": round(adx, 1) if adx else None,
-            "ema20_slope": round(slope, 4) if slope else None,
-            "pivot_pp": round(pp, 2) if pp else None,
-            "pivot_r1": round(r1, 2) if r1 else None,
-            "pivot_s1": round(s1, 2) if s1 else None,
-        }
+            result["flow"] = {
+                "fii_fut_5d_change": None,  # not yet captured
+                "pcr_change": None,  # needs prev bar for diff
+            }
 
-        v31_db.close()
-    except Exception:
-        pass
+            result["technicals"] = {
+                "rsi": round(rsi, 1) if rsi else None,
+                "atr": round(atr, 2) if atr else None,
+                "adx": round(adx, 1) if adx else None,
+                "ema20_slope": round(slope, 4) if slope else None,
+                "pivot_pp": round(pp, 2) if pp else None,
+                "pivot_r1": round(r1, 2) if r1 else None,
+                "pivot_s1": round(s1, 2) if s1 else None,
+            }
+
+        except Exception:
+            pass
 
     return json.dumps(result, indent=2)
 

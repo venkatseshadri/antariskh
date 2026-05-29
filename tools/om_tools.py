@@ -152,40 +152,129 @@ def verify_code_hash() -> Dict:
 
 
 def data_capture_health() -> Dict:
-    """Check DuckDB market data stream is receiving live data."""
+    """Check data capture pipelines (Penguin SQLite + legacy DuckDB)."""
     if _is_mock():
         stopped = os.environ.get("ANTARIKSH_MOCK_DATA_STOPPED", "0") == "1"
         if stopped:
             return {
                 "running": False,
                 "ok": False,
-                "evidence": f"DuckDB data stream STOPPED — last write: >5 min ago ({_now_ist()})",
+                "evidence": f"Data stream STOPPED — last write: >5 min ago ({_now_ist()})",
             }
         return {
             "running": True,
             "ok": True,
-            "evidence": f"DuckDB data stream active — last write: {_now_ist()}",
+            "evidence": f"Data stream active — last write: {_now_ist()}",
         }
 
-    # Real check — look for DuckDB file with recent modification
+    issues = []
+    details = []
+
+    penguin = penguin_capture_health()
+    if penguin["ok"]:
+        details.append(f"Penguin: {penguin['evidence']}")
+    else:
+        issues.append(f"Penguin: {penguin['evidence']}")
+
     duckdb_paths = list(
-        Path("/home/trading_ceo/python-trader/varaha/data").glob("*.duckdb")
+        Path("/home/trading_ceo/python-trader/varaha/data").glob("varaha_data*.duckdb")
     )
-    if not duckdb_paths:
-        return {
-            "running": False,
-            "ok": False,
-            "evidence": f"No DuckDB files found ({_now_ist()})",
-        }
+    if duckdb_paths:
+        latest = max(duckdb_paths, key=lambda p: p.stat().st_mtime)
+        age_sec = time.time() - latest.stat().st_mtime
+        if age_sec < 300:
+            details.append(f"Legacy DuckDB: {int(age_sec)}s ago")
+        else:
+            issues.append(f"Legacy DuckDB: stale ({int(age_sec)}s)")
 
-    latest = max(duckdb_paths, key=lambda p: p.stat().st_mtime)
-    age_sec = time.time() - latest.stat().st_mtime
-    running = age_sec < 300  # 5 min threshold
-    return {
-        "running": running,
-        "ok": running,
-        "evidence": f"DuckDB last write: {int(age_sec)}s ago ({latest.name}) ({_now_ist()})",
+    ok = penguin["ok"] or (len(issues) == 0)
+    evidence = "; ".join(details + issues) + f" ({_now_ist()})"
+    return {"running": ok, "ok": ok, "evidence": evidence, "penguin": penguin}
+
+
+def penguin_capture_health() -> Dict:
+    """Check Project Penguin pipeline: feed → consumers → enrichers → SQLite."""
+    issues = []
+    details = []
+
+    services = {
+        "feed": "feed.service",
+        "consumer-nifty": "consumer-nifty.service",
+        "consumer-sensex": "consumer-sensex.service",
+        "consumer-mcx": "consumer-mcx.service",
+        "enricher-nifty": "enricher-nifty.service",
+        "enricher-sensex": "enricher-sensex.service",
+        "enricher-mcx": "enricher-mcx.service",
     }
+
+    active_count = 0
+    for name, unit in services.items():
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", unit],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.stdout.strip() == "active":
+                active_count += 1
+            else:
+                now_h = datetime.now(IST).hour
+                is_mcx = "mcx" in name
+                expected_active = (9 <= now_h < 16) or (is_mcx and now_h < 24)
+                if expected_active:
+                    issues.append(f"{name} inactive")
+        except Exception:
+            pass
+
+    try:
+        import redis as _redis
+
+        r = _redis.Redis()
+        for inst in ["NIFTY", "SENSEX", "GOLD"]:
+            hb_key = f"feed:{inst}:heartbeat"
+            hb = r.get(hb_key)
+            if hb:
+                details.append(f"{inst} heartbeat OK")
+                break
+        for inst in ["NIFTY", "SENSEX"]:
+            llen = r.llen(f"feed:{inst}")
+            if llen and llen > 0:
+                details.append(f"feed:{inst} {llen} bars")
+    except Exception:
+        pass
+
+    import sqlite3
+    from datetime import date
+
+    today = date.today().isoformat()
+    data_dir = Path("/home/trading_ceo/python-trader/varaha/data")
+    total_rows = 0
+    for inst in ["nifty", "sensex", "mcx"]:
+        db_path = data_dir / f"capture_{inst}.sqlite"
+        if not db_path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute(
+                "SELECT COUNT(*) FROM market_data WHERE substr(timestamp,1,10)=?",
+                (today,),
+            ).fetchone()[0]
+            conn.close()
+            total_rows += rows
+        except Exception:
+            pass
+
+    if total_rows > 0:
+        details.append(f"{total_rows} bars today")
+    else:
+        now_h = datetime.now(IST).hour
+        if 10 <= now_h < 16:
+            issues.append("0 SQLite bars today (market should be active)")
+
+    ok = len(issues) == 0 and active_count >= 3
+    evidence = f"{active_count}/7 services; " + "; ".join(details + issues)
+    return {"ok": ok, "active_services": active_count, "evidence": evidence}
 
 
 def disk_usage_check() -> Dict:

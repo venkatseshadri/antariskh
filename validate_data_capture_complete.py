@@ -26,7 +26,9 @@ class DataCaptureValidator:
     def __init__(self, duckdb_path=None):
         """Initialize validator."""
         if duckdb_path is None:
-            duckdb_path = "/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb"
+            duckdb_path = (
+                "/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb"
+            )
 
         self.db_path = Path(duckdb_path)
         self.issues = []
@@ -91,7 +93,7 @@ class DataCaptureValidator:
         exists = self.db_path.exists()
         if exists:
             size_mb = self.db_path.stat().st_size / (1024 * 1024)
-            self.stats['db_size_mb'] = size_mb
+            self.stats["db_size_mb"] = size_mb
             print(f"(size: {size_mb:.1f} MB)", end=" ")
         return exists
 
@@ -105,14 +107,14 @@ class DataCaptureValidator:
             table_names = [t[0] for t in tables]
             conn.close()
 
-            required = ['market_data', 'option_snapshots']
+            required = ["market_data", "option_snapshots"]
             missing = [t for t in required if t not in table_names]
 
             if missing:
                 self.issues.append(f"Missing tables: {missing}")
                 return False
 
-            self.stats['v3_tables'] = required
+            self.stats["v3_tables"] = required
             return True
         except Exception as e:
             self.issues.append(f"Table check failed: {e}")
@@ -124,9 +126,7 @@ class DataCaptureValidator:
             conn = duckdb.connect(str(self.db_path), read_only=True)
 
             # Check market_data row count (v3.1 stores 1-min data only)
-            count = conn.execute(
-                "SELECT COUNT(*) FROM market_data"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM market_data").fetchone()[0]
 
             # Check option_snapshots row count
             opt_count = conn.execute(
@@ -140,8 +140,8 @@ class DataCaptureValidator:
                 return False
 
             print(f"({count} 1-min bars, {opt_count} option snapshots)", end=" ")
-            self.stats['v3_market_data_rows'] = count
-            self.stats['v3_option_rows'] = opt_count
+            self.stats["v3_market_data_rows"] = count
+            self.stats["v3_option_rows"] = opt_count
             return True
         except Exception as e:
             self.issues.append(f"v3.1 population check: {e}")
@@ -159,11 +159,23 @@ class DataCaptureValidator:
 
             # Critical columns for trading
             critical = [
-                'timestamp', 'index_name',
-                'open_price', 'spot', 'futures',
-                'adx', 'rsi', 'supertrend_direction', 'supertrend_value',
-                'agg_delta', 'agg_gamma', 'agg_vega', 'agg_theta',
-                'india_vix', 'ema_5', 'ema_20', 'ema_50'
+                "timestamp",
+                "index_name",
+                "open_price",
+                "spot",
+                "futures",
+                "adx",
+                "rsi",
+                "supertrend_direction",
+                "supertrend_value",
+                "agg_delta",
+                "agg_gamma",
+                "agg_vega",
+                "agg_theta",
+                "india_vix",
+                "ema_5",
+                "ema_20",
+                "ema_50",
             ]
 
             missing_critical = [c for c in critical if c not in col_names]
@@ -175,8 +187,8 @@ class DataCaptureValidator:
                 return False
 
             print(f"({col_count} columns)", end=" ")
-            self.stats['v3_columns'] = col_count
-            self.stats['v3_critical_cols'] = len(critical)
+            self.stats["v3_columns"] = col_count
+            self.stats["v3_critical_cols"] = len(critical)
             return True
         except Exception as e:
             self.issues.append(f"v3.1 column check: {e}")
@@ -190,7 +202,7 @@ class DataCaptureValidator:
         """
         # This is informational — Redis validation requires Redis connection
         print("(ema, rsi, adx, st_dir, bb_pct_b per TF)", end=" ")
-        self.stats['v3_redis_fields'] = 5
+        self.stats["v3_redis_fields"] = 5
         return True
 
     def run_v4_aggregator(self) -> bool:
@@ -199,11 +211,11 @@ class DataCaptureValidator:
             agg = MultiTFAggregator(str(self.db_path), verbose=False)
             results = agg.run_all_timeframes("NIFTY", lookback_days=5)
 
-            if results['data_loss_detected']:
+            if results["data_loss_detected"]:
                 self.issues.append(f"v4 data loss: {results['summary']['warnings']}")
                 return False
 
-            self.stats['v4_results'] = results
+            self.stats["v4_results"] = results
             return True
         except Exception as e:
             self.issues.append(f"v4 aggregator error: {e}")
@@ -220,7 +232,9 @@ class DataCaptureValidator:
             ).fetchall()
 
             if not tables:
-                self.warnings.append("v4: market_data_aggregated table not yet created (run aggregator first)")
+                self.warnings.append(
+                    "v4: market_data_aggregated table not yet created (run aggregator first)"
+                )
                 conn.close()
                 return True  # Not a failure, just not run yet
 
@@ -229,7 +243,9 @@ class DataCaptureValidator:
             ).fetchone()[0]
 
             if count == 0:
-                self.warnings.append("v4: market_data_aggregated is empty (run aggregator)")
+                self.warnings.append(
+                    "v4: market_data_aggregated is empty (run aggregator)"
+                )
                 conn.close()
                 return True  # Not a failure
 
@@ -241,10 +257,13 @@ class DataCaptureValidator:
                    ORDER BY timeframe_min"""
             ).fetchall()
 
-            print(f"({count} total: {', '.join(f'{tf}min={cnt}' for tf, cnt in by_tf)})", end=" ")
+            print(
+                f"({count} total: {', '.join(f'{tf}min={cnt}' for tf, cnt in by_tf)})",
+                end=" ",
+            )
 
             conn.close()
-            self.stats['v4_aggregated_rows'] = count
+            self.stats["v4_aggregated_rows"] = count
             return True
         except Exception as e:
             self.issues.append(f"v4 data check: {e}")
@@ -269,14 +288,20 @@ class DataCaptureValidator:
                 return True  # Not run yet, not a failure
 
             # Get 1-min bar count
-            v1_count = conn.execute(
-                "SELECT COUNT(*) FROM market_data WHERE index_name = 'NIFTY'"
-            ).fetchone()[0] or 0
+            v1_count = (
+                conn.execute(
+                    "SELECT COUNT(*) FROM market_data WHERE index_name = 'NIFTY'"
+                ).fetchone()[0]
+                or 0
+            )
 
             # Get 5-min bar count
-            v5_count = conn.execute(
-                "SELECT COUNT(*) FROM market_data_aggregated WHERE timeframe_min = 5 AND index_name = 'NIFTY'"
-            ).fetchone()[0] or 0
+            v5_count = (
+                conn.execute(
+                    "SELECT COUNT(*) FROM market_data_aggregated WHERE timeframe_min = 5 AND index_name = 'NIFTY'"
+                ).fetchone()[0]
+                or 0
+            )
 
             conn.close()
 
@@ -290,8 +315,8 @@ class DataCaptureValidator:
                         f"5-min count={v5_count}, expected ~{expected_v5:.0f} (ratio={ratio:.2f})"
                     )
 
-            self.stats['volume_check_v1_count'] = v1_count
-            self.stats['volume_check_v5_count'] = v5_count
+            self.stats["volume_check_v1_count"] = v1_count
+            self.stats["volume_check_v5_count"] = v5_count
             return True
         except Exception as e:
             self.warnings.append(f"v4 volume check: {e}")
@@ -380,10 +405,127 @@ class DataCaptureValidator:
             return True
 
 
+class PenguinValidator:
+    """Validate Project Penguin SQLite capture completeness."""
+
+    EXPECTED_BARS = {"NIFTY": 375, "SENSEX": 375, "MCX": 855}
+    TIMEFRAMES = [1, 5, 15, 30, 60, 240, 1440]
+
+    def __init__(self):
+        self.issues = []
+        self.warnings = []
+        self.stats = {}
+
+    def validate_all(self, target_date=None):
+        import sqlite3
+        from datetime import date
+
+        day = target_date or date.today().isoformat()
+        data_dir = Path("/home/trading_ceo/python-trader/varaha/data")
+
+        print("\n" + "=" * 80)
+        print(f"PENGUIN SQLITE VALIDATION — {day}")
+        print("=" * 80 + "\n")
+
+        for instrument in ["NIFTY", "SENSEX", "MCX"]:
+            db_path = data_dir / f"capture_{instrument.lower()}.sqlite"
+            print(f"\n--- {instrument} ({db_path.name}) ---")
+
+            if not db_path.exists():
+                self.warnings.append(f"{instrument}: SQLite file not found")
+                print(f"  ⚠ File not found — skipping")
+                continue
+
+            conn = sqlite3.connect(str(db_path))
+
+            md_rows = conn.execute(
+                "SELECT COUNT(*) FROM market_data WHERE substr(timestamp,1,10)=?",
+                (day,),
+            ).fetchone()[0]
+            expected = self.EXPECTED_BARS[instrument]
+            pct = round(md_rows / expected * 100, 1) if expected > 0 else 0
+            icon = "✓" if md_rows > expected * 0.9 else "✗"
+            print(
+                f"  {icon} market_data: {md_rows} bars (expected ~{expected}, {pct}%)"
+            )
+            self.stats[f"{instrument}_bars"] = md_rows
+            if md_rows < expected * 0.5:
+                self.issues.append(f"{instrument}: only {md_rows}/{expected} bars")
+
+            try:
+                mtf_rows = conn.execute(
+                    "SELECT COUNT(*) FROM market_data_multitf WHERE substr(timestamp,1,10)=?",
+                    (day,),
+                ).fetchone()[0]
+                tf_counts = {}
+                for row in conn.execute(
+                    "SELECT timeframe_min, COUNT(*) FROM market_data_multitf "
+                    "WHERE substr(timestamp,1,10)=? GROUP BY timeframe_min",
+                    (day,),
+                ):
+                    tf_counts[row[0]] = row[1]
+                missing_tfs = [tf for tf in self.TIMEFRAMES if tf not in tf_counts]
+                icon = "✓" if not missing_tfs else "✗"
+                tf_str = ", ".join(
+                    f"{tf}m={tf_counts.get(tf, 0)}" for tf in self.TIMEFRAMES
+                )
+                print(f"  {icon} multitf: {mtf_rows} rows [{tf_str}]")
+                if missing_tfs:
+                    self.warnings.append(f"{instrument}: missing TFs {missing_tfs}")
+                self.stats[f"{instrument}_multitf"] = mtf_rows
+            except Exception:
+                print(f"  ✗ multitf: table not found")
+                self.issues.append(f"{instrument}: market_data_multitf table missing")
+
+            try:
+                enr_rows = conn.execute(
+                    "SELECT COUNT(*) FROM market_data_enriched WHERE substr(timestamp,1,10)=?",
+                    (day,),
+                ).fetchone()[0]
+                icon = "✓" if enr_rows > 0 else "✗"
+                print(f"  {icon} enriched: {enr_rows} rows")
+                self.stats[f"{instrument}_enriched"] = enr_rows
+                if enr_rows == 0 and md_rows > 10:
+                    self.warnings.append(
+                        f"{instrument}: enricher not running (0 enriched rows)"
+                    )
+            except Exception:
+                print(f"  ✗ enriched: table not found")
+
+            conn.close()
+
+        print("\n" + "=" * 80)
+        if not self.issues:
+            print("✅ PENGUIN VALIDATION PASSED")
+        else:
+            print(f"❌ {len(self.issues)} issue(s):")
+            for i in self.issues:
+                print(f"   - {i}")
+        if self.warnings:
+            print(f"⚠ {len(self.warnings)} warning(s):")
+            for w in self.warnings:
+                print(f"   - {w}")
+        print("=" * 80)
+        return len(self.issues) == 0
+
+
 def main():
     """Run validation."""
-    validator = DataCaptureValidator()
-    success = validator.validate_all()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Data capture validation")
+    parser.add_argument(
+        "--sqlite", action="store_true", help="Validate Penguin SQLite pipeline"
+    )
+    parser.add_argument("--date", type=str, default=None, help="Target date YYYY-MM-DD")
+    args = parser.parse_args()
+
+    if args.sqlite:
+        validator = PenguinValidator()
+        success = validator.validate_all(target_date=args.date)
+    else:
+        validator = DataCaptureValidator()
+        success = validator.validate_all()
 
     print("\nSTATISTICS:")
     for key, val in validator.stats.items():

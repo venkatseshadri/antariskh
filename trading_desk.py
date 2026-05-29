@@ -55,7 +55,6 @@ Usage:
     python trading_desk.py --show-flows
 """
 
-
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
@@ -313,7 +312,6 @@ def engine_scout_regime(
         # ── PRODUCTION PATH: read from DuckDB capture pipeline ──
         db_row = _read_live_market_data()
         if db_row:
-
             nifty = (
                 float(db_row[3])
                 if db_row[3] is not None
@@ -374,14 +372,15 @@ def engine_scout_regime(
 
 
 def _read_live_market_data():
-    """Read latest row from DuckDB capture pipeline (production path).
+    """Read latest row from capture pipeline (Penguin SQLite → legacy DuckDB fallback).
 
     Returns tuple (adx, supertrend_direction, india_vix, spot) or None on failure.
-    Reads from varaha_data.duckdb populated by data_capture_v3_duckdb.py.
-    Uses READ_ONLY + ATTACH pattern to avoid locking the capture writer.
     """
-    try:
+    row = _read_penguin_sqlite()
+    if row:
+        return row
 
+    try:
         db_path = Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb")
         if not db_path.exists():
             logger.warning("SCOUT: DuckDB not found at %s", db_path)
@@ -400,6 +399,33 @@ def _read_live_market_data():
         return row
     except Exception as e:
         logger.warning("SCOUT: DuckDB query failed: %s", e)
+        return None
+
+
+def _read_penguin_sqlite():
+    """Read latest enriched bar from Penguin SQLite (intraday, sub-second fresh)."""
+    try:
+        import sqlite3 as _sqlite3
+
+        db_path = Path(
+            "/home/trading_ceo/python-trader/varaha/data/capture_nifty.sqlite"
+        )
+        if not db_path.exists():
+            return None
+        conn = _sqlite3.connect(str(db_path))
+        row = conn.execute(
+            """SELECT e.adx, e.supertrend_direction, e.india_vix, m.close
+               FROM market_data m
+               LEFT JOIN market_data_enriched e
+                 ON m.timestamp = e.timestamp AND m.instrument = e.instrument
+               WHERE m.instrument = 'NIFTY'
+                 AND e.adx IS NOT NULL
+               ORDER BY m.timestamp DESC LIMIT 1"""
+        ).fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        logger.debug("SCOUT: Penguin SQLite query failed: %s", e)
         return None
 
 
@@ -536,7 +562,6 @@ def engine_execute_basket(order: AuthorizedOrder = None) -> HandoffReport:
         order = desk.order
     if order is None or order.status != "AUTHORIZED":
         raise ValueError("No authorized order to execute")
-
 
     spec = order.spec
     legs = spec.get("legs", [])
@@ -1033,7 +1058,6 @@ def researcher_backtest_shift() -> str:
     target_pnl = desk.setup.exp_profit if desk.setup else 800
     max_loss = desk.setup.max_loss if desk.setup else 3000
     lots = desk.setup.lots if desk.setup else 1
-
 
     new_plan = {
         "spot": spot,
@@ -1851,7 +1875,6 @@ def test_listen_triggers() -> Dict:
 def _initialize_registries():
     """Initialize agent and tools registries."""
     try:
-
         register_trading_desk_agents()
         register_trading_desk_tools()
         logger.info("[REGISTRY] Agent and Tools registries initialized")
@@ -1868,7 +1891,6 @@ _initialize_registries()
 # ======================================================================
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(
         description="Antariksh Trading Desk — Multi-Agent Options Trading System",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -1452,8 +1452,16 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         "1440m": 3.00,
     }
     total_weight = sum(tf_weights.values())
-    green_weight = sum(tf_weights[tf] for tf, c in colors.items() if c == "GREEN")
-    red_weight = sum(tf_weights[tf] for tf, c in colors.items() if c == "RED")
+    green_weight = sum(
+        tf_weights[tf] * completion_by_tf.get(tf, 0)
+        for tf, c in colors.items()
+        if c == "GREEN"
+    )
+    red_weight = sum(
+        tf_weights[tf] * completion_by_tf.get(tf, 0)
+        for tf, c in colors.items()
+        if c == "RED"
+    )
 
     daily_c = colors.get("1440m", "neutral")
     h4_c = colors.get("240m", "neutral")
@@ -1560,13 +1568,6 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         )
         confidence = int(confidence * weighted_comp)
         story += f" | WCOMP={weighted_comp:.0%}"
-
-        # No influence until enough intraday data exists.
-        # Below 20% = less than ~10 bars (~09:25) → TL has no voice.
-        if weighted_comp < 0.20:
-            confidence = 0
-            signal = "NEUTRAL"
-            story += " | WARMUP"
 
     confidence = max(0, min(100, confidence))  # Clamp to 0-100
 

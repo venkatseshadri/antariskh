@@ -1538,12 +1538,26 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     )
     story += f" | GW={green_weight:.1f}/{total_weight} RW={red_weight:.1f}/{total_weight} | GAP={gap_info.get('direction', '?')}"
 
-    # Completion-weighted confidence: a 15m candle from 1 bar has ~7% weight
+    # Completion-weighted confidence: completion IS weighted by TF significance.
+    # 1m at 100% is 0.25/8.75 = 3% of total; 1440m at 0.3% is 3.0/8.75 = 34%.
     completion = live.get("completion_by_tf", {})
     if completion:
-        avg_comp = sum(completion.values()) / len(completion)
-        confidence = int(confidence * avg_comp)
-        story += f" | COMP={avg_comp:.0%}"
+        tf_weights_w = {
+            "1m": 0.25,
+            "5m": 0.50,
+            "15m": 0.75,
+            "30m": 1.00,
+            "60m": 1.25,
+            "240m": 2.00,
+            "1440m": 3.00,
+        }
+        total_w = sum(tf_weights_w.values())
+        weighted_comp = (
+            sum(completion.get(tf, 0) * tf_weights_w.get(tf, 0) for tf in tf_weights_w)
+            / total_w
+        )
+        confidence = int(confidence * weighted_comp)
+        story += f" | WCOMP={weighted_comp:.0%}"
 
     confidence = max(5, min(100, confidence))  # Clamp to 5-100
 

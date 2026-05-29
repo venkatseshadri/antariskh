@@ -1490,10 +1490,12 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         pattern = "CHOPPY_INDECISION"
 
     pat_data = pattern_cfg.get(
-        pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 30})
+        pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 0})
     )
     score = pat_data["score"]
-    confidence = pat_data.get("confidence", 30)
+    # All patterns start at same neutral baseline (40%).
+    # Pattern-specific reliability to be learned from research/trade outcomes.
+    confidence = 40
 
     # ── Apply gap weighting (7th parameter) ──
     gap_weight = cfg.get("gap_weight", 0.2)  # Default 0.2 (20% influence)

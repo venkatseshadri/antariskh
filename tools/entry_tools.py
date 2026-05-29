@@ -1825,59 +1825,58 @@ def combine_entry_scores(
     t_score = trend_score.get("score", 0)
     tl_score_val = tl_score.get("score", 0)
 
-    # Low-confidence signals are noise, not real direction.
-    # A BULLISH at 13% confidence is really "I don't know" → downgrade to NEUTRAL.
-    min_conf = cfg.get("min_family_confidence", 30)
-    if t_conf < min_conf:
-        t_sig = "NEUTRAL"
-    if tl_conf < min_conf:
-        tl_sig = "NEUTRAL"
+    # Confidence-weighted direction vote.
+    # Each family votes BULLISH(+1)/BEARISH(-1)/NEUTRAL(0) scaled by confidence.
+    # A 90% BEARISH naturally dominates a 13% BULLISH — no hard threshold needed.
+    def _dir(sig):
+        return 1 if sig == "BULLISH" else -1 if sig == "BEARISH" else 0
 
-    if t_sig == "BULLISH" and tl_sig == "BULLISH":
-        rule = rules.get("both_bullish", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 1.0)
+    combined_vote = _dir(t_sig) * (t_conf / 100) + _dir(tl_sig) * (tl_conf / 100)
+
+    if combined_vote > 0.10:
         signal = "BULLISH"
-        reason = "Trend + TL both BULLISH"
-    elif t_sig == "BEARISH" and tl_sig == "BEARISH":
-        rule = rules.get("both_bearish", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 1.0)
+    elif combined_vote < -0.10:
         signal = "BEARISH"
-        reason = "Trend + TL both BEARISH"
-    elif t_sig == "BULLISH" and tl_sig == "NEUTRAL":
-        rule = rules.get("bullish_plus_neutral", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 0.75)
-        signal = "BULLISH"
-        reason = "Trend BULLISH, TL NEUTRAL"
-    elif t_sig == "NEUTRAL" and tl_sig == "BULLISH":
-        rule = rules.get("bullish_plus_neutral", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 0.75)
-        signal = "BULLISH"
-        reason = "TL BULLISH, Trend NEUTRAL"
-    elif t_sig == "BEARISH" and tl_sig == "NEUTRAL":
-        rule = rules.get("bearish_plus_neutral", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 0.75)
-        signal = "BEARISH"
-        reason = "Trend BEARISH, TL NEUTRAL"
-    elif t_sig == "NEUTRAL" and tl_sig == "BEARISH":
-        rule = rules.get("bearish_plus_neutral", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 0.75)
-        signal = "BEARISH"
-        reason = "TL BEARISH, Trend NEUTRAL"
-    elif t_sig == "BULLISH" and tl_sig == "BEARISH":
-        rule = rules.get("conflict", {})
-        go, mult = rule.get("go", False), rule.get("confidence_mult", 0.3)
-        signal = "NEUTRAL"
-        reason = "CONFLICT: Trend BULLISH vs TL BEARISH"
-    elif t_sig == "BEARISH" and tl_sig == "BULLISH":
-        rule = rules.get("conflict", {})
-        go, mult = rule.get("go", False), rule.get("confidence_mult", 0.3)
-        signal = "NEUTRAL"
-        reason = "CONFLICT: Trend BEARISH vs TL BULLISH"
     else:
-        rule = rules.get("both_neutral", {})
-        go, mult = rule.get("go", True), rule.get("confidence_mult", 0.5)
         signal = "NEUTRAL"
-        reason = "Both NEUTRAL — Iron Butterfly"
+
+    # Determine if this is a clean signal (both families agree) or a conflict
+    same_dir = _dir(t_sig) == _dir(tl_sig)
+    opposite = (_dir(t_sig) == 1 and _dir(tl_sig) == -1) or (
+        _dir(t_sig) == -1 and _dir(tl_sig) == 1
+    )
+
+    if signal == "NEUTRAL":
+        if opposite:
+            reason = f"CONFLICT: Trend {t_sig}({t_conf}%) vs TL {tl_sig}({tl_conf}%) — weighted to NEUTRAL"
+        else:
+            reason = "Both NEUTRAL — no directional conviction"
+        go = False
+        mult = cfg.get("rules", {}).get("conflict", {}).get("confidence_mult", 0.3)
+    elif signal != "NEUTRAL" and same_dir:
+        reason = f"Trend + TL both {signal}"
+        go = True
+        mult = (
+            cfg.get("rules", {})
+            .get("both_bullish" if signal == "BULLISH" else "both_bearish", {})
+            .get("confidence_mult", 1.0)
+        )
+    else:
+        # One family dominates: e.g. BEARISH(90%) + BULLISH(13%) → BEARISH
+        go = True
+        dominant = t_sig if t_conf >= tl_conf else tl_sig
+        other = tl_sig if t_conf >= tl_conf else t_sig
+        reason = f"{signal}: {dominant}({max(t_conf, tl_conf)}%) dominates {other}({min(t_conf, tl_conf)}%)"
+        mult = (
+            cfg.get("rules", {})
+            .get(
+                "bearish_plus_neutral"
+                if signal == "BEARISH"
+                else "bullish_plus_neutral",
+                {},
+            )
+            .get("confidence_mult", 0.75)
+        )
 
     # ── Regime gate (VIX + ADX) — gates directional trades only ──
     regime = score_regime(market_ctx)

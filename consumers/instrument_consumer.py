@@ -196,9 +196,12 @@ def main():
     aggregator = BarAggregator()
     minute_buffer = MinuteBuffer()
     bar_count = 0
+    opt_count = 0
+    last_opt_ts = None
 
     try:
         while True:
+            # ── Process OHLCV bars (existing) ──────────────────────────────────
             all_new_bars = []
             for feed_key in feed_keys:
                 bars_raw = r.lrange(feed_key, 0, -1)
@@ -262,6 +265,49 @@ def main():
 
                 last_ts = bar["timestamp"]
 
+            # ── Process option ticks (NIFTY + SENSEX) ───────────────────────
+            if instrument in ("NIFTY", "SENSEX"):
+                opt_feed_key = f"feed:{instrument}:options"
+                window_key = f"feed:{instrument}:options:window"
+
+                # Purge stale strikes from feed window signal
+                window_json = r.get(window_key)
+                if window_json:
+                    try:
+                        valid_strikes = json.loads(window_json)
+                        if valid_strikes:
+                            placeholders = ",".join("?" * len(valid_strikes))
+                            conn.execute(
+                                f"DELETE FROM option_prices WHERE strike NOT IN ({placeholders})",
+                                valid_strikes,
+                            )
+                    except Exception:
+                        pass
+
+                option_ticks = r.lrange(opt_feed_key, 0, -1)
+                new_ticks = []
+                for raw in reversed(option_ticks):
+                    tick = json.loads(raw)
+                    if last_opt_ts and tick["timestamp"] <= last_opt_ts:
+                        continue
+                    new_ticks.append(tick)
+
+                for tick in new_ticks:
+                    conn.execute(
+                        """INSERT OR REPLACE INTO option_prices
+                           (tsym, strike, option_type, ltp, timestamp)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            tick["tsym"],
+                            tick["strike"],
+                            tick["option_type"],
+                            tick["ltp"],
+                            tick["timestamp"],
+                        ),
+                    )
+                    opt_count += 1
+                    last_opt_ts = tick["timestamp"]
+
             if all_new_bars:
                 conn.execute(
                     "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
@@ -269,12 +315,14 @@ def main():
                 )
                 conn.commit()
                 if bar_count % 60 == 0:
-                    log.info(f"Bars written: {bar_count} (checkpoint: {last_ts})")
+                    log.info(
+                        f"Bars: {bar_count} (ckpt: {last_ts}), Options: {opt_count}"
+                    )
 
             r.set(
                 f"consumer:{instrument}:heartbeat", datetime.now().isoformat(), ex=120
             )
-            time.sleep(1)
+            time.sleep(1 if all_new_bars else 5)
 
     except KeyboardInterrupt:
         log.info("Shutting down")

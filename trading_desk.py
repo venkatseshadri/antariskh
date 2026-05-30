@@ -19,9 +19,9 @@ from crewai.tools import tool
         from pathlib import Path
     from tools.contract_tools import get_weekly_expiry, build_tsym
     from backtester import IronFlyBacktester
-    from brahmand.order_agent import place_order
-    from brahmand.order_agent import modify_order
-    from brahmand.order_agent import cancel_order
+    from brahmand.order_routing import place_order
+    from brahmand.order_routing import modify_order
+    from brahmand.order_routing import cancel_order
         from agent_registry import register_trading_desk_agents
         from tools_registry import register_trading_desk_tools
     import argparse

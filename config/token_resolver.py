@@ -1,0 +1,237 @@
+"""Resolve rotating option tokens from scrip master files at feed startup.
+
+Downloads/reads fresh master CSVs from Shoonya, finds near-ATM weekly/monthly
+option contracts for NIFTY and SENSEX.
+
+Usage:
+    tokens = TokenResolver().resolve_weekly_options()
+    # → [dict(exchange='NFO', token='57049', tsym='NIFTY02JUN26C23950', ...), ...]
+"""
+
+import csv
+import io
+import zipfile
+import tempfile
+from pathlib import Path
+from datetime import datetime, date, timedelta
+from typing import Optional
+
+MASTER_DIR = Path(__file__).resolve().parent.parent / "data" / "masters"
+MASTER_URLS = {
+    "NFO": "https://api.shoonya.com/NFO_symbols.txt.zip",
+    "BFO": "https://api.shoonya.com/BFO_symbols.txt.zip",
+    "MCX": "https://api.shoonya.com/MCX_symbols.txt.zip",
+    "NSE": "https://api.shoonya.com/NSE_symbols.txt.zip",
+    "BSE": "https://api.shoonya.com/BSE_symbols.txt.zip",
+}
+
+NIFTY_WEEKDAY = 1  # Tuesday
+SENSEX_WEEKDAY = 3  # Thursday
+
+MONTH_NAMES = {
+    1: "JAN",
+    2: "FEB",
+    3: "MAR",
+    4: "APR",
+    5: "MAY",
+    6: "JUN",
+    7: "JUL",
+    8: "AUG",
+    9: "SEP",
+    10: "OCT",
+    11: "NOV",
+    12: "DEC",
+}
+
+# Weekly: single-char month. Oct/Nov/Dec → O/N/D, Jan-Sep → digit 1-9
+WEEKLY_MONTH = {
+    1: "1",
+    2: "2",
+    3: "3",
+    4: "4",
+    5: "5",
+    6: "6",
+    7: "7",
+    8: "8",
+    9: "9",
+    10: "O",
+    11: "N",
+    12: "D",
+}
+
+
+def _download_master(exchange: str) -> Path:
+    MASTER_DIR.mkdir(parents=True, exist_ok=True)
+    fname = f"{exchange}_symbols.txt"
+    path = MASTER_DIR / fname
+    if path.exists():
+        return path
+    import urllib.request
+
+    url = MASTER_URLS.get(exchange)
+    if not url:
+        raise ValueError(f"No master URL for {exchange}")
+    with urllib.request.urlopen(url) as resp:
+        with zipfile.ZipFile(io.BytesIO(resp.read())) as zf:
+            zf.extract(fname, MASTER_DIR)
+    return path
+
+
+def _next_expiry(weekday: int) -> date:
+    """Return next expiry date on the given weekday."""
+    today = date.today()
+    days_ahead = (weekday - today.weekday()) % 7
+    if days_ahead == 0 and datetime.now().hour >= 15:
+        days_ahead = 7
+    expiry = today + timedelta(days=days_ahead)
+    if (expiry - today).days < 2:
+        expiry = expiry + timedelta(days=7)
+    return expiry
+
+
+def _build_tsym_weekly_nifty(expiry: date, strike: int, opt: str) -> str:
+    """NIFTY{DD}{Mmm}{YY}{C/P}{5-digit-strike}  →  NIFTY02JUN26C23950"""
+    return (
+        f"NIFTY"
+        f"{expiry.day:02d}"
+        f"{MONTH_NAMES[expiry.month]}"
+        f"{str(expiry.year)[-2:]}"
+        f"{opt[0]}"  # C or P
+        f"{strike}"
+    )
+
+
+def _build_tsym_weekly_sensex(expiry: date, strike: int, opt: str) -> str:
+    """SENSEX{YY}{M}{DD}{5-digit-strike}{CE/PE}  →  SENSEX2652975500PE (29-MAY-2026)"""
+    return (
+        f"SENSEX"
+        f"{str(expiry.year)[-2:]}"
+        f"{WEEKLY_MONTH[expiry.month]}"
+        f"{expiry.day:02d}"
+        f"{strike}"
+        f"{opt[:2].upper()}"  # CE or PE
+    )
+
+
+def _build_tsym_monthly_sensex(expiry: date, strike: int, opt: str) -> str:
+    """SENSEX{YY}{Mmm}{5-digit-strike}{CE/PE}  →  SENSEX26JUN75800PE"""
+    return (
+        f"SENSEX"
+        f"{str(expiry.year)[-2:]}"
+        f"{MONTH_NAMES[expiry.month]}"
+        f"{strike}"
+        f"{opt[:2].upper()}"
+    )
+
+
+class TokenResolver:
+    """Loads master files and resolves rotating option tokens."""
+
+    def __init__(
+        self, nifty_spot: Optional[float] = None, sensex_spot: Optional[float] = None
+    ):
+        self.nifty_spot = nifty_spot
+        self.sensex_spot = sensex_spot
+        self._masters: dict[str, dict[(str, str), dict]] = {}
+        self._load_masters()
+
+    def _load_masters(self):
+        for exchange in ["NFO", "BFO"]:
+            path = MASTER_DIR / f"{exchange}_symbols.txt"
+            if not path.exists():
+                _download_master(exchange)
+                path = MASTER_DIR / f"{exchange}_symbols.txt"
+            if not path.exists():
+                print(f"WARNING: master file missing: {path}")
+                continue
+            idx = {}
+            with open(path) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("Instrument") != "OPTIDX":
+                        continue
+                    tsym = row.get("TradingSymbol", "")
+                    key = (exchange, tsym)
+                    idx[key] = {
+                        "token": row.get("Token", ""),
+                        "strike": float(row.get("StrikePrice", "0")),
+                        "opt_type": row.get("OptionType", ""),
+                        "expiry": row.get("Expiry", ""),
+                        "lot_size": row.get("LotSize", ""),
+                        "tsym": tsym,
+                        "exchange": exchange,
+                        "feed_type": "d",
+                    }
+            self._masters[exchange] = idx
+
+    def _lookup(self, exchange: str, tsym: str) -> Optional[dict]:
+        idx = self._masters.get(exchange, {})
+        return idx.get((exchange, tsym))
+
+    def atm_strike(self, spot: float, gap: int) -> int:
+        """Round spot to nearest strike gap. e.g., 23907 → 23900 (gap=50)."""
+        return int(round(spot / gap) * gap)
+
+    def resolve_weekly_nifty(self, atm_range: int = 5) -> list[dict]:
+        expiry = _next_expiry(NIFTY_WEEKDAY)
+        spot = self.nifty_spot or 23900  # fallback
+        gap = 50
+        atm = self.atm_strike(spot, gap)
+        tokens = []
+        for offset in range(-atm_range, atm_range + 1):
+            strike = atm + offset * gap
+            for opt in ["CE", "PE"]:
+                tsym = _build_tsym_weekly_nifty(expiry, strike, opt)
+                row = self._lookup("NFO", tsym)
+                if row:
+                    row["strike"] = strike
+                    row["expiry_date"] = expiry.isoformat()
+                    tokens.append(row)
+        return tokens
+
+    def resolve_weekly_sensex(self, atm_range: int = 5) -> list[dict]:
+        expiry = _next_expiry(SENSEX_WEEKDAY)
+        spot = self.sensex_spot or 75800
+        gap = 100
+        atm = self.atm_strike(spot, gap)
+        tokens = []
+        for offset in range(-atm_range, atm_range + 1):
+            strike = atm + offset * gap
+            for opt in ["CE", "PE"]:
+                tsym = _build_tsym_weekly_sensex(expiry, strike, opt)
+                row = self._lookup("BFO", tsym)
+                if row:
+                    row["strike"] = strike
+                    row["expiry_date"] = expiry.isoformat()
+                    tokens.append(row)
+        return tokens
+
+    def resolve_monthly_sensex(self, atm_range: int = 5) -> list[dict]:
+        """SENSEX monthly options — last Thursday of the month."""
+        today = date.today()
+        # Find next month-end expiry
+        expiry = today.replace(day=28) + timedelta(days=4)
+        expiry = expiry - timedelta(days=expiry.weekday())
+        while expiry.weekday() != 3:  # Thursday
+            expiry = expiry + timedelta(days=1)
+        spot = self.sensex_spot or 75800
+        gap = 100
+        atm = self.atm_strike(spot, gap)
+        tokens = []
+        for offset in range(-atm_range, atm_range + 1):
+            strike = atm + offset * gap
+            for opt in ["CE", "PE"]:
+                tsym = _build_tsym_monthly_sensex(expiry, strike, opt)
+                row = self._lookup("BFO", tsym)
+                if row:
+                    row["strike"] = strike
+                    row["expiry_date"] = expiry.isoformat()
+                    tokens.append(row)
+        return tokens
+
+    def resolve_all(self, nifty_range: int = 5, sensex_range: int = 5) -> list[dict]:
+        return (
+            self.resolve_weekly_nifty(nifty_range)
+            + self.resolve_weekly_sensex(sensex_range)
+            + self.resolve_monthly_sensex(sensex_range)
+        )

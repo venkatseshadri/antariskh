@@ -14,8 +14,10 @@ from datetime import datetime
 # Ensure project paths are available (add BEFORE any imports)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 TOOLS_PATH = PROJECT_ROOT / "tools"
+BRAHMAND_PATH = PROJECT_ROOT.parent / "brahmand"
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(TOOLS_PATH))
+sys.path.insert(0, str(BRAHMAND_PATH))
 
 # Now import after paths are set
 from entry_tools import (

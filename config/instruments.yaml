@@ -1,0 +1,142 @@
+# Instruments configuration for feed.py WebSocket producer.
+# Master files: /home/trading_ceo/antariksh/data/masters/{NSE,NFO,BFO,MCX,BSE}_symbols.txt
+#
+# ┌─ Permanent (never expire) ───────────────────────────────────────────────┐
+# │ Index spot feeds — one-permanent token per index                        │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─ Monthly (roll at month-end) ────────────────────────────────────────────┐
+# │ Index futures — NFO|62329 (NIFTY Jun), BFO|1105863 (SENSEX Jun)        │
+# │ Update on the last expiry-day-of-month                                  │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─ Weekly ATM options (resolve at startup) ────────────────────────────────┐
+# │ Computed from master files at feed.py startup + every expiry-day at 09:15│
+# │ NIFTY: Tuesday expiry, SENSEX: Thursday expiry                          │
+# └──────────────────────────────────────────────────────────────────────────┘
+
+spot:
+  - name: NIFTY
+    exchange: NSE
+    token: "26000"
+    feed_type: t
+    market_open: "09:15"
+    market_close: "15:30"
+
+  - name: SENSEX
+    exchange: BSE
+    token: "1"
+    feed_type: t
+    market_open: "09:15"
+    market_close: "15:30"
+
+futures:
+  - name: NIFTY
+    exchange: NFO
+    token: "62329"
+    tsym: NIFTY30JUN26F
+    feed_type: t
+    market_open: "09:15"
+    market_close: "15:30"
+
+  - name: SENSEX
+    exchange: BFO
+    token: "1105863"
+    tsym: SENSEX26JUNFUT
+    feed_type: t
+    market_open: "09:15"
+    market_close: "15:30"
+
+mcx:
+  - name: GOLD
+    exchange: MCX
+    token: "459277"
+    tsym: GOLD05JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: SILVERMIC
+    exchange: MCX
+    token: "477177"
+    tsym: SILVERMIC30JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: CRUDEOILM
+    exchange: MCX
+    token: "499096"
+    tsym: CRUDEOILM18JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: NATGASMINI
+    exchange: MCX
+    token: "504266"
+    tsym: NATGASMINI25JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: ZINCMINI
+    exchange: MCX
+    token: "552712"
+    tsym: ZINCMINI30JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: LEADMINI
+    exchange: MCX
+    token: "552710"
+    tsym: LEADMINI30JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+  - name: ALUMINI
+    exchange: MCX
+    token: "552707"
+    tsym: ALUMINI30JUN26
+    feed_type: d
+    market_open: "09:15"
+    market_close: "23:30"
+
+weekly_options:
+  enabled: true
+  atm_range: 5          # ±N strikes from ATM
+  indices:
+    - index: NIFTY
+      exchange: NFO
+      feed_type: d
+      expiry_weekday: 1   # Tuesday
+      master_file: NFO_symbols.txt
+      strike_gap: 50
+      # tsym format:  NIFTY{DD}{Mmm}{YY}{C/P}{5-digit-strike}
+      # example:      NIFTY02JUN26C23950
+      tsym_pattern: "NIFTY{dd}{mmmyy}{cp}{strike:05d}"
+
+    - index: SENSEX
+      exchange: BFO
+      feed_type: d
+      expiry_weekday: 3   # Thursday
+      master_file: BFO_symbols.txt
+      strike_gap: 100
+      # tsym weekly format: SENSEX{YY}{M}{DD}{5-digit-strike}{CE/PE}
+      # example:            SENSEX2660475800PE  (04-JUN-2026, 75800 PE)
+      tsym_pattern: "SENSEX{yy}{m}{dd}{strike:05d}{cepe}"
+
+monthly_options:
+  enabled: true
+  atm_range: 5
+  indices:
+    - index: SENSEX
+      exchange: BFO
+      feed_type: d
+      master_file: BFO_symbols.txt
+      strike_gap: 100
+      # tsym monthly format: SENSEX{YY}{Mmm}{5-digit-strike}{CE/PE}
+      # example:             SENSEX26JUN75800PE  (25-JUN-2026)
+      tsym_pattern: "SENSEX{yy}{mmm}{strike:05d}{cepe}"

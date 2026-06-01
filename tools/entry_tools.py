@@ -1899,44 +1899,47 @@ def combine_entry_scores(
     else:
         confidence = 0
 
-    # Market context adjustment (VIX, PCR, patterns)
+    # Market context adjustment — VIX, raw PCR, and Feedback patterns (Option A)
     market_adjust = 1.0
     market_reason = ""
     if market_ctx:
-        # VIX adjustment: high VIX reduces confidence on caution trades
+        # VIX adjustment: high VIX reduces conviction (fear premium, non-directional)
         vix = market_ctx.get("vix")
         if vix and vix > 20:
-            vix_weight = market_ctx.get("vix_weight", 0.15)
+            vix_weight = 0.15
             market_adjust *= 1.0 - vix_weight * min(1.0, (vix - 20) / 10)
-            market_reason += f" [VIX={vix:.1f}, adj={market_adjust:.2f}]"
+            market_reason += f" [VIX={vix:.1f}]"
 
-        # PCR adjustment: extremes influence direction confidence
+        # Raw PCR conflict: PCR extremes vs signal direction
         pcr = market_ctx.get("pcr_total")
         if pcr:
-            pcr_weight = market_ctx.get("pcr_weight", 0.10)
-            if pcr >= 1.15 and signal == "BULLISH":  # High PCR + bullish = conflict
-                market_adjust *= 1.0 - pcr_weight
-                market_reason += (
-                    f" [PCR={pcr:.2f} conflicts BULLISH, adj={market_adjust:.2f}]"
-                )
-            elif pcr <= 0.85 and signal == "BEARISH":  # Low PCR + bearish = conflict
-                market_adjust *= 1.0 - pcr_weight
-                market_reason += (
-                    f" [PCR={pcr:.2f} conflicts BEARISH, adj={market_adjust:.2f}]"
-                )
+            if pcr >= 1.15 and signal == "BULLISH":
+                market_adjust *= 0.90
+                market_reason += f" [PCR={pcr:.2f} vs BULLISH]"
+            elif pcr <= 0.85 and signal == "BEARISH":
+                market_adjust *= 0.90
+                market_reason += f" [PCR={pcr:.2f} vs BEARISH]"
 
-        # Research patterns boost/suppress confidence (hit_rate-scaled, not flat)
+        # Feedback patterns — Option A: Bearish Confirmation Gate
+        # Patterns matched via ChromaDB trigger_conditions by EntryAgent
+        # EMA family excluded (double-counts Trend checkpoint). 4-pattern pool.
+        # All patterns detect market stress/pressure (ADX, PCR extremes, VIX)
         patterns = market_ctx.get("matching_patterns", [])
-        if patterns:
-            pattern_quality = market_ctx.get("pattern_quality", {})
-            pattern_weight_base = market_ctx.get("pattern_weight", 0.10)
-            # Boost per pattern scaled by its hit_rate: 0.10 * hit_rate
-            total_boost = 0.0
-            for p in patterns:
-                hit_rate = pattern_quality.get(p, 0.5)  # default 50% if unknown
-                total_boost += pattern_weight_base * hit_rate
-            market_adjust *= 1.0 + total_boost
-            market_reason += f" [patterns={patterns}, boost={market_adjust:.2f}]"
+        pattern_count = len(patterns)
+        if pattern_count >= 2:
+            if signal == "BEARISH":
+                boost = 1.0 + 0.08 * min(pattern_count, 4)
+                market_adjust *= boost
+                market_reason += f" [FB confirm BEARISH +{int((boost - 1) * 100)}% ({pattern_count} patterns)]"
+            elif signal == "BULLISH":
+                penalty = max(0.65, 1.0 - 0.12 * min(pattern_count, 4))
+                market_adjust *= penalty
+                market_reason += f" [FB warn bearish pressure -{int((1 - penalty) * 100)}% ({pattern_count} patterns)]"
+            else:
+                market_adjust *= 0.90
+                market_reason += f" [FB lean bearish ({pattern_count} patterns)]"
+        elif pattern_count > 0:
+            market_reason += f" [FB {pattern_count} pattern — no adj]"
 
     if market_adjust != 1.0:
         confidence = int(confidence * market_adjust)

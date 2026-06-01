@@ -22,6 +22,35 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.sqlite_schema import open_capture_db, init_enriched_schema
+
+_TEXT_COLS = {
+    "timestamp", "instrument", "expiry_weekly", "expiry_next_weekly",
+    "expiry_monthly", "supertrend_direction", "iv_regime", "sentiment",
+    "structure_type", "st_5min_direction", "st_15min_direction",
+    "st_consensus", "session_phase", "data_source",
+}
+_INTEGER_COLS = {
+    "atm_strike", "days_to_weekly", "days_to_next_weekly", "days_to_monthly",
+    "max_pain_strike", "ob_strength", "fvg_mitigated", "liquidity_swept",
+    "structure_confirmed", "buffer_bars",
+}
+
+
+def _reconcile_enriched_schema(conn, expected_cols):
+    """Forward schema evolution: ALTER TABLE ADD COLUMN for any expected col
+    missing from the live market_data_enriched table. Per MIGRATION_PLAN.md
+    Phase 1.4 spec — prevents schema-drift crashes when ENRICHED_COLUMNS grows."""
+    live = {r[1] for r in conn.execute("PRAGMA table_info(market_data_enriched)").fetchall()}
+    added = []
+    for col in expected_cols:
+        if col in live:
+            continue
+        sqltype = "TEXT" if col in _TEXT_COLS else "INTEGER" if col in _INTEGER_COLS else "REAL"
+        conn.execute(f"ALTER TABLE market_data_enriched ADD COLUMN {col} {sqltype}")
+        added.append(f"{col} {sqltype}")
+    if added:
+        conn.commit()
+        log.info(f"Schema reconcile: added {len(added)} columns -> {added}")
 from enrichers.lib.buffer import IndicatorBuffer
 from enrichers.lib.pivots import compute_pivots
 from enrichers.lib.fibs import compute_fibs
@@ -531,6 +560,7 @@ def _init_ema_hook():
 def run_live(instrument: str):
     conn = open_capture_db(instrument)
     init_enriched_schema(conn)
+    _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
     broker = BrokerSession()
     enricher = Enricher(instrument, conn, broker)
@@ -627,6 +657,7 @@ def run_live(instrument: str):
 def run_backfill(instrument: str, date_from: str, date_to: str):
     conn = open_capture_db(instrument)
     init_enriched_schema(conn)
+    _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
     enricher = Enricher(instrument, conn, broker=None)
 

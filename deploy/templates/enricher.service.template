@@ -1,0 +1,19 @@
+[Unit]
+Description=Project Penguin {INSTRUMENT} Enricher — bars:{INSTRUMENT}:1 → market_data_enriched ({WINDOW})
+After=consumer-{INSTRUMENT_LOWER}.service
+Wants=consumer-{INSTRUMENT_LOWER}.service
+
+[Service]
+Type=simple
+User=trading_ceo
+WorkingDirectory=/home/trading_ceo/antariksh
+ExecStart=/usr/bin/python3 /home/trading_ceo/antariksh/enrichers/instrument_enricher.py --instrument {INSTRUMENT}
+Restart=on-failure
+RestartSec=10
+MemoryMax=512M
+RuntimeMaxSec={RUNTIME_MAX_SEC}
+StandardOutput=append:/home/trading_ceo/antariksh/logs/enricher_{INSTRUMENT_LOWER}.log
+StandardError=append:/home/trading_ceo/antariksh/logs/enricher_{INSTRUMENT_LOWER}.log
+
+[Install]
+WantedBy=multi-user.target

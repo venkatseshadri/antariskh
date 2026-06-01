@@ -18,3 +18,9 @@ build/
 venv/
 deploy/*.log
 data/*.db
+
+# Generated / runtime artifacts (not source)
+data/masters/
+graphify-out/
+locks/
+.opencode/

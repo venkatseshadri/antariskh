@@ -37,6 +37,10 @@ log = logging.getLogger("consumer")
 
 TIMEFRAMES = [5, 15, 30, 60, 240, 1440]
 
+# Newest bars scanned per cycle. Producer emits 1-min bars, so this comfortably
+# covers a full trading-day catch-up (MCX ≈855 min/day) before the early-break.
+HEAD_READ = 1000
+
 
 # ── 1-min OHLCV bucketing from raw ticks ─────────────────────────────────────
 
@@ -104,10 +108,13 @@ class BarAggregator:
         bucket_minute = (ts_dt.minute // tf) * tf
         bucket_key = ts_dt.strftime("%Y-%m-%dT%H:") + f"{bucket_minute:02d}:00"
 
-        key = (tf, bucket_key)
+        # Key by instrument too: the MCX consumer feeds 7 contracts through one
+        # aggregator — without this they collide into one bucket per timeframe.
+        key = (bar.get("instrument"), tf, bucket_key)
         if key not in self.buckets:
             self.buckets[key] = {
                 "timestamp": bucket_key,
+                "instrument": bar.get("instrument"),
                 "timeframe_min": tf,
                 "open": bar["open"],
                 "high": bar["high"],
@@ -186,39 +193,47 @@ def main():
     init_schemas(conn)
     log.info("SQLite ready")
 
+    # Per-source high-water marks: {source_name: last_bar_timestamp}.
+    # Per-source (not a single scalar) so MCX's 7 contracts don't drop each
+    # other's same-minute bars. Stored as one JSON row; a legacy scalar value
+    # → start fresh (re-processing is idempotent via INSERT OR REPLACE).
     row = conn.execute(
         "SELECT value FROM consumer_state WHERE key = ?", (f"last_ts:{instrument}",)
     ).fetchone()
-    last_ts = row["value"] if row else None
+    try:
+        last_ts = json.loads(row["value"]) if row else {}
+        if not isinstance(last_ts, dict):
+            last_ts = {}
+    except (json.JSONDecodeError, TypeError):
+        last_ts = {}
     if last_ts:
         log.info(f"Resuming from checkpoint: {last_ts}")
 
     aggregator = BarAggregator()
-    minute_buffer = MinuteBuffer()
     bar_count = 0
     opt_count = 0
-    last_opt_ts = None
 
     try:
         while True:
             # ── Process OHLCV bars (existing) ──────────────────────────────────
             all_new_bars = []
             for feed_key in feed_keys:
-                bars_raw = r.lrange(feed_key, 0, -1)
-                for raw in reversed(bars_raw):
+                src = feed_key[len("feed:") :]
+                seen = last_ts.get(src, "")
+                # Newest→oldest; stop at the first already-processed bar. Steady
+                # state breaks after ~1 entry, independent of the buffer size.
+                for raw in r.lrange(feed_key, 0, HEAD_READ):
                     bar = json.loads(raw)
-                    if last_ts and bar["timestamp"] <= last_ts:
-                        continue
+                    if bar["timestamp"] <= seen:
+                        break
                     all_new_bars.append(bar)
             all_new_bars.sort(key=lambda b: b["timestamp"])
 
             for bar in all_new_bars:
-                # 1. Bucket into 1-min OHLCV bars; skip incomplete minute
-                completed = minute_buffer.feed(bar)
-                if completed is None:
-                    continue
+                # Producer already aggregated to a completed 1-min bar.
+                completed = bar
 
-                # 2. Write completed 1-min bar to market_data
+                # Write 1-min bar to market_data
                 conn.execute(
                     """INSERT OR REPLACE INTO market_data
                        (timestamp, instrument, open, high, low, close, volume, ltp, source)
@@ -251,7 +266,7 @@ def main():
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             bucket["timestamp"],
-                            instrument,
+                            bucket.get("instrument", instrument),
                             tf,
                             bucket["open"],
                             bucket["high"],
@@ -263,11 +278,13 @@ def main():
                     pub_key = f"bars:{instrument}:{tf}"
                     r.publish(pub_key, json.dumps(bucket))
 
-                last_ts = bar["timestamp"]
+                last_ts[completed.get("instrument", instrument)] = completed["timestamp"]
 
-            # ── Process option ticks (NIFTY + SENSEX) ───────────────────────
+            # ── Process option LTPs (NIFTY + SENSEX) ─────────────────────────
+            # Latest LTP per strike lives in a Redis hash (one field per tsym),
+            # so cost is O(strikes) — independent of tick rate. See feed.py.
             if instrument in ("NIFTY", "SENSEX"):
-                opt_feed_key = f"feed:{instrument}:options"
+                ltp_key = f"feed:{instrument}:options:ltp"
                 window_key = f"feed:{instrument}:options:window"
 
                 # Purge stale strikes from feed window signal
@@ -284,34 +301,28 @@ def main():
                     except Exception:
                         pass
 
-                option_ticks = r.lrange(opt_feed_key, 0, -1)
-                new_ticks = []
-                for raw in reversed(option_ticks):
+                for raw in r.hgetall(ltp_key).values():
                     tick = json.loads(raw)
-                    if last_opt_ts and tick["timestamp"] <= last_opt_ts:
-                        continue
-                    new_ticks.append(tick)
-
-                for tick in new_ticks:
                     conn.execute(
                         """INSERT OR REPLACE INTO option_prices
-                           (tsym, strike, option_type, ltp, timestamp)
-                           VALUES (?, ?, ?, ?, ?)""",
+                           (tsym, strike, option_type, ltp, oi, volume, timestamp)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (
                             tick["tsym"],
                             tick["strike"],
                             tick["option_type"],
                             tick["ltp"],
+                            tick.get("oi"),
+                            tick.get("volume"),
                             tick["timestamp"],
                         ),
                     )
                     opt_count += 1
-                    last_opt_ts = tick["timestamp"]
 
             if all_new_bars:
                 conn.execute(
                     "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
-                    (f"last_ts:{instrument}", last_ts),
+                    (f"last_ts:{instrument}", json.dumps(last_ts)),
                 )
                 conn.commit()
                 if bar_count % 60 == 0:

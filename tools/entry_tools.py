@@ -18,10 +18,11 @@ Each tool returns pure data — the agent applies judgment.
 
 import json as _json
 import os
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 from pathlib import Path as _Path
 from typing import Optional
 import time as _time
+from crewai import Agent, Task, Crew, Process, LLM
 
 try:
     import duckdb
@@ -125,7 +126,7 @@ def query_trend(index: str = "NIFTY") -> str:
     result = {
         "family": "Trend",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
 
@@ -221,7 +222,7 @@ def query_trend(index: str = "NIFTY") -> str:
             pass
         v31.close()
 
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -237,7 +238,7 @@ def query_momentum(index: str = "NIFTY") -> str:
     result = {
         "family": "Momentum",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
 
@@ -298,7 +299,7 @@ def query_momentum(index: str = "NIFTY") -> str:
             pass
         v31.close()
 
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -314,7 +315,7 @@ def query_volatility(index: str = "NIFTY") -> str:
     result = {
         "family": "Volatility",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
 
@@ -361,7 +362,7 @@ def query_volatility(index: str = "NIFTY") -> str:
             pass
         v31.close()
 
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -377,7 +378,7 @@ def query_volume(index: str = "NIFTY") -> str:
     result = {
         "family": "Volume",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "indicators": {},
     }
 
@@ -439,7 +440,7 @@ def query_volume(index: str = "NIFTY") -> str:
             pass
         v31.close()
 
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -453,12 +454,12 @@ def query_options(index: str = "NIFTY") -> str:
     result = {
         "family": "Options",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "indicators": {},
     }
 
     if not v31:
-        return json.dumps(result, indent=2)
+        return _json.dumps(result, indent=2)
 
     try:
         row = v31.execute(
@@ -526,7 +527,7 @@ def query_options(index: str = "NIFTY") -> str:
     except Exception:
         pass
     v31.close()
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -544,12 +545,12 @@ def query_flow(index: str = "NIFTY") -> str:
     result = {
         "family": "Flow",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "indicators": {},
     }
 
     if not v31:
-        return json.dumps(result, indent=2)
+        return _json.dumps(result, indent=2)
 
     try:
         # PCR_change: diff between latest and 30-min-ago PCR
@@ -578,7 +579,7 @@ def query_flow(index: str = "NIFTY") -> str:
     )
 
     v31.close()
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -592,12 +593,12 @@ def query_macro(index: str = "NIFTY") -> str:
     result = {
         "family": "Macro",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "indicators": {},
     }
 
     if not v31:
-        return json.dumps(result, indent=2)
+        return _json.dumps(result, indent=2)
 
     try:
         row = v31.execute(
@@ -685,7 +686,7 @@ def query_macro(index: str = "NIFTY") -> str:
     )
 
     v31.close()
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -715,14 +716,14 @@ def query_traffic_light(index: str = "NIFTY") -> str:
     result = {
         "family": "TrafficLight",
         "index": index,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _dt.now().isoformat(),
         "candles": {},
         "pattern": "unknown",
         "confidence": 0,
     }
 
     if not v4:
-        return json.dumps(result, indent=2)
+        return _json.dumps(result, indent=2)
 
     tf_order = [
         (5, "5m"),
@@ -845,7 +846,7 @@ def query_traffic_light(index: str = "NIFTY") -> str:
     result["exhaustion"] = exhaustion
     result["reversal_signal"] = reversal_signal
 
-    return json.dumps(result, indent=2)
+    return _json.dumps(result, indent=2)
 
 
 # ============================================================
@@ -924,7 +925,7 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
                             "close": float(d["close"]),
                         }
                     )
-            except (json.JSONDecodeError, KeyError, ValueError):
+            except (_json.JSONDecodeError, KeyError, ValueError):
                 continue
 
         if not bars:
@@ -1383,6 +1384,38 @@ def _get_gap_from_redis(index: str, latest_1m: dict) -> dict:
         return {"direction": "unknown", "reason": f"error: {str(e)}"}
 
 
+_IST = _tz(_td(hours=5, minutes=30))
+_MARKET_OPEN_H, _MARKET_OPEN_M = 9, 15
+_SESSION_SECONDS = 375 * 60  # 09:15–15:30 = 6.25 hours
+
+
+def _compute_completion_by_tf() -> dict:
+    now = _dt.now(_IST)
+
+    session_start = now.replace(
+        hour=_MARKET_OPEN_H, minute=_MARKET_OPEN_M, second=0, microsecond=0
+    )
+    seconds_into_session = (now - session_start).total_seconds()
+
+    completion = {}
+    for tf_str, tf_mins in [
+        ("1m", 1),
+        ("5m", 5),
+        ("15m", 15),
+        ("30m", 30),
+        ("60m", 60),
+        ("240m", 240),
+    ]:
+        bar_seconds = tf_mins * 60
+        completion[tf_str] = min(
+            1.0,
+            max(0.0, (seconds_into_session % bar_seconds) / bar_seconds),
+        )
+
+    completion["1440m"] = max(0.0, min(1.0, seconds_into_session / _SESSION_SECONDS))
+    return completion
+
+
 def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     """
     Score traffic light from REDIS (0 DuckDB calls).
@@ -1415,7 +1448,12 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     colors = {}
     for tf in ["1m", "5m", "15m", "30m", "60m", "240m", "1440m"]:
         c = candles.get(tf, "no_data")
-        colors[tf] = c if c in ("GREEN", "RED") else "neutral"
+        if c != "no_data" and isinstance(c, dict):
+            colors[tf] = c.get("color", "neutral")
+        else:
+            colors[tf] = "neutral"
+
+    completion_by_tf = _compute_completion_by_tf()
 
     # Weighted: higher TFs carry proportionally more structural significance.
     tf_weights = {
@@ -2249,14 +2287,14 @@ def query_all_families(index: str = "NIFTY") -> str:
     ]:
         try:
             raw = fn(index)
-            families[name] = json.loads(raw)
+            families[name] = _json.loads(raw)
         except Exception as e:
             families[name] = {"error": str(e)}
 
-    return json.dumps(
+    return _json.dumps(
         {
             "index": index,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": _dt.now().isoformat(),
             "families": families,
         },
         indent=2,

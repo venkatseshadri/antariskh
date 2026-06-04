@@ -24,15 +24,32 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config.sqlite_schema import open_capture_db, init_enriched_schema
 
 _TEXT_COLS = {
-    "timestamp", "instrument", "expiry_weekly", "expiry_next_weekly",
-    "expiry_monthly", "supertrend_direction", "iv_regime", "sentiment",
-    "structure_type", "st_5min_direction", "st_15min_direction",
-    "st_consensus", "session_phase", "data_source",
+    "timestamp",
+    "instrument",
+    "expiry_weekly",
+    "expiry_next_weekly",
+    "expiry_monthly",
+    "supertrend_direction",
+    "iv_regime",
+    "sentiment",
+    "structure_type",
+    "st_5min_direction",
+    "st_15min_direction",
+    "st_consensus",
+    "session_phase",
+    "data_source",
 }
 _INTEGER_COLS = {
-    "atm_strike", "days_to_weekly", "days_to_next_weekly", "days_to_monthly",
-    "max_pain_strike", "ob_strength", "fvg_mitigated", "liquidity_swept",
-    "structure_confirmed", "buffer_bars",
+    "atm_strike",
+    "days_to_weekly",
+    "days_to_next_weekly",
+    "days_to_monthly",
+    "max_pain_strike",
+    "ob_strength",
+    "fvg_mitigated",
+    "liquidity_swept",
+    "structure_confirmed",
+    "buffer_bars",
 }
 
 
@@ -40,17 +57,27 @@ def _reconcile_enriched_schema(conn, expected_cols):
     """Forward schema evolution: ALTER TABLE ADD COLUMN for any expected col
     missing from the live market_data_enriched table. Per MIGRATION_PLAN.md
     Phase 1.4 spec — prevents schema-drift crashes when ENRICHED_COLUMNS grows."""
-    live = {r[1] for r in conn.execute("PRAGMA table_info(market_data_enriched)").fetchall()}
+    live = {
+        r[1] for r in conn.execute("PRAGMA table_info(market_data_enriched)").fetchall()
+    }
     added = []
     for col in expected_cols:
         if col in live:
             continue
-        sqltype = "TEXT" if col in _TEXT_COLS else "INTEGER" if col in _INTEGER_COLS else "REAL"
+        sqltype = (
+            "TEXT"
+            if col in _TEXT_COLS
+            else "INTEGER"
+            if col in _INTEGER_COLS
+            else "REAL"
+        )
         conn.execute(f"ALTER TABLE market_data_enriched ADD COLUMN {col} {sqltype}")
         added.append(f"{col} {sqltype}")
     if added:
         conn.commit()
         log.info(f"Schema reconcile: added {len(added)} columns -> {added}")
+
+
 from enrichers.lib.buffer import IndicatorBuffer
 from enrichers.lib.pivots import compute_pivots
 from enrichers.lib.fibs import compute_fibs
@@ -185,6 +212,7 @@ class BrokerSession:
     def _connect(self):
         try:
             sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
+            sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader" / "varaha"))
             sys.path.insert(0, "/usr/local/lib/python3.12/dist-packages")
             from varaha_auth import VarahaConnect
 
@@ -294,19 +322,35 @@ class Enricher:
                 if or_lows:
                     self.open_range_low = min(or_lows)
 
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        prev = self.conn.execute(
-            """SELECT MAX(high), MIN(low), close FROM market_data
-               WHERE instrument = ? AND timestamp >= ? AND timestamp < ?
-               ORDER BY timestamp DESC LIMIT 1""",
-            (self.instrument, yesterday, today),
+        # Prior-day OHLC for pivots/fibs/gap. Use the last trading day that
+        # actually has data — calendar "yesterday" misses weekends/holidays/gaps
+        # (e.g. every Monday), which left prev_day_data None → pivots/fibs/gap all
+        # NULL. Guard high/low > 0 (some ticks carry 0).
+        prev_day = self.conn.execute(
+            """SELECT MAX(substr(timestamp, 1, 10)) FROM market_data
+               WHERE instrument = ? AND substr(timestamp, 1, 10) < ?""",
+            (self.instrument, today),
         ).fetchone()
-        if prev and prev[0]:
-            self.prev_day_data = {
-                "high": prev[0],
-                "low": prev[1],
-                "close": prev[2],
-            }
+        prev_day = prev_day[0] if prev_day else None
+        if prev_day:
+            agg = self.conn.execute(
+                """SELECT MAX(high), MIN(low) FROM market_data
+                   WHERE instrument = ? AND substr(timestamp, 1, 10) = ?
+                     AND high > 0 AND low > 0""",
+                (self.instrument, prev_day),
+            ).fetchone()
+            lc = self.conn.execute(
+                """SELECT close FROM market_data
+                   WHERE instrument = ? AND substr(timestamp, 1, 10) = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (self.instrument, prev_day),
+            ).fetchone()
+            if agg and agg[0]:
+                self.prev_day_data = {
+                    "high": agg[0],
+                    "low": agg[1],
+                    "close": lc[0] if lc else None,
+                }
 
     def enrich_bar(self, bar: Dict) -> Dict:
         spot = bar.get("close") or bar.get("ltp")
@@ -327,6 +371,34 @@ class Enricher:
             self.intraday_high = bar.get("high", spot)
         if self.intraday_low is None or bar.get("low", spot) < self.intraday_low:
             self.intraday_low = bar.get("low", spot)
+
+        if self.prev_day_data is None:
+            today = date.today().isoformat()
+            prev_day = self.conn.execute(
+                """SELECT MAX(substr(timestamp, 1, 10)) FROM market_data
+                   WHERE instrument = ? AND substr(timestamp, 1, 10) < ?""",
+                (self.instrument, today),
+            ).fetchone()
+            prev_day = prev_day[0] if prev_day else None
+            if prev_day:
+                agg = self.conn.execute(
+                    """SELECT MAX(high), MIN(low) FROM market_data
+                       WHERE instrument = ? AND substr(timestamp, 1, 10) = ?
+                         AND high > 0 AND low > 0""",
+                    (self.instrument, prev_day),
+                ).fetchone()
+                lc = self.conn.execute(
+                    """SELECT close FROM market_data
+                       WHERE instrument = ? AND substr(timestamp, 1, 10) = ?
+                       ORDER BY timestamp DESC LIMIT 1""",
+                    (self.instrument, prev_day),
+                ).fetchone()
+                if agg and agg[0]:
+                    self.prev_day_data = {
+                        "high": agg[0],
+                        "low": agg[1],
+                        "close": lc[0] if lc else None,
+                    }
 
         indicators = self.buf.compute_indicators()
 
@@ -425,6 +497,10 @@ class Enricher:
         if pivot_levels and spot:
             clusters = compute_pivot_clusters(pivot_levels, spot, atr_val)
 
+        _today = date.today()
+        wk_date = self._weekly_expiry_date()
+        nx_date = wk_date + timedelta(days=7)
+
         row = {
             "timestamp": bar["timestamp"],
             "instrument": self.instrument,
@@ -433,10 +509,10 @@ class Enricher:
             "open_price": self.open_price,
             "prev_close": prev_close,
             "atm_strike": atm_strike,
-            "expiry_weekly": None,
-            "days_to_weekly": None,
-            "expiry_next_weekly": None,
-            "days_to_next_weekly": None,
+            "expiry_weekly": wk_date.strftime("%d-%b-%Y").upper(),
+            "days_to_weekly": (wk_date - _today).days,
+            "expiry_next_weekly": nx_date.strftime("%d-%b-%Y").upper(),
+            "days_to_next_weekly": (nx_date - _today).days,
             "expiry_monthly": None,
             "days_to_monthly": None,
             "ema_5": indicators.get("ema_5"),
@@ -527,21 +603,23 @@ class Enricher:
                 levels.append(r[2])
         return levels
 
-    def _get_weekly_expiry(self) -> str:
+    def _weekly_expiry_date(self):
+        # Weekly option expiry weekday: NIFTY=Tuesday(1), SENSEX=Thursday(3).
+        # NOTE: exchange expiry-day rules change periodically and holiday shifts
+        # are not handled here — this is a calendar approximation. The broker
+        # contract master (TokenResolver) is authoritative when available.
+        dow = {"NIFTY": 1, "SENSEX": 3}.get(self.instrument, 1)
         today = date.today()
-        days_ahead = 1 - today.weekday()  # Tuesday = 1
+        days_ahead = dow - today.weekday()
         if days_ahead <= 0:
             days_ahead += 7
-        next_tue = today + timedelta(days=days_ahead)
-        return next_tue.strftime("%d-%b-%Y").upper()
+        return today + timedelta(days=days_ahead)
+
+    def _get_weekly_expiry(self) -> str:
+        return self._weekly_expiry_date().strftime("%d-%b-%Y").upper()
 
     def _get_weekly_expiry_short(self) -> str:
-        today = date.today()
-        days_ahead = 1 - today.weekday()
-        if days_ahead <= 0:
-            days_ahead += 7
-        next_tue = today + timedelta(days=days_ahead)
-        return next_tue.strftime("%d%b%y").upper()
+        return self._weekly_expiry_date().strftime("%d%b%y").upper()
 
 
 def _init_ema_hook():

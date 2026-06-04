@@ -6,6 +6,8 @@ Uses existing cred.yml (Shoonya) and tokens.json (Flattrade).
 
 import sys
 import os
+import json
+import subprocess
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -39,7 +41,7 @@ def fetch_shoonya_margin():
     try:
         sys.path.insert(0, str(PYTHON_TRADER))
 
-        from varaha_auth import VarahaConnect
+        from varaha.varaha_auth import VarahaConnect
 
         varaha = VarahaConnect()
         if varaha.start_session():  # Uses cred.yml from 7:00 AM refresh
@@ -69,21 +71,148 @@ def fetch_shoonya_margin():
 
 
 def fetch_flattrade_margin():
-    """Fetch Flattrade margin using tokens.json refreshed at 7:00 AM."""
-    logger.info("=" * 70)
-    logger.info("FLATTRADE MARGIN FETCH")
-    logger.info("=" * 70)
+    """Fetch Flattrade margin — runs in subprocess to avoid module conflicts with Shoonya."""
+    import subprocess
+
+    script = (
+        """
+import json, sys
+from datetime import datetime
+from pathlib import Path
+
+PYTHON_TRADER = Path('"""
+        + str(PYTHON_TRADER)
+        + """')
+FT_CREDS = PYTHON_TRADER / 'FlattradeApi' / 'tokens.json'
+
+ft_tokens = json.loads(FT_CREDS.read_text())
+sys.path.insert(0, str(PYTHON_TRADER / 'FlattradeApi-py'))
+from api_helper import NorenApiPy as FlattradeApi
+
+api = FlattradeApi()
+ret = api.set_session(userid='FT055702', accesstoken=ft_tokens.get('access_token'))
+if not ret:
+    print(json.dumps({'ok': False, 'error': 'login failed'}))
+    sys.exit(1)
+
+limits = api.get_limits()
+if not limits or limits.get('stat') != 'Ok':
+    print(json.dumps({'ok': False, 'error': limits.get('emsg', 'get_limits failed')}))
+    sys.exit(1)
+
+cash = float(limits.get('cash', 0))
+used = float(limits.get('marginused', 0))
+col = float(limits.get('collateral', 0))
+grcoll = float(limits.get('grcoll', 0))
+margin_avail = float(limits.get('marginavailable', limits.get('marginallowed', cash + col)))
+free = margin_avail - used
+
+result = {
+    'ok': True,
+    'timestamp': datetime.now().isoformat(),
+    'total_margin_available': margin_avail,
+    'used_margin': used,
+    'free_margin': free,
+    'cash_available': cash,
+    'collateral_value': col,
+    'gross_collateral': grcoll,
+    'account_id': limits.get('actid', 'FT055702'),
+}
+print(json.dumps(result))
+"""
+    )
 
     try:
-        sys.path.insert(0, str(PYTHON_TRADER))
+        output = subprocess.check_output(
+            [sys.executable, "-c", script],
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+        data = json.loads(output.strip().split("\n")[-1])
+        if not data.get("ok"):
+            logger.error("❌ Flattrade margin: %s", data.get("error", "unknown"))
+            return False
 
-        # TODO: Implement Flattrade margin fetch
-        # For now, log placeholder
-        logger.info("ℹ️  Flattrade margin: placeholder (TODO: implement broker_limits for FT)")
+        ft_limits_file = Path(__file__).parent / "data" / "broker_limits_flattrade.json"
+        ft_limits_file.parent.mkdir(parents=True, exist_ok=True)
+        ft_limits_file.write_text(json.dumps(data, indent=2))
+
+        logger.info(
+            "✅ Flattrade margin: %s (free: %s, used: %s)",
+            format_inr(data["total_margin_available"]),
+            format_inr(data["free_margin"]),
+            format_inr(data["used_margin"]),
+        )
+        logger.info("   Saved to %s", ft_limits_file)
+        return True
+
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Flattrade margin: subprocess timed out")
         return False
+    except Exception as e:
+        logger.error("❌ Flattrade margin error: %s", e)
+        return False
+
+        ft_tokens = _json.loads(ft_creds_file.read_text())
+
+        sys.path.insert(0, str(PYTHON_TRADER / "FlattradeApi-py"))
+        from api_helper import NorenApiPy as FlattradeApi
+
+        api = FlattradeApi()
+        ret = api.set_session(
+            userid="FT055702",
+            accesstoken=ft_tokens.get("access_token"),
+        )
+
+        if not ret:
+            logger.error("❌ Flattrade login failed")
+            return False
+
+        limits_resp = api.get_limits()
+        if not limits_resp or limits_resp.get("stat") != "Ok":
+            logger.error("❌ Flattrade get_limits failed: %s", limits_resp)
+            return False
+
+        cash = float(limits_resp.get("cash", 0))
+        used = float(limits_resp.get("marginused", 0))
+        col = float(limits_resp.get("collateral", 0))
+        grcoll = float(limits_resp.get("grcoll", 0))
+
+        margin_avail = float(
+            limits_resp.get(
+                "marginavailable", limits_resp.get("marginallowed", cash + col)
+            )
+        )
+        free = margin_avail - used
+
+        limits_data = {
+            "timestamp": datetime.now().isoformat(),
+            "total_margin_available": margin_avail,
+            "used_margin": used,
+            "free_margin": free,
+            "cash_available": cash,
+            "collateral_value": col,
+            "gross_collateral": grcoll,
+            "account_id": limits_resp.get("actid", "FT055702"),
+        }
+
+        ft_limits_file = Path(__file__).parent / "data" / "broker_limits_flattrade.json"
+        ft_limits_file.parent.mkdir(parents=True, exist_ok=True)
+        ft_limits_file.write_text(_json.dumps(limits_data, indent=2))
+
+        logger.info(
+            f"✅ Flattrade margin: {format_inr(margin_avail)} "
+            f"(free: {format_inr(free)}, used: {format_inr(used)})"
+        )
+        logger.info(f"   Saved to {ft_limits_file}")
+        return True
 
     except Exception as e:
         logger.error(f"❌ Flattrade margin error: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         return False
 
 

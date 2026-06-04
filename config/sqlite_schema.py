@@ -241,6 +241,8 @@ def init_option_prices_schema(conn: sqlite3.Connection):
             strike      INTEGER NOT NULL,
             option_type TEXT NOT NULL CHECK (option_type IN ('CE', 'PE')),
             ltp         REAL,
+            oi          REAL,
+            volume      REAL,
             timestamp   TEXT NOT NULL
         )
     """)
@@ -248,6 +250,11 @@ def init_option_prices_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_option_prices_strike
         ON option_prices(strike, option_type)
     """)
+    # Additive migration for pre-existing DBs (oi/volume added 2026-06-03).
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(option_prices)")}
+    for col in ("oi", "volume"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE option_prices ADD COLUMN {col} REAL")
     conn.commit()
 
 

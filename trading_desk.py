@@ -1,33 +1,5 @@
-"""
-
-import sys
-import os
-import json
-import logging
-import time
-import threading
-from pathlib import Path
-from datetime import datetime as _dt, timedelta
-from typing import Dict, Optional, List, Tuple, Any
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
-            import math
-        import duckdb
-        from pathlib import Path
-    from tools.contract_tools import get_weekly_expiry, build_tsym
-    from backtester import IronFlyBacktester
-    from brahmand.order_routing import place_order
-    from brahmand.order_routing import modify_order
-    from brahmand.order_routing import cancel_order
-        from agent_registry import register_trading_desk_agents
-        from tools_registry import register_trading_desk_tools
-    import argparse
-from dotenv import load_dotenv
-
 #!/usr/bin/env python3
+"""
 Antariksh Trading Desk — Unified Multi-Agent Options Trading System.
 
 Full Desk Hierarchy (State Machine):
@@ -44,22 +16,35 @@ Information Flows (Conveyor Belt):
   Risk → Executioner:    Modify/Cancel/Exit Commands
   Shifter → Researcher:  Leg Shift Proposal (theta exhausted → new strike)
 
-Listen Triggers (Event-Driven):
-  Risk Agent listens to event_handler_order_update → CANCEL opposite on TP fill
-  Risk Agent listens to event_handler_feed_update   → MODIFY on TSL breach
-  Executioner listens to Risk Agent Commands         → execute & report back
-
 Usage:
     python trading_desk.py --mock --vix 18.5 --nifty 24500 --time 10:30
     python trading_desk.py --mock --full-session
     python trading_desk.py --show-flows
 """
 
+import sys
+import os
+import json
+import math
+import logging
+import time
+import threading
+import argparse
+from pathlib import Path
+from datetime import datetime as _dt, timedelta
+from typing import Dict, Optional, List, Tuple, Any
+from dataclasses import dataclass, field
+from enum import Enum, auto
+
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader"))
 sys.path.insert(0, str(PROJECT_ROOT.parent / "python-trader" / "Shoonya_oAuthAPI-py"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+from dotenv import load_dotenv
 
 # ======================================================================
 # LLM Configuration
@@ -372,34 +357,13 @@ def engine_scout_regime(
 
 
 def _read_live_market_data():
-    """Read latest row from capture pipeline (Penguin SQLite → legacy DuckDB fallback).
+    """Read latest enriched bar from the Penguin capture pipeline.
 
     Returns tuple (adx, supertrend_direction, india_vix, spot) or None on failure.
+    (The legacy varaha_data.duckdb fallback was removed — that file is no longer
+    written, so it would silently serve stale data masquerading as live.)
     """
-    row = _read_penguin_sqlite()
-    if row:
-        return row
-
-    try:
-        db_path = Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb")
-        if not db_path.exists():
-            logger.warning("SCOUT: DuckDB not found at %s", db_path)
-            return None
-
-        con = duckdb.connect(":memory:")
-        con.execute(f"ATTACH '{db_path}' AS live (READ_ONLY)")
-        row = con.execute("""
-            SELECT adx, supertrend_direction, india_vix, spot
-            FROM live.market_data
-            WHERE adx IS NOT NULL AND india_vix IS NOT NULL
-            ORDER BY id DESC
-            LIMIT 1
-        """).fetchone()
-        con.close()
-        return row
-    except Exception as e:
-        logger.warning("SCOUT: DuckDB query failed: %s", e)
-        return None
+    return _read_penguin_sqlite()
 
 
 def _read_penguin_sqlite():
@@ -566,6 +530,8 @@ def engine_execute_basket(order: AuthorizedOrder = None) -> HandoffReport:
     spec = order.spec
     legs = spec.get("legs", [])
     instrument = spec.get("instrument", "NIFTY")
+    from tools.contract_tools import get_weekly_expiry, build_tsym
+
     fills = []
     order_ids = {}
     tsyms = {}
@@ -1067,6 +1033,8 @@ def researcher_backtest_shift() -> str:
         "max_loss": max_loss,
         "lots": lots,
     }
+    from backtester import IronFlyBacktester
+
     bt = IronFlyBacktester.backtest_iron_fly(new_plan, exit_spot=spot)
     pnl = bt.get("pnl_inr", 0) if bt else 0
 
@@ -1146,6 +1114,8 @@ def order_agent_place_order(
     Returns: order_id, status, execution_time.
     """
 
+    from brahmand.order_routing import place_order
+
     result = place_order(
         symbol=symbol,
         action_type=action_type,
@@ -1175,6 +1145,8 @@ def order_agent_modify_order(
     Returns: order_id, status.
     """
 
+    from brahmand.order_routing import modify_order
+
     result = modify_order(order_id=order_id, new_trigger=new_trigger, reason=reason)
 
     logger.info(
@@ -1192,6 +1164,8 @@ def order_agent_cancel_order(order_id: str, reason: str = "") -> str:
     Action: Cancel order in ledger (PAPER) or call broker API (LIVE).
     Returns: order_id, status.
     """
+
+    from brahmand.order_routing import cancel_order
 
     result = cancel_order(order_id=order_id, reason=reason)
 
@@ -1875,6 +1849,9 @@ def test_listen_triggers() -> Dict:
 def _initialize_registries():
     """Initialize agent and tools registries."""
     try:
+        from agent_registry import register_trading_desk_agents
+        from tools_registry import register_trading_desk_tools
+
         register_trading_desk_agents()
         register_trading_desk_tools()
         logger.info("[REGISTRY] Agent and Tools registries initialized")

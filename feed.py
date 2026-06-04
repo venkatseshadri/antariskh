@@ -9,7 +9,7 @@ Architecture:
 
 Option feed: subscribes to NIFTY weekly ATM ±5 strikes on first tick.
 Rebalances window when NIFTY spot crosses ±50 strike boundary.
-Raw LTPs published to feed:NIFTY:options Redis stream.
+Latest option LTPs published to feed:{instrument}:options:ltp Redis hash (one field per strike).
 
 Runs 09:14→23:35 Mon–Fri (superset window for NSE/BSE + MCX).
 Window filter in on_tick drops ticks outside each instrument's market hours.
@@ -47,9 +47,9 @@ from api_helper import NorenApiPy
 
 CRED_FILE = SHOONYA_DIR / "cred.yml"
 INSTRUMENTS_FILE = PROJECT_ROOT / "config" / "instruments.yaml"
-# 5-day cap: MCX ~14.25h/day × 66 ticks/min (peak) × 5 days ≈ 282,150
-# With 25% buffer: 352,688 → round to 360,000
-REDIS_CAP = 360_000
+# Producer emits 1-min OHLCV bars (not raw ticks) → ≈1 entry/min/instrument.
+# 7 trading days × ~855 min/day (MCX, the longest session) ≈ 5,985 → 7,000 with buffer.
+REDIS_CAP = 7000
 
 
 def load_instruments() -> dict:
@@ -81,6 +81,39 @@ def normalize(msg: dict, instrument: str) -> dict:
         "volume": float(msg.get("v", 0) or 0),
         "ltp": float(msg.get("lp", 0) or 0),
     }
+
+
+_minute_bars = {}  # instrument → in-progress 1-min OHLCV bar
+
+
+def bucket_minute(instrument: str, tick: dict) -> dict | None:
+    """Fold a tick into the instrument's current 1-min bar.
+
+    Returns the completed bar when the minute rolls over (i.e. the first tick of
+    a new minute arrives), else None. One in-progress bar held per instrument.
+    """
+    minute = tick["timestamp"][:16]  # YYYY-MM-DDTHH:MM
+    ltp = tick.get("close", 0) or 0
+    cur = _minute_bars.get(instrument)
+    if cur is not None and minute == cur["timestamp"][:16]:
+        cur["high"] = max(cur["high"], ltp)
+        cur["low"] = min(cur["low"], ltp)
+        cur["close"] = ltp
+        cur["volume"] = (cur.get("volume", 0) or 0) + (tick.get("volume", 0) or 0)
+        cur["ltp"] = ltp
+        return None
+    completed = cur  # None on first tick; previous bar on minute rollover
+    _minute_bars[instrument] = {
+        "timestamp": minute + ":00",
+        "instrument": instrument,
+        "open": tick.get("open", ltp) or ltp,
+        "high": tick.get("high", ltp) or ltp,
+        "low": tick.get("low", ltp) or ltp,
+        "close": ltp,
+        "volume": tick.get("volume", 0) or 0,
+        "ltp": ltp,
+    }
+    return completed
 
 
 def build_token_map(instruments: list) -> dict:
@@ -222,25 +255,52 @@ def _rebalance_option_window(api, r, instrument: str, new_atm: int):
     )
     r.set(f"feed:{instrument}:options:window", json.dumps(valid_strikes))
 
+    # Drop strikes that left the window from the LTP snapshot hash
+    if to_drop:
+        r.hdel(f"feed:{instrument}:options:ltp", *to_drop)
+
 
 def _publish_option_tick(r, opt: dict, instrument: str):
     """Push raw option LTP to per-instrument Redis stream."""
     ot = opt.get("opt_type", "")
     if not ot:
         ot = "CE" if opt["tsym"].endswith("CE") else "PE"
-    r.lpush(
-        f"feed:{instrument}:options",
+    # One field per strike, overwritten in place — latest LTP only.
+    # O(strikes) for downstream, not O(ticks): no list growth, no rescan.
+    r.hset(
+        f"feed:{instrument}:options:ltp",
+        opt["tsym"],
         json.dumps(
             {
                 "tsym": opt["tsym"],
                 "strike": opt["strike"],
                 "option_type": ot,
                 "ltp": float(opt.get("ltp", 0)),
+                "oi": float(opt.get("oi", 0) or 0),
+                "volume": float(opt.get("volume", 0) or 0),
                 "timestamp": datetime.now(IST).isoformat(),
             }
         ),
     )
-    r.ltrim(f"feed:{instrument}:options", 0, 500_000)
+
+
+def _apply_option_tick(opt: dict, msg: dict) -> dict:
+    """Fold a WS tick into an option's running state (in place).
+
+    Only overwrite ltp with a real (>0) price. Shoonya depth / stale / re-subscribe
+    packets can arrive without an 'lp' field; an unconditional assignment would
+    clobber the last good price to 0.0 — the bug behind option_prices ltp=0.0
+    (seen as all-zero NIFTY *or* SENSEX snapshots depending on tick timing).
+    oi/volume are likewise guarded: update only when the field is present.
+    """
+    lp = float(msg.get("lp", 0) or 0)
+    if lp > 0:
+        opt["ltp"] = lp
+    if "oi" in msg:
+        opt["oi"] = float(msg.get("oi") or 0)
+    if "v" in msg:
+        opt["volume"] = float(msg.get("v") or 0)
+    return opt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -296,13 +356,12 @@ def main():
     def on_tick(msg):
         exchange = msg.get("e", "")
         token = msg.get("tk", "")
-        ltp_val = float(msg.get("lp", 0))
 
         # ── Option token branch (NIFTY + SENSEX) ────────────────────────────
         for inst, state in _option_state.items():
             if token in state["token_map"]:
                 opt = state["token_map"][token]
-                opt["ltp"] = ltp_val
+                _apply_option_tick(opt, msg)  # guards ltp against lp-less ticks
                 _publish_option_tick(r, opt, inst)
                 return  # Option tick — skip bucketing.
 
@@ -319,10 +378,15 @@ def main():
 
         bar = normalize(msg, instrument)
         feed_key = f"feed:{instrument}"
-        r.lpush(feed_key, json.dumps(bar))
-        r.ltrim(feed_key, 0, REDIS_CAP)
 
-        # per-instrument heartbeat (120s TTL)
+        # Aggregate ticks into 1-min OHLCV bars here; push only completed bars
+        # (≈1/min) instead of every tick. Consumer persists them as-is.
+        completed = bucket_minute(instrument, bar)
+        if completed is not None:
+            r.lpush(feed_key, json.dumps(completed))
+            r.ltrim(feed_key, 0, REDIS_CAP)
+
+        # per-instrument heartbeat (120s TTL) — every tick, for liveness
         r.set(f"feed:{instrument}:heartbeat", bar["timestamp"], ex=120)
 
         # ── ATM shift check (NIFTY + SENSEX) ────────────────────────────────

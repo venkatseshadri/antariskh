@@ -159,6 +159,48 @@ def run(scenario: str, the_date: str | None, with_kickoff: bool) -> int:
                  and latest_st[2] not in (None, ""))
         results.append(("enriched st_consensus non-empty (F2)", st_ok, f"{latest_st}"))
 
+        # E4: VIX-null auto-enter guard (bug #4). Two assertions:
+        #   (a) Sandbox: india_vix must be populated on the latest enriched bar.
+        #       Today this is 100% NULL because no broker stub is wired — stays
+        #       RED until a sandbox VIX source lands.
+        #   (b) Gate: brahmand/unicorn_debate._deterministic_fallback must
+        #       fail-closed when vix is None. Today it auto-enters
+        #       (`vix is None or vix<20`) — stays RED until the live gate is
+        #       fixed to `isinstance(vix,(int,float)) and vix<20`.
+        # See sim/tests/test_vix_null_guard.py for the regression detail.
+        vix_total, vix_null = _sql(db,
+            "SELECT COUNT(*), SUM(CASE WHEN india_vix IS NULL THEN 1 ELSE 0 END) "
+            "FROM market_data_enriched")
+        vix_null = vix_null or 0
+        results.append(("india_vix populated in sandbox (E4)",
+                        vix_total > 0 and vix_null < vix_total,
+                        f"{vix_null}/{vix_total} NULL"))
+
+        gate_ok = False
+        gate_detail = "import-skipped"
+        try:
+            import sys as _sys
+            _bp = str(ROOT.parent / "brahmand")
+            if _bp not in _sys.path:
+                _sys.path.insert(0, _bp)
+            from unicorn_debate import _deterministic_fallback as _df
+            _raw = {"trend": {"timeframes": {
+                        "5m": {"st_consensus": "bullish"},
+                        "15m": {"st_consensus": "bullish"},
+                        "30m": {"st_consensus": "bullish"},
+                        "60m": {"st_consensus": "bullish"},
+                        "1m_v3.1": {"st_consensus": "bullish",
+                                    "ema_position": "bullish"}}},
+                    "macro": {"indicators": {"session_phase": "mid",
+                                              "vix": None}}}
+            decision = _df(_raw, "NOT_DOWN",
+                           {"signal": "NOT_DOWN", "strategy": "BULL_CALL"})
+            gate_ok = decision.get("go") is False
+            gate_detail = f"go={decision.get('go')} source={decision.get('source')}"
+        except Exception as e:
+            gate_detail = f"probe-error: {e}"
+        results.append(("vix=None gate fails-closed (E4)", gate_ok, gate_detail))
+
         # 3) optional: real CrewAI kickoff against the sandbox
         if with_kickoff:
             subprocess.run(["bash", redis_sh, "stop", str(sim_root), REDIS_PORT],

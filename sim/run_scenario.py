@@ -43,6 +43,13 @@ SCENARIOS = {
         "source_db": PROD_DB,
         "date": None,
     },
+    "position_cache": {
+        "desc": "Seed a discretionary assessment → assert the REAL "
+                "position_manager._discretionary_actions applies it (cached-research hot path)",
+        "instrument": "NIFTY",
+        "source_db": None,
+        "date": None,
+    },
 }
 
 
@@ -328,6 +335,57 @@ def run_lifecycle(the_date: str | None) -> int:
     return 0 if failed == 0 else 1
 
 
+def run_position_cache(the_date: str | None) -> int:
+    """Prove the position-manager hot path applies cached discretionary research:
+    seed an assessment into the sandbox cache, then assert the REAL
+    position_manager._discretionary_actions returns it (cache HIT) and falls through
+    on an unknown trade (MISS). Hermetic — the HIT path needs no DB/LLM."""
+    sim_root = ROOT / "sim" / f"run_position_cache_{int(time.time())}"
+    for sub in ("data", "data/state", "logs"):
+        (sim_root / sub).mkdir(parents=True, exist_ok=True)
+
+    env = {**os.environ, "SIM_MODE": "1", "SIM_ROOT": str(sim_root),
+           "SIM_REDIS_PORT": REDIS_PORT,
+           "BRAHMAND_SANDBOX": str(sim_root / "data"),
+           "PYTHONPATH": "/home/trading_ceo:/home/trading_ceo/brahmand"}
+
+    print(f"\n=== PORCUPINE scenario: position_cache ===\n{SCENARIOS['position_cache']['desc']}\n"
+          f"SIM_ROOT={sim_root}\n")
+    results = []
+
+    drv = subprocess.run(
+        [sys.executable, str(ROOT / "sim" / "position_cache_driver.py")],
+        cwd="/home/trading_ceo/brahmand", env=env,
+        capture_output=True, text=True, timeout=180)
+    out = (drv.stdout or "") + "\n" + (drv.stderr or "")
+    (sim_root / "logs" / "position_cache_driver.out").write_text(out)
+
+    payload = None
+    for line in (drv.stdout or "").splitlines():
+        if line.startswith("PC_RESULT "):
+            payload = __import__("json").loads(line[len("PC_RESULT "):])
+            break
+
+    if payload is None:
+        results.append(("position-cache driver produced a verdict", False,
+                        f"rc={drv.returncode}; see logs/position_cache_driver.out"))
+    else:
+        results.append(("cache HIT → run_bridge applies the cached assessment",
+                        payload["hit_matches"], f"hit={payload['hit']}"))
+        results.append(("cache MISS/unknown trade → live recompute (not cached)",
+                        payload["miss_differs"], ""))
+
+    print("\n--- assertions ---")
+    failed = 0
+    for name, ok, detail in results:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name:54s} {detail}")
+        if not ok:
+            failed += 1
+    verdict = "PASS" if failed == 0 else f"FAIL ({failed} failed)"
+    print(f"\n=== position_cache: {verdict} ===  (SIM_ROOT kept: {sim_root})\n")
+    return 0 if failed == 0 else 1
+
+
 def run_multitf_trend(the_date: str | None) -> int:
     """Bug #3b end-to-end: drive the REAL v4 queue aggregator over real 1-min bars
     in the sandbox and assert the v4 per-index DuckDB (the table the trend agent
@@ -419,6 +477,8 @@ def main():
         sys.exit(run_lifecycle(a.date))
     if a.scenario == "multitf_trend":
         sys.exit(run_multitf_trend(a.date))
+    if a.scenario == "position_cache":
+        sys.exit(run_position_cache(a.date))
     sys.exit(run(a.scenario, a.date, a.with_kickoff))
 
 

@@ -23,6 +23,18 @@ sys.path.insert(0, "/home/trading_ceo/brahmand")
 
 from ema_aggregator import update_ema
 
+# Sandbox awareness (Project PORCUPINE). Prod-safe: when SIM_MODE is unset these
+# return the exact production defaults (redis 6379, no sandbox log dir). Guarded so
+# the live daemon never crashes if the sim package isn't importable in some runtime.
+try:
+    from sim.sim_env import redis_kwargs as _sim_redis_kwargs, log_dir as _sim_log_dir
+except Exception:  # pragma: no cover - prod fallback
+    def _sim_redis_kwargs():
+        return {"host": "localhost", "port": 6379, "db": 0, "decode_responses": True}
+
+    def _sim_log_dir():
+        return None
+
 
 class MultiTFAggregatorQueue:
     """Aggregate 1-min OHLCV from queue to multiple timeframes."""
@@ -41,19 +53,17 @@ class MultiTFAggregatorQueue:
         # Track last EMA-updated bar to prevent duplicate feeding every 60s cycle
         self._last_ema_ts = None
 
-        # Initialize Redis connection
+        # Initialize Redis connection (sandbox-aware: test instance under SIM_MODE)
         self.redis_client = None
         try:
-            self.redis_client = redis.Redis(
-                host="localhost", port=6379, db=0, decode_responses=True
-            )
+            self.redis_client = redis.Redis(**_sim_redis_kwargs())
             self.redis_client.ping()
             self.log("✅ Redis queue connected")
         except Exception as e:
             self.log(f"⚠️ Redis connection failed: {e}")
 
-        # Initialize log file path
-        self.log_dir = Path("/home/trading_ceo/brahmand/logs")
+        # Initialize log file path (sandbox log dir under SIM_MODE, else prod)
+        self.log_dir = _sim_log_dir() or Path("/home/trading_ceo/brahmand/logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize table if needed

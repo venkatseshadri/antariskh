@@ -36,6 +36,13 @@ SCENARIOS = {
         "source_db": None,
         "date": None,
     },
+    "multitf_trend": {
+        "desc": "Feed real 1-min bars → real v4 aggregator → assert the v4 per-index "
+                "DuckDB st_consensus is computed (not hardcoded NEUTRAL) — bug #3b E2E",
+        "instrument": "NIFTY",
+        "source_db": PROD_DB,
+        "date": None,
+    },
 }
 
 
@@ -321,6 +328,80 @@ def run_lifecycle(the_date: str | None) -> int:
     return 0 if failed == 0 else 1
 
 
+def run_multitf_trend(the_date: str | None) -> int:
+    """Bug #3b end-to-end: drive the REAL v4 queue aggregator over real 1-min bars
+    in the sandbox and assert the v4 per-index DuckDB (the table the trend agent
+    reads) gets a COMPUTED st_consensus — not the old hardcoded "NEUTRAL". Fully
+    hermetic: test Redis + sandbox DuckDB + sandbox EMA state (BRAHMAND_SANDBOX)."""
+    inst = "NIFTY"
+    src = PROD_DB
+    sim_root = ROOT / "sim" / f"run_multitf_trend_{int(time.time())}"
+    for sub in ("data", "logs", "redis"):
+        (sim_root / sub).mkdir(parents=True, exist_ok=True)
+
+    # Default to the latest date present in the source capture DB.
+    the_date = the_date or _sql(src, "SELECT MAX(substr(timestamp,1,10)) FROM market_data "
+                                    "WHERE instrument='NIFTY'")[0]
+
+    env = {**os.environ, "SIM_MODE": "1", "SIM_ROOT": str(sim_root),
+           "SIM_REDIS_PORT": REDIS_PORT,
+           "BRAHMAND_SANDBOX": str(sim_root / "data"),
+           "PYTHONPATH": "/home/trading_ceo:/home/trading_ceo/brahmand"}
+    redis_sh = str(ROOT / "sim" / "start_test_redis.sh")
+
+    print(f"\n=== PORCUPINE scenario: multitf_trend ===\n{SCENARIOS['multitf_trend']['desc']}\n"
+          f"SIM_ROOT={sim_root} date={the_date}\n")
+    results = []
+    try:
+        subprocess.run(["bash", redis_sh, "start", str(sim_root), REDIS_PORT],
+                       check=True, capture_output=True)
+        drv = subprocess.run(
+            [sys.executable, str(ROOT / "sim" / "v4_aggregator_driver.py"),
+             "--source-db", src, "--date", the_date, "--index", inst],
+            cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
+        out = (drv.stdout or "") + "\n" + (drv.stderr or "")
+        (sim_root / "logs" / "v4_driver.out").write_text(out)
+
+        payload = None
+        for line in (drv.stdout or "").splitlines():
+            if line.startswith("V4_RESULT "):
+                payload = __import__("json").loads(line[len("V4_RESULT "):])
+                break
+
+        if payload is None:
+            results.append(("v4 driver produced a verdict", False,
+                            f"rc={drv.returncode}; see logs/v4_driver.out"))
+        else:
+            by_tf = payload["by_tf"]
+            results.append(("real 1-min bars fed", payload["bars"] > 50, f"{payload['bars']} bars"))
+            # st_consensus rows exist for 5m & 15m
+            pop = all(sum(by_tf.get(str(tf), {}).values()) > 0 for tf in (5, 15))
+            results.append(("v4 DuckDB st_consensus populated (5m,15m)", pop, f"{by_tf}"))
+            # THE bug #3b proof: not all "NEUTRAL" — a real direction was computed.
+            directional = sum(
+                v for tf in (5, 15, 30, 60)
+                for k, v in by_tf.get(str(tf), {}).items()
+                if str(k).upper() in ("BULLISH", "BEARISH")
+            )
+            results.append(("st_consensus is computed, not hardcoded NEUTRAL (bug #3b)",
+                            directional > 0, f"{directional} directional bars"))
+    except Exception as e:
+        results.append(("orchestration completed", False, f"ERROR: {e}"))
+    finally:
+        subprocess.run(["bash", redis_sh, "stop", str(sim_root), REDIS_PORT],
+                       capture_output=True)
+
+    print("\n--- assertions ---")
+    failed = 0
+    for name, ok, detail in results:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name:52s} {detail}")
+        if not ok:
+            failed += 1
+    verdict = "PASS" if failed == 0 else f"FAIL ({failed} failed)"
+    print(f"\n=== multitf_trend: {verdict} ===  (SIM_ROOT kept: {sim_root})\n")
+    return 0 if failed == 0 else 1
+
+
 def main():
     p = argparse.ArgumentParser(description="PORCUPINE scenario runner")
     p.add_argument("scenario", nargs="?", help="scenario name")
@@ -336,6 +417,8 @@ def main():
         print(f"unknown scenario: {a.scenario}"); sys.exit(2)
     if a.scenario == "lifecycle":
         sys.exit(run_lifecycle(a.date))
+    if a.scenario == "multitf_trend":
+        sys.exit(run_multitf_trend(a.date))
     sys.exit(run(a.scenario, a.date, a.with_kickoff))
 
 

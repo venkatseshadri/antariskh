@@ -1,0 +1,10 @@
+# PORCUPINE runtime state & sandbox artifacts — never commit (code only)
+run_*/
+logs/
+__pycache__/
+.autobuild.lock
+.autobuild_paused
+.autobuild_attempts
+.porcupine_status.json
+.last_p3_root
+.bug*_fixed

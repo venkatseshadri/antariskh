@@ -124,18 +124,23 @@ def run(scenario: str, the_date: str | None, with_kickoff: bool) -> int:
         # F2: deterministic_fallback inputs must be valid, not zero/empty.
         # The entry-agent fallback (brahmand/unicorn_debate._deterministic_fallback)
         # reads avg_super_trend from trend.timeframes[*].st_consensus and session
-        # from macro.indicators.session_phase. PORCUPINE caught both inputs going
-        # empty in the sandbox. Root causes confirmed against happy_path replay:
-        #   1. enrichers/lib/advanced.py:compute_session_metrics uses
-        #      datetime.now() (wall clock) — so a backfill enrich at 21:30
-        #      labels EVERY bar of the day "late". Should derive phase from the
-        #      bar's own timestamp.
-        #   2. market_data_multitf.st_consensus is NULL on every row of every
-        #      timeframe — the multi-TF aggregation never writes indicators in
-        #      the replay path. trend.timeframes[*].st_consensus → None →
-        #      "neutral" → avg_super_trend = 0/0 → 0.
-        # These two assertions stay RED until both upstream gaps are closed;
-        # they are permanent regression guards for the F2 / bug #3 incident.
+        # from macro.indicators.session_phase. PORCUPINE flagged both. The root
+        # causes were re-diagnosed 2026-06-09 (the original notes were wrong on the
+        # st_consensus specifics — see below) and both LIVE bugs are now FIXED:
+        #   1. session_phase: enrichers/lib/advanced.py:compute_session_metrics used
+        #      datetime.now() (wall clock) — a backfill at 21:30 labelled EVERY bar
+        #      "late". FIXED: it now takes the bar's own timestamp (bar_ts param).
+        #      This assertion goes GREEN on a real replay (phases vary across the day).
+        #   2. st_consensus: the original "market_data_multitf.st_consensus is NULL"
+        #      note measured the WRONG table. The consumer's SQLite market_data_multitf
+        #      is OHLCV-ONLY BY DESIGN (it never writes indicators). The trend agent
+        #      reads st_consensus from the v4 PER-INDEX DuckDB
+        #      (market_data_multitf_<index>.duckdb), which IS populated — but the v4
+        #      aggregator HARDCODED st_consensus="NEUTRAL" (a "# Legacy" stub; a real
+        #      SuperTrend was never wired). FIXED: data_capture_v4_queue_aggregator now
+        #      computes a proper ATR-band SuperTrend. That fix is validated by
+        #      sim/tests/test_supertrend_consensus.py (the v4 aggregator path is not
+        #      run in this SQLite replay, so we do NOT re-assert it here).
         phases = [r[0] for r in sqlite3.connect(db).execute(
             "SELECT DISTINCT session_phase FROM market_data_enriched "
             "WHERE session_phase IS NOT NULL AND session_phase != ''"
@@ -143,17 +148,17 @@ def run(scenario: str, the_date: str | None, with_kickoff: bool) -> int:
         results.append(("session_phase varies across day (F2)", len(phases) >= 2,
                         f"distinct={phases}"))
 
+        # The SQLite market_data_multitf is OHLCV-only by design; assert it carries
+        # bars (its actual contract), NOT indicators. The st_consensus trend signal
+        # the agent consumes lives in the v4 per-index DuckDB — see the test above.
         mtf_rows = sqlite3.connect(db).execute(
-            "SELECT timeframe_min, "
-            "SUM(CASE WHEN st_consensus IS NOT NULL THEN 1 ELSE 0 END), COUNT(*) "
-            "FROM market_data_multitf GROUP BY timeframe_min"
+            "SELECT timeframe_min, COUNT(*) FROM market_data_multitf "
+            "WHERE timeframe_min IN (5, 15) GROUP BY timeframe_min"
         ).fetchall()
-        mtf_5_15 = {tf: (filled, total) for tf, filled, total in mtf_rows if tf in (5, 15)}
-        five = mtf_5_15.get(5, (0, 0))
-        fifteen = mtf_5_15.get(15, (0, 0))
-        mtf_ok = five[0] > 0 and fifteen[0] > 0
-        results.append(("multitf st_consensus populated (F2)", mtf_ok,
-                        f"5m={five[0]}/{five[1]} 15m={fifteen[0]}/{fifteen[1]}"))
+        mtf_counts = {tf: n for tf, n in mtf_rows}
+        mtf_ok = mtf_counts.get(5, 0) > 0 and mtf_counts.get(15, 0) > 0
+        results.append(("SQLite multitf carries OHLCV bars (F2; indicators live in v4 DuckDB)",
+                        mtf_ok, f"5m={mtf_counts.get(5, 0)} 15m={mtf_counts.get(15, 0)} rows"))
 
         # F2 belt-and-braces: enriched.st_consensus (single-row mirror used by
         # query_market_data) must be populated on the latest fully-enriched bar.

@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import logging
+import sqlite3
 import sys
 import time
 from datetime import datetime, date, timedelta
@@ -22,6 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.sqlite_schema import open_capture_db, init_enriched_schema
+from sim.sim_env import redis_kwargs  # PORCUPINE: redis target (prod 6379 / sim 6380)
 
 _TEXT_COLS = {
     "timestamp",
@@ -284,6 +286,15 @@ class Enricher:
         self.prev_day_data = None
         self.open_range_high = None
         self.open_range_low = None
+        # Batched enriched writes — see PENGUIN_ENRICHER_LOCK_FIX.md. Rows
+        # accumulate and flush in one BEGIN IMMEDIATE txn so busy_timeout is
+        # honored on write-lock acquisition. _flush_interval=5s yields a per-bar
+        # flush in live mode (bars are 60s apart) and batching only during fast
+        # backfill (the size trigger) — so enriched never lags the 5-min kickoff.
+        self._write_buffer: List[Dict] = []
+        self._last_flush = time.time()
+        self._flush_interval = 5.0
+        self._flush_batch_size = 5
         self._warmup()
 
     def _warmup(self):
@@ -419,6 +430,7 @@ class Enricher:
             pivots.get("pivot_pp"),
             pivots.get("pivot_r1"),
             pivots.get("pivot_s1"),
+            bar.get("timestamp"),
         )
 
         gap_pct = None
@@ -564,18 +576,60 @@ class Enricher:
         return row
 
     def write_enriched(self, row: Dict):
+        """Accumulate the row; persisted by flush_enriched_batch()."""
+        self._write_buffer.append(row)
+
+    def flush_enriched_batch(self):
+        """Write all buffered rows in one BEGIN IMMEDIATE transaction.
+
+        BEGIN IMMEDIATE acquires the write lock up front, where busy_timeout (5s)
+        is honored — fixing the deferred-transaction crash. Retries with backoff
+        on lock contention. On final failure the buffer is KEPT (never dropped)
+        and the error is raised: systemd restarts and re-enriches from the
+        last_enriched_bar_ts checkpoint. Silent drops would leave NULL atm_strike
+        → BRAHMAND "No market data". See PENGUIN_ENRICHER_LOCK_FIX.md.
+        """
+        if not self._write_buffer:
+            return
         placeholders = ", ".join(["?"] * len(ENRICHED_COLUMNS))
         cols = ", ".join(ENRICHED_COLUMNS)
-        values = [row.get(c) for c in ENRICHED_COLUMNS]
-        self.conn.execute(
-            f"INSERT OR REPLACE INTO market_data_enriched ({cols}) VALUES ({placeholders})",
-            values,
-        )
-        self.conn.execute(
-            "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
-            (f"last_enriched_bar_ts:{self.instrument}", row["timestamp"]),
-        )
-        self.conn.commit()
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                self.conn.execute("BEGIN IMMEDIATE")
+                for row in self._write_buffer:
+                    values = [row.get(c) for c in ENRICHED_COLUMNS]
+                    self.conn.execute(
+                        f"INSERT OR REPLACE INTO market_data_enriched ({cols}) VALUES ({placeholders})",
+                        values,
+                    )
+                last_bar = self._write_buffer[-1]
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
+                    (f"last_enriched_bar_ts:{self.instrument}", last_bar["timestamp"]),
+                )
+                self.conn.commit()
+                self._write_buffer.clear()
+                self._last_flush = time.time()
+                return
+            except sqlite3.OperationalError as e:
+                try:
+                    self.conn.rollback()
+                except sqlite3.Error:
+                    pass
+                if attempt < max_retries - 1:
+                    backoff = 0.5 * (2 ** attempt)
+                    log.warning(
+                        f"Enriched flush locked ({e}); retry "
+                        f"{attempt+1}/{max_retries} in {backoff:.1f}s"
+                    )
+                    time.sleep(backoff)
+                else:
+                    log.error(
+                        f"Enriched flush failed after {max_retries} retries — "
+                        f"keeping {len(self._write_buffer)} rows for restart"
+                    )
+                    raise
 
     def _get_vix_history(self) -> List[float]:
         rows = self.conn.execute(
@@ -636,7 +690,7 @@ def _init_ema_hook():
 
 
 def run_live(instrument: str):
-    conn = open_capture_db(instrument)
+    conn = open_capture_db(instrument, autocommit=True)
     init_enriched_schema(conn)
     _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
@@ -647,7 +701,7 @@ def run_live(instrument: str):
     if ema_hook:
         log.info("EMA integration hook loaded")
 
-    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+    r = redis.Redis(**redis_kwargs())
     r.ping()
 
     pubsub = r.pubsub()
@@ -682,6 +736,12 @@ def run_live(instrument: str):
                 enricher.write_enriched(row)
                 bar_count += 1
                 last_ts = row["timestamp"]
+
+                if (
+                    len(enricher._write_buffer) >= enricher._flush_batch_size
+                    or (time.time() - enricher._last_flush) >= enricher._flush_interval
+                ):
+                    enricher.flush_enriched_batch()
 
                 queue_key = f"v3_ohlcv_queue_{instrument}"
                 try:
@@ -728,12 +788,16 @@ def run_live(instrument: str):
     except KeyboardInterrupt:
         log.info("Shutting down")
     finally:
+        try:
+            enricher.flush_enriched_batch()
+        except sqlite3.OperationalError:
+            log.error("Final flush failed — buffered rows not persisted")
         conn.close()
         log.info(f"Enricher stopped — {bar_count} bars enriched")
 
 
 def run_backfill(instrument: str, date_from: str, date_to: str):
-    conn = open_capture_db(instrument)
+    conn = open_capture_db(instrument, autocommit=True)
     init_enriched_schema(conn)
     _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
@@ -766,6 +830,7 @@ def run_backfill(instrument: str, date_from: str, date_to: str):
             if count % 100 == 0:
                 log.info(f"Backfill progress: {count}/{len(rows)}")
 
+    enricher.flush_enriched_batch()
     log.info(f"Backfill complete — {count} bars enriched")
     conn.close()
 

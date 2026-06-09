@@ -1,0 +1,1 @@
+Bug #4 fixed 2026-06-09: unicorn_debate._deterministic_fallback now fails closed on vix=None (isinstance check, no `vix is None or` short-circuit). Verified by sim/tests/test_vix_null_guard.py 6/6 against live code.

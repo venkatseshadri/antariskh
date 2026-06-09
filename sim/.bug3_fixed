@@ -1,0 +1,4 @@
+Bug #3 fixed 2026-06-09 (two live causes):
+  3a session_phase: enrichers/lib/advanced.py:compute_session_metrics now takes bar_ts (derives phase from the bar timestamp, not datetime.now()). Guard: test_fallback_inputs.py 4/4.
+  3b st_consensus: data_capture_v4_queue_aggregator no longer hardcodes "NEUTRAL" — computes a proper ATR-band SuperTrend (the trend agent reads the v4 per-index DuckDB; the SQLite multitf is OHLCV-only by design). Guard: test_supertrend_consensus.py 7/7.
+Board-approved "fix it the correct way".

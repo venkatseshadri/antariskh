@@ -4,26 +4,31 @@ Bug: entry agents falling through to deterministic_fallback with
     avg_super_trend = 0.00, session = ""
 (caught 2026-06-05, e.g. unicorn_debate._deterministic_fallback).
 
-Two upstream gaps cause this. Both are guarded here so the next regression
-fails locally instead of on a live Monday morning.
+Two upstream causes. Both LIVE bugs are now FIXED (2026-06-09); this file guards
+against regression. NOTE: the original root-cause-2 note (below) was WRONG on the
+specifics — corrected here.
 
-ROOT CAUSE 1 — wall-clock session_phase
-    enrichers/lib/advanced.py::compute_session_metrics resolves phase via
-    `datetime.now()`, not the bar's own timestamp. A backfill enrich run at
-    21:30 IST therefore stamps EVERY bar of the trading day with
-    session_phase="late". The fallback's `session = mac_indicators.get(
-    "session_phase", "")` is then constant for the whole day — and `""` if the
-    upstream call leaves the key out.
+ROOT CAUSE 1 — wall-clock session_phase  [FIXED]
+    enrichers/lib/advanced.py::compute_session_metrics resolved phase via
+    `datetime.now()`, not the bar's own timestamp. A backfill enrich at 21:30 IST
+    therefore stamped EVERY bar of the day session_phase="late". FIXED: the function
+    now takes a `bar_ts` argument and derives the phase from the bar's timestamp
+    (falling back to now() only when bar_ts is None). Guarded by
+    test_session_phase_uses_bar_ts below.
 
-ROOT CAUSE 2 — empty multi-TF table
-    market_data_multitf gets rows written for tf=5/15/30/60/240/1440 but
-    every indicator column (st_consensus, sma20, rsi, adx, ...) stays NULL in
-    the replay path. The fallback iterates
-        trend.timeframes[tf].st_consensus → "neutral" → score 0
-    so avg_super_trend collapses to 0/0 → 0.
+ROOT CAUSE 2 — st_consensus hardcoded "NEUTRAL"  [FIXED]  (original note was wrong)
+    The original note claimed "market_data_multitf indicator columns stay NULL in
+    the replay path". That measured the WRONG table: the consumer's SQLite
+    market_data_multitf is OHLCV-ONLY BY DESIGN. The trend agent actually reads
+    st_consensus from the v4 PER-INDEX DuckDB (market_data_multitf_<index>.duckdb),
+    which the v4 queue aggregator populated — but it HARDCODED st_consensus="NEUTRAL"
+    (a "# Legacy" stub; SuperTrend was never wired). So
+        trend.timeframes[tf].st_consensus → "NEUTRAL" → score 0  → avg_super_trend≈0.
+    FIXED: data_capture_v4_queue_aggregator now computes a proper ATR-band SuperTrend.
+    Guarded by sim/tests/test_supertrend_consensus.py.
 
-This file does NOT touch live code (sim+tests sandbox only). Fixes live in
-enrichers/lib/advanced.py and the multi-TF aggregator path.
+This file does NOT touch live code (sim+tests sandbox only). Live fixes live in
+enrichers/lib/advanced.py and data_capture_v4_queue_aggregator.py.
 
 Run: python3 -m sim.tests.test_fallback_inputs   (from antariksh root)
 """
@@ -80,6 +85,34 @@ def test_session_phase_should_track_bar_not_walltime():
     )
 
 
+def test_session_phase_uses_bar_ts():
+    """THE FIX (root cause 1): when a bar timestamp is passed, the phase reflects
+    the BAR's time, NOT the wall clock. Pin now() to 21:30 (a backfill run) and
+    confirm an early-session bar is still labelled by its own 09:20 timestamp —
+    not stamped "late" as the bug did."""
+    pinned_now = datetime(2026, 6, 5, 21, 30, 0)  # backfill time, well after close
+
+    class _PinnedDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return pinned_now
+
+    with patch("enrichers.lib.advanced.datetime", _PinnedDT):
+        early = compute_session_metrics(
+            23500.0, 23400.0, 23450.0, 23430.0, 23500.0, 23380.0,
+            "2026-06-05T09:20:00",
+        )["session_phase"]
+        mid = compute_session_metrics(
+            23500.0, 23400.0, 23450.0, 23430.0, 23500.0, 23380.0,
+            "2026-06-05T12:30:00",
+        )["session_phase"]
+
+    assert early == "early" and mid == "mid", (
+        f"bar_ts ignored — backfill mislabels bars. early={early!r} mid={mid!r}. "
+        "compute_session_metrics must derive the phase from bar_ts, not now()."
+    )
+
+
 def test_session_phase_is_one_of_known_labels():
     """The fallback gate checks `session not in ("preopen", "closing", "")`.
     Make sure the enricher emits a label the gate can recognise. Today the
@@ -129,9 +162,11 @@ def test_fallback_inputs_contract():
 
 if __name__ == "__main__":
     test_session_phase_should_track_bar_not_walltime()
-    print("[PASS] session_phase varies with wall clock (proves the wall-clock dep — fix is to take a bar ts arg)")
+    print("[PASS] session_phase varies with wall clock (now() fallback still works when bar_ts absent)")
+    test_session_phase_uses_bar_ts()
+    print("[PASS] session_phase derives from bar_ts, not now() (root cause 1 FIXED)")
     test_session_phase_is_one_of_known_labels()
     print("[PASS] session_phase vocabulary documented")
     test_fallback_inputs_contract()
     print("[PASS] fallback-inputs contract probe")
-    print("\nfallback-inputs regression: 3/3 passed")
+    print("\nfallback-inputs regression: 4/4 passed")

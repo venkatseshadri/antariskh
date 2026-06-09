@@ -444,8 +444,11 @@ class MultiTFAggregatorQueue:
             "obv": obv,
             "cmf": cmf,
             "cci": cci,
-            # Legacy
-            "st_consensus": "NEUTRAL",
+            # SuperTrend consensus (bug #3 fix — was hardcoded "NEUTRAL", which
+            # left the entry-gate deterministic fallback blind on trend).
+            "st_consensus": self._calculate_supertrend(
+                context_closes, context_highs, context_lows
+            ),
         }
 
     def _calculate_adx(self, closes: list, period: int = 14) -> float:
@@ -493,24 +496,75 @@ class MultiTFAggregatorQueue:
         return round(rsi, 1)
 
     def _calculate_supertrend(
-        self, closes: list, highs: list, lows: list, period: int = 14
+        self,
+        closes: list,
+        highs: list,
+        lows: list,
+        period: int = 10,
+        multiplier: float = 3.0,
     ) -> str:
-        if len(closes) < period:
+        """Proper ATR-band SuperTrend consensus → "BULLISH"/"BEARISH"/"NEUTRAL".
+
+        Standard algorithm: bands = hl2 ± multiplier*ATR(period) with the usual
+        carry-forward (tighten-only) logic; the trend flips only when close
+        crosses the active final band. Returns the latest direction. "NEUTRAL"
+        only when there is insufficient data to establish a trend.
+
+        This replaces the previous close-vs-midpoint proxy AND the hardcoded
+        "NEUTRAL" that left the entry-gate fallback blind on SuperTrend across
+        all timeframes (bug #3). Wilder's ATR; defaults period=10, mult=3.0.
+        """
+        n = len(closes)
+        if n < period + 1 or len(highs) != n or len(lows) != n:
             return "NEUTRAL"
 
-        recent_closes = closes[-period:]
-        recent_high = highs[-1] if highs else max(recent_closes)
-        recent_low = lows[-1] if lows else min(recent_closes)
+        # True Range aligned to bar index i (i>=1); tr[0] unused.
+        tr = [0.0] * n
+        for i in range(1, n):
+            tr[i] = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
 
-        midpoint = (recent_high + recent_low) / 2
-        current_close = recent_closes[-1]
+        # Wilder's ATR, seeded with the simple mean of the first `period` TRs.
+        atr = [None] * n
+        atr[period] = sum(tr[1 : period + 1]) / period
+        for i in range(period + 1, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
 
-        if current_close > midpoint:
-            return "BULLISH"
-        elif current_close < midpoint:
-            return "BEARISH"
-        else:
-            return "NEUTRAL"
+        # Band carry-forward + trend flips.
+        final_upper = [None] * n
+        final_lower = [None] * n
+        direction = 1  # 1 = uptrend (BULLISH), -1 = downtrend (BEARISH)
+        for i in range(period, n):
+            hl2 = (highs[i] + lows[i]) / 2
+            basic_upper = hl2 + multiplier * atr[i]
+            basic_lower = hl2 - multiplier * atr[i]
+
+            if final_upper[i - 1] is None:
+                final_upper[i] = basic_upper
+                final_lower[i] = basic_lower
+                continue
+
+            final_upper[i] = (
+                basic_upper
+                if (basic_upper < final_upper[i - 1] or closes[i - 1] > final_upper[i - 1])
+                else final_upper[i - 1]
+            )
+            final_lower[i] = (
+                basic_lower
+                if (basic_lower > final_lower[i - 1] or closes[i - 1] < final_lower[i - 1])
+                else final_lower[i - 1]
+            )
+
+            if closes[i] > final_upper[i]:
+                direction = 1
+            elif closes[i] < final_lower[i]:
+                direction = -1
+            # else: trend persists
+
+        return "BULLISH" if direction == 1 else "BEARISH"
 
     def _calculate_sma(self, closes: list, period: int) -> float:
         """Calculate Simple Moving Average. Gap-capable (uses all data)."""

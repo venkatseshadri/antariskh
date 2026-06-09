@@ -101,6 +101,19 @@ def compute_historical_volatility(buf) -> Dict:
         return result
 
 
+def _coerce_dt(ts: Optional[object]) -> Optional[datetime]:
+    """Best-effort parse of a bar timestamp (datetime or ISO-ish string) to a
+    datetime. Returns None if it can't, so the caller falls back to now()."""
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        return ts
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "").strip()[:19])
+    except (ValueError, TypeError):
+        return None
+
+
 def compute_session_metrics(
     spot: float,
     open_price: Optional[float],
@@ -108,8 +121,13 @@ def compute_session_metrics(
     pivot_pp: Optional[float],
     pivot_r1: Optional[float],
     pivot_s1: Optional[float],
+    bar_ts: Optional[object] = None,
 ) -> Dict:
-    now = datetime.now()
+    # Derive the phase from the BAR's own timestamp, not wall-clock. A backfill
+    # enrich run (e.g. nightly at 21:30) would otherwise stamp every bar "late"
+    # because datetime.now() is past the close — poisoning session_phase for the
+    # whole day. Live callers pass the live tick ts (or None → now()).
+    now = _coerce_dt(bar_ts) or datetime.now()
     market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
     market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
 

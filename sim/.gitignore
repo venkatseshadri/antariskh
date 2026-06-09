@@ -7,4 +7,5 @@ __pycache__/
 .autobuild_attempts
 .porcupine_status.json
 .last_p3_root
-.bug*_fixed
+# NOTE: .bug*_fixed markers ARE committed (intentionally not ignored) — they
+# durably record that a human-gated live-code fix landed, surviving context loss.

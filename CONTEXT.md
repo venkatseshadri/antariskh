@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-06-09 10:22
+# SESSION CONTEXT — Updated 2026-06-09 23:06
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=16.08, NIFTY=23164.45, Regime=TRENDING_BEAR
+Branch: `master` | Live data: VIX=15.56, NIFTY=23257.75, Regime=TRENDING_BEAR
 
 ## Locations
 ```
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=16.08, NIFTY=23164.45, Regime=TRENDING_BEAR
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-PORCUPINE COMPLETE (9/9): built lifecycle scenario (real position_manager order→monitor→exit, hermetic SL_HIT close, no LLM/broker) + synthetic fault driver + unblocked autobuilder via milestone-design fix
+Fixed PORCUPINE bug #3 (session_phase from bar_ts + real ATR SuperTrend in v4 aggregator — st_consensus was hardcoded NEUTRAL) and bug #4 (VIX-null fails-closed); corrected the two-table market_data_multitf misdiagnosis; all guards green
 
 ## Priority Queue
-Human-gated live-code fixes: bug#3 (session_phase datetime.now + multitf st_consensus NULL) and bug#4 (VIX-null gate fail-closed). Optional: resume autobuilder (will self-terminate at COMPLETE)
+v4 SuperTrend takes effect at aggregator's next start — watch first live kickoffs Mon; optional: wire v4 aggregator into the sim replay (needs its hardcoded redis 6379/log_dir redirected)
 
 ## What's Where (read on demand)
   `trading_desk.py` (1928 lines)
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+58c32e3 docs(porcupine): bug #3/#4 FIXED + corrected root cause (two-table multitf)
+da75681 fix(entry): bug #3 — session_phase from bar ts + real SuperTrend consensus
+45ca05e chore: auto-update session context
 bb66ef9 docs(porcupine): lifecycle done — 9/9 DEVELOPMENT COMPLETE
 41c8f4f porcupine: lifecycle scenario (order→monitor→exit, hermetic, no LLM/broker)
-5cfea49 chore: auto-update session context
-029fa74 docs(porcupine): record fault driver, milestone unblock, resume steps
-ee24e9e porcupine: synthetic fault driver + milestone unblock + track bootstrap code
 ```

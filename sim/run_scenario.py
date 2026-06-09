@@ -29,6 +29,13 @@ SCENARIOS = {
         "source_db": PROD_DB,
         "date": None,  # default = today; override with --date
     },
+    "lifecycle": {
+        "desc": "Seed a paper trade → real position_manager.run_bridge() → assert "
+                "order→monitor→exit closes it (deterministic SL, no LLM, no broker)",
+        "instrument": "NIFTY",
+        "source_db": None,
+        "date": None,
+    },
 }
 
 
@@ -234,6 +241,81 @@ def run(scenario: str, the_date: str | None, with_kickoff: bool) -> int:
     return 0 if failed == 0 else 1
 
 
+def run_lifecycle(the_date: str | None) -> int:
+    """Lifecycle scenario: drive the REAL position_manager past entry into
+    order(paper)→monitor→exit, fully sandboxed, no LLM, no broker.
+
+    Seeds the sandbox option-price sqlite so a sold CE leg has breached its SL,
+    then runs sim/lifecycle_driver.py inside the sandbox (cwd=brahmand) which
+    seeds the trade and calls run_bridge(). The deterministic SL/TP path closes
+    the trade without touching the LLM. Asserts the trade went ACTIVE→closed and
+    booked to trade_history."""
+    inst = "NIFTY"
+    sim_root = ROOT / "sim" / f"run_lifecycle_{int(time.time())}"
+    for sub in ("data", "data/state", "logs"):
+        (sim_root / sub).mkdir(parents=True, exist_ok=True)
+
+    # Seed the sandbox capture sqlite (SIM redirects get_sqlite_capture_path here)
+    # with option_prices the deterministic SL check reads by tsym. Sold CE@160 >=
+    # SL 150 → SL_HIT; hedge CE@55.
+    db = str(sim_root / "data" / f"capture_{inst.lower()}.sqlite")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE IF NOT EXISTS option_prices "
+                "(tsym TEXT, strike INTEGER, option_type TEXT, ltp REAL, "
+                "oi INTEGER, volume INTEGER, timestamp TEXT)")
+    con.executemany(
+        "INSERT INTO option_prices (tsym, strike, option_type, ltp, oi, volume, timestamp) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [("SIM_NIFTY_CE_SELL", 23000, "CE", 160.0, 0, 0, "2026-06-05T14:00:00"),
+         ("SIM_NIFTY_CE_BUY", 23150, "CE", 55.0, 0, 0, "2026-06-05T14:00:00")],
+    )
+    con.commit()
+    con.close()
+
+    env = {**os.environ, "SIM_MODE": "1", "SIM_ROOT": str(sim_root),
+           "SIM_REDIS_PORT": REDIS_PORT,
+           "BRAHMAND_SANDBOX": str(sim_root / "data"),
+           "PYTHONPATH": "/home/trading_ceo:/home/trading_ceo/brahmand"}
+
+    print(f"\n=== PORCUPINE scenario: lifecycle ===\n{SCENARIOS['lifecycle']['desc']}\n"
+          f"SIM_ROOT={sim_root}\n")
+    results = []
+
+    drv = subprocess.run(
+        [sys.executable, str(ROOT / "sim" / "lifecycle_driver.py")],
+        cwd="/home/trading_ceo/brahmand", env=env,
+        capture_output=True, text=True, timeout=180)
+    out = (drv.stdout or "") + "\n" + (drv.stderr or "")
+    (sim_root / "logs" / "lifecycle_driver.out").write_text(out)
+
+    payload = None
+    for line in (drv.stdout or "").splitlines():
+        if line.startswith("LIFECYCLE_RESULT "):
+            payload = __import__("json").loads(line[len("LIFECYCLE_RESULT "):])
+            break
+
+    if payload is None:
+        results.append(("lifecycle driver produced a verdict", False,
+                        f"rc={drv.returncode}; see logs/lifecycle_driver.out"))
+    else:
+        before, after, hist = payload["before"], payload["after"], payload["history"]
+        results.append(("trade seeded ACTIVE", "SIM_LIFECYCLE_1" in before, f"active={before}"))
+        results.append(("monitor closed the trade (order→monitor→exit)",
+                        "SIM_LIFECYCLE_1" not in after, f"still_active={after}"))
+        booked = bool(hist) and hist[0][1] and hist[0][2] is not None
+        results.append(("exit booked to trade_history (reason+pnl)", booked, f"history={hist}"))
+
+    print("\n--- assertions ---")
+    failed = 0
+    for name, ok, detail in results:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name:46s} {detail}")
+        if not ok:
+            failed += 1
+    verdict = "PASS" if failed == 0 else f"FAIL ({failed} failed)"
+    print(f"\n=== lifecycle: {verdict} ===  (SIM_ROOT kept: {sim_root})\n")
+    return 0 if failed == 0 else 1
+
+
 def main():
     p = argparse.ArgumentParser(description="PORCUPINE scenario runner")
     p.add_argument("scenario", nargs="?", help="scenario name")
@@ -247,6 +329,8 @@ def main():
         return
     if a.scenario not in SCENARIOS:
         print(f"unknown scenario: {a.scenario}"); sys.exit(2)
+    if a.scenario == "lifecycle":
+        sys.exit(run_lifecycle(a.date))
     sys.exit(run(a.scenario, a.date, a.with_kickoff))
 
 

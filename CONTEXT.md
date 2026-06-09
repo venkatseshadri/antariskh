@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-06-09 10:03
+# SESSION CONTEXT — Updated 2026-06-09 10:22
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=16.01, NIFTY=23186.2, Regime=TRENDING_BEAR
+Branch: `master` | Live data: VIX=16.08, NIFTY=23164.45, Regime=TRENDING_BEAR
 
 ## Locations
 ```
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=16.01, NIFTY=23186.2, Regime=TRENDING_BEAR
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-PORCUPINE: built synthetic fault driver (--fault, 6 classes, 11/11 tests); fixed milestone design flaw that paused the autobuilder; tracked uncommitted sim bootstrap code
+PORCUPINE COMPLETE (9/9): built lifecycle scenario (real position_manager order→monitor→exit, hermetic SL_HIT close, no LLM/broker) + synthetic fault driver + unblocked autobuilder via milestone-design fix
 
 ## Priority Queue
-Resume autobuilder (rm sim/.autobuild_paused) → it builds the last item: lifecycle scenario (order→monitor→exit/EOD)
+Human-gated live-code fixes: bug#3 (session_phase datetime.now + multitf st_consensus NULL) and bug#4 (VIX-null gate fail-closed). Optional: resume autobuilder (will self-terminate at COMPLETE)
 
 ## What's Where (read on demand)
   `trading_desk.py` (1928 lines)
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+bb66ef9 docs(porcupine): lifecycle done — 9/9 DEVELOPMENT COMPLETE
+41c8f4f porcupine: lifecycle scenario (order→monitor→exit, hermetic, no LLM/broker)
+5cfea49 chore: auto-update session context
 029fa74 docs(porcupine): record fault driver, milestone unblock, resume steps
 ee24e9e porcupine: synthetic fault driver + milestone unblock + track bootstrap code
-891e835 porcupine: VIX-null auto-enter guard (bug #4)
-9b6df5a porcupine: F2 root-cause + permanent regression guards (bug #3)
-45c71c6 fix: enricher varaha_auth path fix, prev_day lazy-init, completion_by_tf, CrewAI imports
 ```

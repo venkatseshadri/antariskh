@@ -54,6 +54,17 @@ Cron (root): `*/30 7-23 * * * /home/trading_ceo/antariksh/sim/porcupine_autobuil
 - Step 5 (`claude -p`) = tokens, **only while items remain**; self-terminates at COMPLETE.
 - Worst case bounded by the stuck-guard (≤4 no-progress LLM runs, then pause).
 
+## 6c. UPDATE 2026-06-09 (later) — ALL BUILDABLE ITEMS DONE, builder self-terminates
+Both remaining buildable items (synthetic fault driver, lifecycle scenario) are now
+built in-session — `porcupine_status` reports **9/9, DEVELOPMENT COMPLETE (rc=0)**. With
+the milestone flaw fixed (§6b), the gated builder now hits step 3 ("if COMPLETE → exit ₹0")
+and **self-terminates without ever invoking `claude -p`** — exactly the designed end state.
+So resuming the cron is now optional/harmless: if `sim/.autobuild_paused` is removed it will
+run the free status check, see COMPLETE, and exit at ₹0. The only open PORCUPINE work left is
+**human-gated live-code fixes** (bug #3/#4) and catalogue depth — neither is autobuilder work.
+Note: "the autobuilder" is just headless `claude -p`; this session did the builds directly,
+which is faster and higher-quality than the gated unattended pass.
+
 ## 6b. UPDATE 2026-06-09 — milestone flaw FIXED, ready to resume
 The design flaw below is fixed (commit `ee24e9e`). `porcupine_status.py` bug#3/#4
 milestones now track the **harness guard** (regression test files the builder can build),

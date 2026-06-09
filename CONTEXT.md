@@ -1,4 +1,4 @@
-# SESSION CONTEXT — Updated 2026-06-09 23:16
+# SESSION CONTEXT — Updated 2026-06-09 23:59
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
 Branch: `master` | Live data: VIX=15.56, NIFTY=23257.75, Regime=TRENDING_BEAR
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=15.56, NIFTY=23257.75, Regime=TRENDING_BEAR
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Wired v4 aggregator into the sim (bug #3b E2E): multitf_trend scenario proves st_consensus is computed not hardcoded; aggregator now sandbox-aware (prod-safe). 375 bars→118 directional, hermetic
+Built cached position-research (UNICORN pattern for position manager): position_research_cache + position_research.py + cron; run_bridge applies cached morph/roll/tighten, protective floor/SL/TP/EOD stay live; fixed broken risk_agent_crew sync call. Tests 10/10 + position_cache sim PASS
 
 ## Priority Queue
-v4 SuperTrend takes effect at aggregator's next start — watch first live kickoffs Mon
+RISK-PATH: run_bridge rewire re-activates deterministic morph/roll/tighten+floor+resting-SL/TP at next position-manager cron start (market open) — Board review before deploy. 15-min research cron NOT installed (cache activation = separate step)
 
 ## What's Where (read on demand)
   `trading_desk.py` (1928 lines)
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
+35bc890 porcupine: position_cache scenario — proves cached-research hot path (real position_manager)
+1aa70ae chore: auto-update session context
 0d43821 docs(porcupine): v4 aggregator wired into sim (bug #3b E2E guard)
 65a4e69 porcupine: wire v4 aggregator into the sim — bug #3b end-to-end guard
 ed409cd chore: auto-update session context
-58c32e3 docs(porcupine): bug #3/#4 FIXED + corrected root cause (two-table multitf)
-da75681 fix(entry): bug #3 — session_phase from bar ts + real SuperTrend consensus
 ```

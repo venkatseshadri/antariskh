@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-05-28 00:07
+# SESSION CONTEXT — Updated 2026-06-09 10:03
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: DuckDB: check manually
+Branch: `master` | Live data: VIX=16.01, NIFTY=23186.2, Regime=TRENDING_BEAR
 
 ## Locations
 ```
@@ -12,13 +12,13 @@ Branch: `master` | Live data: DuckDB: check manually
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Fixed root-cause data-capture outage (check_market_open ExecCondition inversion); added stale/expired-expiry entry guard in brahmand e2e_chain; fixed Flattrade token refresh (Selenium Manager) + exec_report cron path/arg
+PORCUPINE: built synthetic fault driver (--fault, 6 classes, 11/11 tests); fixed milestone design flaw that paused the autobuilder; tracked uncommitted sim bootstrap code
 
 ## Priority Queue
-Verify 09:14 combined capture populates option_snapshots + entry guard holds (Thu 28-May); fix execution_tools _build_tsym Thursday->Tuesday before live mode; session_orchestrator still deferred Phase 1
+Resume autobuilder (rm sim/.autobuild_paused) → it builds the last item: lifecycle scenario (order→monitor→exit/EOD)
 
 ## What's Where (read on demand)
-  `trading_desk.py` (1929 lines)
+  `trading_desk.py` (1928 lines)
   `tests/test_integration_end_to_end.py` (263 lines)
   `ARCHITECTURE.md` (698 lines)
   `GAPS_AND_ROADMAP.md` (209 lines)
@@ -27,7 +27,7 @@ Verify 09:14 combined capture populates option_snapshots + entry guard holds (Th
   `crews/pm_crew.py` (170 lines)
   `tools/risk_tools.py` (606 lines)
   `tools/execution_tools.py` (621 lines)
-  `tools/contract_tools.py` (533 lines)
+  `tools/contract_tools.py` (534 lines)
 
 ## Verify State
 ```bash
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
-cf67e58 fix: correct check_market_open.sh ExecCondition exit codes
-f2c9cb9 chore: daily margin snapshot + fix malformed ralph imports
-831afef feat: per-index DB paths, sandbox env var overrides, Redis tap tool
-1b691b2 fix: v4 aggregator — per-index queues, EMA dedup, queue preservation
-5476d2c fix: fall back to v3_ohlcv_queue if per-index key empty
+029fa74 docs(porcupine): record fault driver, milestone unblock, resume steps
+ee24e9e porcupine: synthetic fault driver + milestone unblock + track bootstrap code
+891e835 porcupine: VIX-null auto-enter guard (bug #4)
+9b6df5a porcupine: F2 root-cause + permanent regression guards (bug #3)
+45c71c6 fix: enricher varaha_auth path fix, prev_day lazy-init, completion_by_tf, CrewAI imports
 ```

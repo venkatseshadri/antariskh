@@ -11,12 +11,32 @@ Aggregates to 5/15/30/60/240/1440-min, writes to market_data_multitf table.
 
 import os
 import sys
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 import duckdb
 import redis
 import json
 from collections import defaultdict
+
+
+def _connect_write(db_path, retries: int = 8, backoff: float = 0.5):
+    """DuckDB write connection that RETRIES on a transient per-index lock conflict.
+
+    The per-index multi-TF DuckDB can briefly be locked by a startup race or a
+    reader holding a write handle. Without this, a single `IO Error: Could not set
+    lock` killed the aggregator (NIFTY trend then went stale all session, 2026-06-10).
+    Retry with linear backoff so it self-heals instead of crashing."""
+    last = None
+    for i in range(retries):
+        try:
+            return duckdb.connect(str(db_path), read_only=False)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if "lock" not in str(e).lower():
+                raise
+            time.sleep(backoff * (i + 1))
+    raise last
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "/home/trading_ceo/brahmand")
@@ -86,7 +106,7 @@ class MultiTFAggregatorQueue:
     def _ensure_table_exists(self):
         """Create market_data_multitf table with all indicator batches."""
         try:
-            conn = duckdb.connect(str(self.db_path), read_only=False)
+            conn = _connect_write(self.db_path)
 
             conn.execute(
                 """
@@ -775,7 +795,7 @@ class MultiTFAggregatorQueue:
         if not bars:
             return
 
-        conn = duckdb.connect(str(self.db_path), read_only=False)
+        conn = _connect_write(self.db_path)
 
         for bar in bars:
             try:

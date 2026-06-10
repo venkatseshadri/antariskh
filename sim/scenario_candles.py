@@ -59,7 +59,7 @@ def generate(spec: dict) -> list[dict]:
     """spec: {prev_close, date, path:[{t:'HH:MM', spot:<target>}], vix?}.
     Returns 1-min OHLC bars realizing the path through the waypoints."""
     prev_close = float(spec["prev_close"])
-    date = spec["date"]
+    date = spec.get("date") or "2026-06-16"  # template default; runner overrides per replay date
     mins = _minutes(date)
     tmap = {f"{m.hour:02d}:{m.minute:02d}": i for i, m in enumerate(mins)}
 

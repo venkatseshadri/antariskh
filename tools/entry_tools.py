@@ -1448,8 +1448,13 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     colors = {}
     for tf in ["1m", "5m", "15m", "30m", "60m", "240m", "1440m"]:
         c = candles.get(tf, "no_data")
-        if c != "no_data" and isinstance(c, dict):
+        if isinstance(c, dict):
             colors[tf] = c.get("color", "neutral")
+        elif isinstance(c, str) and c in ("GREEN", "RED"):
+            # get_live_candles emits plain "GREEN"/"RED" strings; the old
+            # dict-only check scored every TF "neutral" → traffic-light
+            # family was permanently NEUTRAL 0% (half the entry signal dead)
+            colors[tf] = c
         else:
             colors[tf] = "neutral"
 

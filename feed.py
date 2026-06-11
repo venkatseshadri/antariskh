@@ -207,6 +207,41 @@ def _write_1min_sqlite(bar: dict):
         log.warning(f"SQLite write failed for {bar['instrument']}: {e}")
 
 
+def _persist_option_prices(instrument: str, bar_ts: str):
+    """Append in-memory option state to option_prices at bar close (WS-first, zero REST)."""
+    state = _option_state.get(instrument)
+    if not state:
+        return
+    try:
+        db = open_capture_db(instrument)
+        if not db:
+            return
+        for opt in state["token_map"].values():
+            ltp = opt.get("ltp")
+            if not ltp or ltp <= 0:
+                continue
+            try:
+                db.execute(
+                    """INSERT OR IGNORE INTO option_prices
+                       (tsym, strike, option_type, ltp, oi, volume, timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        opt["tsym"],
+                        opt["strike"],
+                        opt.get("opt_type", ""),
+                        ltp,
+                        opt.get("oi"),
+                        opt.get("volume"),
+                        bar_ts,
+                    ),
+                )
+            except Exception:
+                pass
+        db.commit()
+    except Exception as e:
+        log.warning(f"Option persist failed for {instrument}: {e}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ATM Tracking + Option Feed (NIFTY + SENSEX)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -433,6 +468,8 @@ def main():
                     old_atm = _option_state[instrument]["atm"]
                     if new_atm != old_atm:
                         _rebalance_option_window(api, r, instrument, new_atm)
+                # T13: persist in-memory option premiums (WS-first, zero REST)
+                _persist_option_prices(instrument, completed["timestamp"])
 
         # per-instrument heartbeat — write to file every 60s (DataHealth reads files)
         _write_feed_heartbeat(instrument, bar["timestamp"])

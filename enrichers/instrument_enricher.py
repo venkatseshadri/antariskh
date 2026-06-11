@@ -277,45 +277,6 @@ class BrokerSession:
         except Exception:
             return None
 
-    def get_option_chain(
-        self, exchange: str, expiry: str, atm_strike: int, step: int = 50
-    ) -> List[Dict]:
-        if not self.connected:
-            return []
-        try:
-            tradingsymbol = {
-                "NIFTY": "NIFTY30JUN26F",
-                "SENSEX": "SENSEX26JUNFUT",
-            }.get(self.instrument, f"{self.instrument}30JUN26F")
-            resp = self.api.get_option_chain(
-                exchange, tradingsymbol, str(atm_strike), str(5)
-            )
-            if not resp or not isinstance(resp, dict) or resp.get("stat") != "Ok":
-                return []
-
-            chain = []
-            for contract in resp.get("values", []):
-                q = contract.get("values", {}) if isinstance(contract, dict) else {}
-                if not q or (not q.get("oi") and not q.get("lp")):
-                    continue
-                tsym = contract.get("tsym", q.get("tsym", "")) or ""
-                chain.append(
-                    {
-                        "tsym": tsym,
-                        "strike": int(
-                            float(contract.get("strprc", q.get("strprc", 0)))
-                        ),
-                        "option_type": contract.get("optt", q.get("optt", "")).strip(),
-                        "oi": int(q.get("oi", 0) or 0),
-                        "volume": int(q.get("v", 0) or 0),
-                        "iv": float(q["iv"]) if q.get("iv") else None,
-                        "ltp": float(q["lp"]) if q.get("lp") else None,
-                    }
-                )
-            return chain
-        except Exception:
-            return []
-
 
 class Enricher:
     def __init__(self, instrument: str, conn, broker: Optional[BrokerSession] = None):
@@ -531,13 +492,10 @@ class Enricher:
                     greeks = compute_aggregate_greeks(
                         spot, self._get_weekly_expiry(), atm_strike, india_vix
                     )
-                    option_data = self.broker.get_option_chain(
-                        "NFO", self._get_weekly_expiry_short(), atm_strike
-                    )
+                    option_data = self._read_option_prices_from_db()
                     if option_data:
                         pcr = compute_pcr(option_data, atm_strike)
                         oi = compute_oi_analysis(option_data, atm_strike)
-                        self._persist_option_premiums(option_data, bar["timestamp"])
             except Exception as e:
                 log.debug(f"Broker enrichment error: {e}")
 
@@ -669,27 +627,34 @@ class Enricher:
                     raise
 
     def _persist_option_premiums(self, option_data: List[Dict], bar_ts: str):
-        for opt in option_data:
-            ltp = opt.get("ltp")
-            if not ltp or ltp <= 0:
-                continue
-            try:
-                self.conn.execute(
-                    """INSERT OR IGNORE INTO option_prices
-                       (tsym, strike, option_type, ltp, oi, volume, timestamp)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        opt["tsym"],
-                        opt["strike"],
-                        opt["option_type"],
-                        ltp,
-                        opt.get("oi"),
-                        opt.get("volume"),
-                        bar_ts,
-                    ),
-                )
-            except sqlite3.Error:
-                pass
+        # Retired — feed.py now persists option data from WebSocket (T13).
+        pass
+
+    def _read_option_prices_from_db(self) -> List[Dict]:
+        try:
+            latest = self.conn.execute(
+                "SELECT MAX(timestamp) FROM option_prices"
+            ).fetchone()
+            if not latest or not latest[0]:
+                return []
+            rows = self.conn.execute(
+                """SELECT tsym, strike, option_type, ltp, oi
+                   FROM option_prices WHERE timestamp = ?""",
+                (latest[0],),
+            ).fetchall()
+            return [
+                {
+                    "tsym": r["tsym"],
+                    "strike": r["strike"],
+                    "option_type": r["option_type"],
+                    "oi": r["oi"],
+                    "iv": None,
+                    "ltp": r["ltp"],
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
 
     def _get_vix_history(self) -> List[float]:
         rows = self.conn.execute(

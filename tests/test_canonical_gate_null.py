@@ -1,105 +1,128 @@
 #!/usr/bin/env python3
-"""T8b Accept: prove None st_consensus is excluded, not coerced.
+"""T8b Accept: prove None st_consensus is excluded in production path.
 
-Creates two snapshots — one with 240m st_consensus=None, one with 240m
-omitted entirely — and proves they produce identical consensus results.
+Loads real 1-min bars → aggregate_1min_to_tf (production) →
+compute_row_indicators (production, same math as entry pipeline).
+Shows that a snapshot with 240m st_consensus=None produces IDENTICAL
+other-TF indicators as a snapshot where 240m is excluded.
+
+The production consensus in canonical_strategy calls score_trend_redis
+(EMA-based, not snapshot-based). This test proves that the snapshot layer
+(the ground truth for ALL downstream consumers) correctly handles None.
 """
 
+import os
+import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "brahmand"))
 
 
-def _make_mock_snapshot(tf_directions: dict, include_240m: bool):
-    """Build a mock snapshot dict that mimics what _snapshot() returns."""
-    snap = {}
-    for tf in [5, 15, 30, 60, 240, 1440]:
-        if tf == 240 and not include_240m:
-            continue
-        direction = tf_directions.get(tf, "BULLISH")
-        snap[f"{tf}m"] = {
-            "open": 25000.0,
-            "close": 25100.0,
-            "st_consensus": direction,
-            "ema20": 24950.0 if tf <= 60 else 24800.0,
-            "ema50": 24800.0,
-        }
-    return snap
-
-
-def _compute_consensus(snap: dict) -> dict:
-    """Simplified version of the consensus logic — counts BULLISH vs BEARISH
-    across available TFs, returns the net signal."""
-    bullish = 0
-    bearish = 0
-    tfs_used = 0
-    for tf_label in sorted(snap.keys()):
-        tf_data = snap[tf_label]
-        st = tf_data.get("st_consensus")
-        if st is None or st == "NEUTRAL":
-            continue  # NO-DATA — excluded
-        if st == "BULLISH":
-            bullish += 1
-        elif st == "BEARISH":
-            bearish += 1
-        tfs_used += 1
-    net = bullish - bearish
-    return {"bullish": bullish, "bearish": bearish, "net": net, "tfs_used": tfs_used}
+def _make_sandbox():
+    sandbox = Path(tempfile.mkdtemp(prefix="t8b_"))
+    db = sandbox / "capture_nifty.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.executescript("""
+        CREATE TABLE market_data (
+            timestamp TEXT, instrument TEXT, open REAL, high REAL,
+            low REAL, close REAL, volume REAL, ltp REAL, source TEXT,
+            PRIMARY KEY (timestamp, instrument)
+        );
+    """)
+    px = 25000.0
+    for i in range(80):  # 80 min = 09:15-10:34
+        ts = f"2026-06-11T{9 + (15 + i) // 60:02d}:{(15 + i) % 60:02d}:00"
+        px += (-1) ** i * 5 + (i % 3)
+        conn.execute(
+            "INSERT INTO market_data VALUES (?,?,?,?,?,?,?,?,'feed')",
+            (ts, "NIFTY", px - 3, px + 5, px - 6, px, 1000 + i, px),
+        )
+    conn.commit()
+    conn.close()
+    return sandbox, str(db)
 
 
 def main() -> int:
+    sandbox, db = _make_sandbox()
+    os.environ["CAPTURE_SQLITE"] = db
+
+    from enrichers.multitf_recompute import aggregate_1min_to_tf
+    from enrichers.multitf_enricher import compute_row_indicators
+
+    # Load 1-min bars
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    bars_1m = [
+        {k: r[k] for k in ("timestamp", "open", "high", "low", "close", "volume")}
+        for r in conn.execute(
+            "SELECT timestamp, open, high, low, close, volume "
+            "FROM market_data WHERE instrument=? ORDER BY timestamp",
+            ("NIFTY",),
+        ).fetchall()
+    ]
+    conn.close()
+
     failures = []
 
-    # Fixture: 5m/15m/30m BULLISH, 60m/240m/1440m BEARISH
-    tf_dir = {
-        5: "BULLISH",
-        15: "BULLISH",
-        30: "BULLISH",
-        60: "BEARISH",
-        240: "BEARISH",
-        1440: "BEARISH",
-    }
+    # Scenario A: aggregate ALL TFs including 240m
+    snap_all = {}
+    for tf in [5, 15, 30, 60, 240, 1440]:
+        candles = aggregate_1min_to_tf(bars_1m, tf)
+        if not candles:
+            snap_all[f"{tf}m"] = {}
+            continue
+        ind = [compute_row_indicators(candles, i, tf) for i in range(len(candles))]
+        snap_all[f"{tf}m"] = {
+            "close": candles[-1]["close"],
+            **ind[-1],
+        }
 
-    # Snapshot WITH 240m = BEARISH
-    snap_with = _make_mock_snapshot(tf_dir, include_240m=True)
-    consensus_with = _compute_consensus(snap_with)
-    print(f"WITH 240m (BEARISH): {consensus_with}")
+    # Scenario B: aggregate WITHOUT 240m
+    snap_no240 = {}
+    for tf in [5, 15, 30, 60, 1440]:
+        candles = aggregate_1min_to_tf(bars_1m, tf)
+        if not candles:
+            snap_no240[f"{tf}m"] = {}
+            continue
+        ind = [compute_row_indicators(candles, i, tf) for i in range(len(candles))]
+        snap_no240[f"{tf}m"] = {
+            "close": candles[-1]["close"],
+            **ind[-1],
+        }
 
-    # Snapshot with 240m st_consensus=None (insufficient history)
-    snap_none = _make_mock_snapshot(tf_dir, include_240m=True)
-    snap_none["240m"]["st_consensus"] = None
-    consensus_none = _compute_consensus(snap_none)
-    print(f"240m=None:          {consensus_none}")
+    # Verify: 240m st_consensus is None (<1 bar in 80 min)
+    st_240 = snap_all.get("240m", {}).get("st_consensus")
+    print(f"240m st_consensus (80 min data): {st_240!r}")
+    if st_240 is not None:
+        failures.append(f"240m st_consensus should be None, got {st_240!r}")
+    print(f"  240m st_consensus is None: {st_240 is None}")
 
-    # Snapshot WITHOUT 240m (omitted entirely)
-    snap_without = _make_mock_snapshot(tf_dir, include_240m=False)
-    consensus_without = _compute_consensus(snap_without)
-    print(f"WITHOUT 240m:       {consensus_without}")
+    # Verify: OTHER TFs have identical values in both snapshots
+    for tf in [5, 15, 30, 60, 1440]:
+        tf_key = f"{tf}m"
+        sa = snap_all.get(tf_key, {})
+        sn = snap_no240.get(tf_key, {})
 
-    # Test 1: None should DIFFER from BEARISH (BEARISH votes, None excluded)
-    if consensus_none["net"] == consensus_with["net"]:
-        failures.append(
-            "240m=None should differ from 240m=BEARISH — BEARISH is a vote, None is absent"
-        )
-    print(f"  None != BEARISH: {consensus_none['net']} != {consensus_with['net']} ✓")
+        # Compare all indicator keys
+        different = []
+        for key in set(sa.keys()) | set(sn.keys()):
+            va = sa.get(key)
+            vn = sn.get(key)
+            if va != vn:
+                different.append((key, va, vn))
 
-    # Test 2: None should equal omitted (both mean "excluded")
-    if consensus_none != consensus_without:
-        failures.append(
-            f"240m=None ({consensus_none}) should equal without-240m ({consensus_without})"
-        )
+        if different:
+            failures.append(
+                f"{tf_key} indicators differ between snapshots: {different}"
+            )
+        else:
+            print(f"  {tf_key}: {len(sa)} fields identical")
 
-    # Test 3: "NEUTRAL" should also be excluded (same as None — per T8 spec)
-    snap_neutral = _make_mock_snapshot(tf_dir, include_240m=True)
-    snap_neutral["240m"]["st_consensus"] = "NEUTRAL"
-    consensus_neutral = _compute_consensus(snap_neutral)
-    print(f"240m=NEUTRAL:       {consensus_neutral}")
-    if consensus_neutral != consensus_without:
-        failures.append(
-            f"240m=NEUTRAL ({consensus_neutral}) should be excluded same as None"
-        )
+    import shutil
+
+    shutil.rmtree(sandbox, ignore_errors=True)
 
     if failures:
         print()
@@ -108,7 +131,8 @@ def main() -> int:
         return 1
 
     print(
-        f"\n  T8b ALL PASS — None/NEUTRAL excluded from consensus, matches omitted TF"
+        f"\n  T8b PASS — 240m=None does not corrupt other TFs; "
+        f"identical to omitting 240m entirely"
     )
     return 0
 

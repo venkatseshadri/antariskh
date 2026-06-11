@@ -137,7 +137,7 @@ outcome tables + out-of-sample discipline (SHERPA method). Full rationale + Boar
 | — | Consumer process elimination | ✅ DONE — feed.py writes SQLite directly |
 | — | VIX + futures → WebSocket | ✅ DONE — INDIAVIX 26017 + NIFTY-FUT in instruments.yaml |
 | — | Option rebalance → bar-close | ✅ DONE — once per min, zero tick thrash (2653b85) |
-| — | Enricher broker calls → 1/min | ✅ DONE — 22 get_quotes per bar for weekly options (d19e6dd) |
+| — | Enricher broker calls → 1/min | ✅ DONE — 1× get_option_chain API call per bar (replaced 22 get_quotes with single REST) |
 
 **Board answers locked 2026-06-11** (plan §7.7): parallel-build ✓; wide-table-per-TF ✓;
 Greeks = separate batch layer (NOT per-bar in enricher); traffic_light keeps Redis for now,
@@ -410,10 +410,10 @@ Shoonya WebSocket → feed.py → data/live/{inst}_1min.log + SQLite market_data
                                     │
                     ┌───────────────┘
                     ▼
-           enricher (file-watch, 1s poll)
-                    │  → SQLite market_data_enriched (100 cols)
-                    │  → 22 get_quotes/min for weekly option PCR/OI/IV
-                    │
+            enricher (file-watch, 1s poll)
+                     │  → SQLite market_data_enriched (100 cols)
+                     │  → 1× get_option_chain API/min for NIFTY + SENSEX weekly option chain
+                     │
                     ▼
            entry pipeline (every 5 min)
                     │  → _snapshot(): aggregate_1min_to_tf() in-memory
@@ -434,7 +434,7 @@ Shoonya WebSocket → feed.py → data/live/{inst}_1min.log + SQLite market_data
 | market_data_enriched | 366 rows | 366 rows |
 | log file lines | 237 | 237 |
 | NIFTY option rebalances | 2 (23250→23200→23250) at bar-close |
-| Option chain REST calls | `get_quotes` × 22/min = 8,250/day (weekly only) |
+| Option chain REST calls | `get_option_chain` × 2/min = 750/day (single API call per instrument) |
 | Missed minutes | ~7 (feed restarts during Redis purge) |
 
 ### Validator bugs FIXED (9e1cd6f, 83e01a8)

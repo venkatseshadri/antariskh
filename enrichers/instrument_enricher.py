@@ -283,39 +283,12 @@ class BrokerSession:
         if not self.connected:
             return []
         try:
-            chain = []
-            for i in range(-5, 6):
-                strike = atm_strike + i * step
-                strike_padded = f"{strike:05d}"  # 5-digit zero-padded
-                for otype, cp in [("CE", "C"), ("PE", "P")]:
-                    # Shoonya format: NIFTY{DD}{Mmm}{YY}{C/P}{5-digit-strike}
-                    # e.g. NIFTY16JUN26C23200 (feed.py uses same format)
-                    tsym = f"{self.instrument}{expiry}{cp}{strike_padded}"
-                    q = self.api.get_quotes(exchange, tsym)
-                    if q and (q.get("oi") or q.get("lp")):
-                        chain.append(
-                            {
-                                "tsym": tsym,
-                                "strike": strike,
-                                "option_type": otype,
-                                "oi": int(q.get("oi", 0) or 0),
-                                "volume": int(q.get("v", 0) or 0),
-                                "iv": float(q["iv"]) if q.get("iv") else None,
-                                "ltp": float(q["lp"]) if q.get("lp") else None,
-                            }
-                        )
-            return chain
-        except Exception:
-            return []
-        try:
-            # Use monthly futures as trading symbol (not weekly options expiry)
-            # NIFTY30JUN26F, SENSEX26JUNFUT — these are in instruments.yaml futures: section
             tradingsymbol = {
                 "NIFTY": "NIFTY30JUN26F",
                 "SENSEX": "SENSEX26JUNFUT",
             }.get(self.instrument, f"{self.instrument}30JUN26F")
             resp = self.api.get_option_chain(
-                exchange, tradingsymbol, str(atm_strike), str(count)
+                exchange, tradingsymbol, str(atm_strike), str(5)
             )
             if not resp or not isinstance(resp, dict) or resp.get("stat") != "Ok":
                 return []
@@ -323,20 +296,20 @@ class BrokerSession:
             chain = []
             for contract in resp.get("values", []):
                 q = contract.get("values", {}) if isinstance(contract, dict) else {}
-                if not q or not q.get("oi"):
+                if not q or (not q.get("oi") and not q.get("lp")):
                     continue
+                tsym = contract.get("tsym", q.get("tsym", "")) or ""
                 chain.append(
                     {
+                        "tsym": tsym,
                         "strike": int(
                             float(contract.get("strprc", q.get("strprc", 0)))
                         ),
                         "option_type": contract.get("optt", q.get("optt", "")).strip(),
-                        "oi": int(q.get("oi", 0)),
+                        "oi": int(q.get("oi", 0) or 0),
+                        "volume": int(q.get("v", 0) or 0),
                         "iv": float(q["iv"]) if q.get("iv") else None,
                         "ltp": float(q["lp"]) if q.get("lp") else None,
-                        "token": contract.get("token", q.get("token", "")),
-                        "tsym": contract.get("tsym", q.get("tsym", ""))
-                        or contract.get("tsym", ""),
                     }
                 )
             return chain

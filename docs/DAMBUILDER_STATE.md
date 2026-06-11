@@ -267,6 +267,11 @@ for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet read
 > on 15m (nulls = sub-warm-up rows, correct fail-closed), 30m+ ema20 None (< 20 bars
 > intraday — correct), 60m parquet = exactly the 7 new-grid rows. Re-run idempotent.
 > Pending ops: cron install line for nightly run → §7 for validator to install.
+> ✅ **OPS DONE (validator, 06-11 ~22:40):** DS never delivered the wrapper, validator
+> wrote `cron/run_eod_backfill.sh` (cd+env+pgrep guard+weekend skip+per-day log,
+> idempotent), test-fired live: both instruments exit=0, counts stay exactly
+> 75/25/13/7/2/1. Installed `/etc/cron.d/antariksh-eod-backfill`
+> (`0 16 * * 1-5`). First unattended run: 06-12 16:00 IST — validator checks counts after.
 >
 > ❌ **Validator 21:00 — round 2 (a8830f7) STILL FAILS.** Recompute+EMA now real
 > (5m=75 rows, ema20 56/75 ✓) but old-grid rows NOT deleted: table has BOTH grids

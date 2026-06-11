@@ -120,22 +120,19 @@ def _open(db_path: str) -> sqlite3.Connection:
 def _write_indicators(
     conn: sqlite3.Connection, instrument: str, tf: int, rows: list, retries: int = 5
 ) -> int:
-    """Lock-safe batched UPDATE (BEGIN IMMEDIATE + retry) — the SQLite multi-writer
-    pattern the capture path already uses; SQLite serializes, never crashes."""
+    """Lock-safe INSERT OR REPLACE (BEGIN IMMEDIATE + retry). Writes new rows
+    that don't exist and updates existing ones — handles partial consumer grids."""
     if not rows:
         return 0
-    sets = ", ".join(f"{c}=?" for c in IND_COLS)
-    sql = (
-        f"UPDATE market_data_multitf SET {sets} "
-        f"WHERE timestamp=? AND instrument=? AND timeframe_min=?"
-    )
+    cols = ["timestamp", "instrument", "timeframe_min"] + IND_COLS
+    placeholders = ", ".join(["?"] * len(cols))
+    sql = f"INSERT OR REPLACE INTO market_data_multitf ({', '.join(cols)}) VALUES ({placeholders})"
     for attempt in range(retries):
         try:
             conn.execute("BEGIN IMMEDIATE")
             for r in rows:
-                conn.execute(
-                    sql, [r[c] for c in IND_COLS] + [r["timestamp"], instrument, tf]
-                )
+                vals = [r["timestamp"], instrument, tf] + [r.get(c) for c in IND_COLS]
+                conn.execute(sql, vals)
             conn.commit()
             return len(rows)
         except sqlite3.OperationalError as e:

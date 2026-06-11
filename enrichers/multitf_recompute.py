@@ -186,9 +186,29 @@ def aggregate_1min_to_tf(bars_1min: list, tf: int) -> list[dict]:
 
 
 def compute_row_indicators(tf_bars: list, i: int, tf: int) -> dict:
-    """Same indicator math as the live enricher — delegates to the v4 aggregator."""
+    """Indicators for tf_bars[i] using context tf_bars[:i+1] (same as the enricher).
+    EMA computed independently (v4 aggregator returns None for EMA columns)."""
     ind = _CALC._aggregate_bucket([tf_bars[i]], tf, tf_bars[: i + 1])
-    return {c: ind.get(c) for c in IND_COLS}
+    result = {c: ind.get(c) for c in IND_COLS}
+    closes = [b["close"] for b in tf_bars[: i + 1] if b.get("close")]
+    for period in [5, 20, 50, 100, 200]:
+        ema_list = _compute_ema(closes, period)
+        result[f"ema{period}"] = ema_list[i] if i < len(ema_list) else None
+    return result
+
+
+def _compute_ema(closes: list, period: int) -> list:
+    if len(closes) < period:
+        return [None] * len(closes)
+    result = [None] * (period - 1)
+    sma = sum(closes[:period]) / period
+    multiplier = 2.0 / (period + 1)
+    prev = sma
+    result.append(round(prev, 2))
+    for i in range(period, len(closes)):
+        prev = (closes[i] - prev) * multiplier + prev
+        result.append(round(prev, 2))
+    return result
 
 
 # ── Diff engine ─────────────────────────────────────────────────────────────

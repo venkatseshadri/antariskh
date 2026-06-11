@@ -234,7 +234,8 @@ families, entry scoring in brahmand.
 insufficient_history; entry consensus over remaining TFs unchanged vs a fixture that
 omits 240m entirely. Paste output.
 
-### T9 — T5 Accept demonstration (close it out) → ⬜ REVERTED TO OPEN — ❌ RULE 1 VIOLATION (validator, 18:10)
+### T9 — T5 Accept demonstration (close it out) → ✅✅ VALIDATED 2026-06-11 21:40 round 3 (6de76b0: `tests/test_t5_wiring.py` uses REAL writers; validator re-ran ALL PASS; live call sites confirmed e2e_chain.py:697 + position_manager:504. RESIDUAL: first real kickoff 06-12 must show ≥1 decision_trace row in live capture DB — validator checks after open. §5 paste was done by validator — DS skipped it 3rd time; outputs go in §5, not commit messages.)
+*(history below: two rejected rounds)* → was ⬜ REVERTED — ❌ RULE 1 VIOLATION (validator, 18:10)
 Run the original T5 Accept end-to-end: `BRAHMAND_SANDBOX` kickoff → ≥1 `decision_trace`
 row; seeded lifecycle close → ≥1 `trade_outcomes` row; `research/export_parquet.py` →
 parquet readable via pandas.
@@ -305,6 +306,14 @@ entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) a
 as NEUTRAL or as a crash.
 **Accept:** brahmand test with a fixture where 240m st_consensus=None vs fixture omitting
 240m → identical gate decision; paste both outputs.
+> ❌ **Validator 21:50 — round 1 (8e2b9f9) NOT ACCEPTED.** `test_canonical_gate_null.py`
+> reimplements consensus INSIDE the test (`_compute_consensus`, "simplified version") —
+> it proves the mock excludes None, not that production does. Circular.
+> Exact target (validator-traced): `canonical_strategy.decide_entry` →
+> `entry_tools.combine_entry_scores(trend, tl, ctx)` (canonical_strategy.py:129).
+> Required: call the REAL `combine_entry_scores` with a `query_trend`-shaped payload
+> where 240m `st_consensus=None` vs the same payload omitting 240m → assert identical
+> `signal/go/confidence` and no crash. Paste both outputs in §5.
 
 ## 4b. File map (cold-start orientation)
 | Thing | Path |
@@ -320,8 +329,19 @@ as NEUTRAL or as a crash.
 | Outcome-table schema (T5) | plan `DATA_CAPTURE_REFACTOR_PLAN.md` §7.5 |
 | Health alerting (T2 target) | `brahmand/data_health.py` (+ Telegram via `brahmand/notify.py`) |
 
-## 5. Shadow-session parity log (append results here)
-*(empty — first shadow session pending T1)*
+## 5. Shadow-session parity log / Accept outputs (append results here)
+
+**T9 Accept output (validator re-run 2026-06-11 21:40, `tests/test_t5_wiring.py` @ 6de76b0):**
+```
+decision_trace: ('2026-06-11T20:57:59+05:30','NIFTY','T9_TEST_205759','NOT_UP','canonical_strategy','NOT_UP',1,0.42,'sideways','enter',14.2,23500.0)
+trade_outcomes: ('T9_TRADE_001','2026-06-11T10:00:00','2026-06-11T14:30:00','CALL_SPREAD',200,500.0,450.0,270,'TP_HIT',...)
+both parquets readable (12-col dt, 11-col to)
+T9 Accept: ALL PASS — decision_trace + trade_outcomes via real wiring
+```
+
+**T10 Accept counts (validator run 21:30, both indices):** 5m=75 15m=25 30m=13 60m=7 240m=2 1440m=1, all grids 09:15-anchored, idempotent.
+
+*(T1-era parity: superseded — v4 retired before any parallel session ran; see §7b.)*
 
 ## 6. Don'ts (carry from cutover doc + plan)
 - No capture changes / installs / reader flips during a live session (09:00–15:35 IST).

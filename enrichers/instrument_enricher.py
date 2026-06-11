@@ -293,6 +293,7 @@ class Enricher:
         self.instrument = instrument
         self.conn = conn
         self.broker = broker
+        self.r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
         self.buf = IndicatorBuffer(maxlen=200)
         self.open_price = None
         self.intraday_high = None
@@ -490,11 +491,11 @@ class Enricher:
             try:
                 # ── VIX + futures now stream via WebSocket (zero REST) ──
                 # feed:INDIAVIX, feed:NIFTY-FUT, feed:SENSEX-FUT
-                vix_bar = r.lindex(f"feed:INDIAVIX", 0)
+                vix_bar = self.r.lindex("feed:INDIAVIX", 0)
                 if vix_bar:
                     india_vix = json.loads(vix_bar).get("close")
                 fut_key = f"feed:{self.instrument}-FUT"
-                fut_bar = r.lindex(fut_key, 0)
+                fut_bar = self.r.lindex(fut_key, 0)
                 if fut_bar:
                     futures_ltp = json.loads(fut_bar).get("close")
 

@@ -411,7 +411,7 @@ computed from weekly-only rows (paste the filter query + one bar's strike list).
 > do NOT restart mid-MCX-session for this.
 > Live Accept residual: §8 V6/V10 counts + SENSEX weekly-only strike list.
 
-### T15 — 🔴 MCX capture dead since 11:25 (validator-found 06-11 22:15 — Board asked "is MCX validated too?"; answer was no, and it was broken)
+### T15 — 🔴 MCX capture dead since 11:25 (validator-found 06-11 22:15 — Board asked "is MCX validated too?"; answer was no, and it was broken) → ✅ BUILT bef3390 + brahmand 500ddc5
 MCX market OPEN until 23:30, WS feed alive (commodity 1-min logs current), but SQLite
 capture died at consumer elimination:
 - `capture_mcx.sqlite` `market_data` (instrument-column layout, written by retired

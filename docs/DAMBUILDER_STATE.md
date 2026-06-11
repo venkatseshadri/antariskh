@@ -305,7 +305,7 @@ old; off-hours silent. Heartbeat-file checks stay as secondary.
 > skipped (same fail-silent class as the T2 follow-up) — add a WARN for that case + the
 > 4-case demo, paste output.
 
-### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it)
+### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it) → ✅ BUILT e6f34f7 (accept: test_t12_option_premiums.py 6/6 PASS — composite PK migration, append-only same-tsym, INSERT OR IGNORE dedup, ltp<=0 guard, 22-quote bar cycle)
 The only live `option_prices` writer was `consumers/instrument_consumer.py` — retired in the
 06-11 consumer elimination. Since then NOTHING persists per-strike premiums (table frozen at
 06-11 11:53; total history = 2 days/index of snapshots). But the enricher already fetches
@@ -370,6 +370,17 @@ T9 Accept: ALL PASS — decision_trace + trade_outcomes via real wiring
 ```
 
 **T10 Accept counts (validator run 21:30, both indices):** 5m=75 15m=25 30m=13 60m=7 240m=2 1440m=1, all grids 09:15-anchored, idempotent.
+
+**T12 Accept output (test_t12_option_premiums.py @ e6f34f7, 6/6 PASS):**
+```
+test_schema_composite_pk_fresh_table PASSED
+test_schema_migration_from_old_pk PASSED
+test_append_only_same_tsym_different_bars PASSED
+test_ignore_duplicate_tsym_timestamp PASSED
+test_ltp_guard_rejects_zero_and_none PASSED
+test_full_bar_22_quotes PASSED
+```
+**Live DB migration verified:** NIFTY (46 rows preserved), SENSEX (70 rows preserved) — both migrated from (tsym) PK to (tsym, timestamp) composite PK. Real acceptance: live session 06-12 must produce ≥5,000 rows/index with monotonically increasing timestamps and 0 ltp<=0.
 
 *(T1-era parity: superseded — v4 retired before any parallel session ran; see §7b.)*
 

@@ -447,6 +447,9 @@ data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 > MCX_1min.log → what does enricher write per instrument? check 06-12).
 
 ### T16 — Futures contract auto-roll: resolve at startup, never hardcode dated symbols (validator-filed 06-11 23:00, Board discussion)
+> ⏰ **HARD DEADLINE (validator 06-11 23:05): SENSEX26JUNFUT expires ~25-Jun (14 days).
+> 30-Jun then kills SEVEN at once: NIFTY30JUN26F + all 6 MCX contracts (incl. tonight's
+> GOLDPETAL30JUN26). With T-2 roll policy, T16 must be live by ~23-Jun.**
 GOLD05JUN26 expired 06-05 → feed subscribed a dead token for 6 days, silently (caught only
 via T15). Same bug class found TWICE more tonight: enricher had hardcoded `NIFTY30JUN26F`
 / `SENSEX26JUNFUT` (die 30-Jun), and `futures:` section of instruments.yaml is also dated.

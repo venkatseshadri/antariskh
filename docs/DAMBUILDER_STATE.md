@@ -394,6 +394,23 @@ counts from both logs into §5).
 **Accept:** all 4 with output; one live session with per-bar conns gone and SENSEX pcr
 computed from weekly-only rows (paste the filter query + one bar's strike list).
 
+> **Validator 22:40 on 96b4589: ✅✅ VALIDATED (code) AFTER a critical hotfix.**
+> Items 2/3/4 correct (SENSEX monthly regex verified vs both tsym formats). Item 1 had a
+> latent capture-killer: `_persist_bar_and_options` outer `except` did NOT rollback — one
+> failed commit on the CACHED conn leaves BEGIN IMMEDIATE open → write lock held forever
+> (blocks enricher) + every later bar dies with "cannot start a transaction within a
+> transaction". Also conn was opened without `autocommit=True`, contra
+> PENGUIN_ENRICHER_LOCK_FIX.md. Validator hotfixed both + added
+> `tests/test_t14_txn_recovery.py` exercising the REAL function with an injected commit
+> failure (verified FAIL pre-fix / PASS post-fix; full suite 10/10).
+> Notes for DS: (a) your `test_t14_db_hygiene.py` re-implements the reader+regex inside
+> the test — same circularity as T8b round 1; it proves the regex, not production. Next
+> time call the real code. (b) commodity bars still use old per-bar-conn
+> `_write_1min_sqlite` path — fold into T15 rework. (c) feed.service runs old code until
+> its natural restart (~02:25 RuntimeMax / 09:00 start) — picks up T13+T14+hotfix then;
+> do NOT restart mid-MCX-session for this.
+> Live Accept residual: §8 V6/V10 counts + SENSEX weekly-only strike list.
+
 ### T15 — 🔴 MCX capture dead since 11:25 (validator-found 06-11 22:15 — Board asked "is MCX validated too?"; answer was no, and it was broken)
 MCX market OPEN until 23:30, WS feed alive (commodity 1-min logs current), but SQLite
 capture died at consumer elimination:

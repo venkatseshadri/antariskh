@@ -137,7 +137,7 @@ outcome tables + out-of-sample discipline (SHERPA method). Full rationale + Boar
 | — | Consumer process elimination | ✅ DONE — feed.py writes SQLite directly |
 | — | VIX + futures → WebSocket | ✅ DONE — INDIAVIX 26017 + NIFTY-FUT in instruments.yaml |
 | — | Option rebalance → bar-close | ✅ DONE — once per min, zero tick thrash (2653b85) |
-| — | Enricher broker calls → 1/min | ✅ DONE — 1× get_option_chain API call per bar (replaced 22 get_quotes with single REST) |
+| — | Enricher broker calls → 0 for options | ✅ DONE — option data from WS depth feed, persisted by feed.py at bar close (T13 7382566); only get_quotes for INDIAVIX retained |
 
 **Board answers locked 2026-06-11** (plan §7.7): parallel-build ✓; wide-table-per-TF ✓;
 Greeks = separate batch layer (NOT per-bar in enricher); traffic_light keeps Redis for now,
@@ -306,6 +306,7 @@ old; off-hours silent. Heartbeat-file checks stay as secondary.
 > 4-case demo, paste output.
 
 ### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it) → ✅ BUILT e6f34f7 (accept: test_t12_option_premiums.py 6/6 PASS — composite PK migration, append-only same-tsym, INSERT OR IGNORE dedup, ltp<=0 guard, 22-quote bar cycle) → ✅✅ VALIDATED (code) 2026-06-11 21:45
+> 🔧 FIXED 7382566: T13 redesign — REST path deleted, persistence moved to feed.py WS (see T13)
 > **Validator 21:45:** re-ran test 6/6 PASS (needs `PYTHONPATH=.` — test lacks sys.path
 > bootstrap, DS note your Accept command). Migration additionally proven against a COPY of
 > the real NIFTY capture DB: 46 rows → 46 rows, PK (tsym)→(tsym,timestamp), same-tsym
@@ -329,7 +330,7 @@ lost research data.
 timestamps and 0 rows ltp<=0; paste `select count(*),min(timestamp),max(timestamp) from
 option_prices where timestamp like '2026-06-12%'` for both indices into §5.
 
-### T13 — WS-first option data: persist from feed, REST only for gaps (BOARD DIRECTIVE 2026-06-11 night, validator-filed)
+### T13 — WS-first option data: persist from feed, REST only for gaps (BOARD DIRECTIVE 2026-06-11 night, validator-filed) → ✅ BUILT 7382566
 **Board order:** "use as much as possible from the websocket feed; what is not there should
 come from REST." Current state violates this: feed.py already holds live ltp/oi/volume for
 ATM±5 CE/PE (22 NIFTY + 44 SENSEX subscribed depth tokens, `_apply_option_tick`) and
@@ -424,7 +425,13 @@ test_ignore_duplicate_tsym_timestamp PASSED
 test_ltp_guard_rejects_zero_and_none PASSED
 test_full_bar_22_quotes PASSED
 ```
-**Live DB migration verified:** NIFTY (46 rows preserved), SENSEX (70 rows preserved) — both migrated from (tsym) PK to (tsym, timestamp) composite PK. Real acceptance: live session 06-12 must produce ≥5,000 rows/index with monotonically increasing timestamps and 0 ltp<=0.
+**Live DB migration verified:** NIFTY (46 rows), SENSEX (70 rows) — both composite PK.
+
+**T13 Accept (code @ 7382566):**
+- `feed.py`: `_persist_option_prices()` — WS depth tick state → `option_prices` at bar close, ltp>0 guard, `INSERT OR IGNORE`, zero REST
+- `enricher`: `_read_option_prices_from_db()` — reads latest option snapshot for PCR/OI; `get_option_chain` deleted; `_persist_option_premiums` retired
+- REST calls for option data: 0 (only `get_quotes` retained for INDIAVIX)
+- Real acceptance: 06-12 live session must produce ≥5,000 rows/index + pcr_total/oi_skew non-null on >90% of enriched rows (first time ever).
 
 *(T1-era parity: superseded — v4 retired before any parallel session ran; see §7b.)*
 
@@ -446,7 +453,7 @@ Shoonya WebSocket → feed.py → data/live/{inst}_1min.log + SQLite market_data
                     ▼
             enricher (file-watch, 1s poll)
                      │  → SQLite market_data_enriched (100 cols)
-                     │  → 1× get_option_chain API/min for NIFTY + SENSEX weekly option chain
+                     │  → reads option_prices for PCR/OI (feed.py persists from WS)
                      │
                     ▼
            entry pipeline (every 5 min)
@@ -468,7 +475,7 @@ Shoonya WebSocket → feed.py → data/live/{inst}_1min.log + SQLite market_data
 | market_data_enriched | 366 rows | 366 rows |
 | log file lines | 237 | 237 |
 | NIFTY option rebalances | 2 (23250→23200→23250) at bar-close |
-| Option chain REST calls | `get_option_chain` × 2/min = 750/day (single API call per instrument) |
+| Option chain REST calls | 0 — WS depth feed → feed.py persists at bar close; option_prices read by enricher | |
 | Missed minutes | ~7 (feed restarts during Redis purge) |
 
 ### Validator bugs FIXED (9e1cd6f, 83e01a8)

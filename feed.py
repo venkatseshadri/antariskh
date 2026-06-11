@@ -181,10 +181,74 @@ def _write_1min_log(instrument: str, bar: dict):
     _1min_logs[instrument].write(line)
 
 
-def _write_1min_sqlite(bar: dict):
-    """Write 1-min bar to capture SQLite market_data (replaces consumer)."""
+_capture_dbs = {}
+
+
+def _get_capture_db(instrument: str):
+    if instrument not in _capture_dbs:
+        _capture_dbs[instrument] = open_capture_db(instrument)
+    return _capture_dbs[instrument]
+
+
+def _persist_bar_and_options(completed: dict):
+    """Write 1-min bar + option prices in one BEGIN IMMEDIATE txn (T14)."""
+    instrument = completed["instrument"]
     try:
-        db = open_capture_db(bar["instrument"])
+        db = _get_capture_db(instrument)
+        if not db:
+            return
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(
+            "INSERT OR REPLACE INTO market_data "
+            "(timestamp, instrument, open, high, low, close, volume, ltp, source) "
+            "VALUES (?,?,?,?,?,?,?,?,'feed')",
+            (
+                completed["timestamp"],
+                instrument,
+                completed["open"],
+                completed["high"],
+                completed["low"],
+                completed["close"],
+                completed.get("volume", 0),
+                completed.get("ltp", completed["close"]),
+            ),
+        )
+        state = _option_state.get(instrument)
+        if state:
+            failed = 0
+            bar_ts = completed["timestamp"]
+            for opt in state["token_map"].values():
+                ltp = opt.get("ltp")
+                if not ltp or ltp <= 0:
+                    continue
+                try:
+                    db.execute(
+                        """INSERT OR IGNORE INTO option_prices
+                           (tsym, strike, option_type, ltp, oi, volume, timestamp)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            opt["tsym"],
+                            opt["strike"],
+                            opt.get("opt_type", ""),
+                            ltp,
+                            opt.get("oi"),
+                            opt.get("volume"),
+                            bar_ts,
+                        ),
+                    )
+                except Exception:
+                    failed += 1
+            if failed:
+                log.warning(f"Option persist [{instrument}]: {failed} row(s) failed")
+        db.commit()
+    except Exception as e:
+        log.warning(f"Bar+options write failed for {instrument}: {e}")
+
+
+def _write_1min_sqlite(bar: dict):
+    """Write 1-min bar to capture SQLite (non-option MCX instruments)."""
+    try:
+        db = _get_capture_db(bar["instrument"])
         if not db:
             return
         db.execute(
@@ -205,41 +269,6 @@ def _write_1min_sqlite(bar: dict):
         db.commit()
     except Exception as e:
         log.warning(f"SQLite write failed for {bar['instrument']}: {e}")
-
-
-def _persist_option_prices(instrument: str, bar_ts: str):
-    """Append in-memory option state to option_prices at bar close (WS-first, zero REST)."""
-    state = _option_state.get(instrument)
-    if not state:
-        return
-    try:
-        db = open_capture_db(instrument)
-        if not db:
-            return
-        for opt in state["token_map"].values():
-            ltp = opt.get("ltp")
-            if not ltp or ltp <= 0:
-                continue
-            try:
-                db.execute(
-                    """INSERT OR IGNORE INTO option_prices
-                       (tsym, strike, option_type, ltp, oi, volume, timestamp)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        opt["tsym"],
-                        opt["strike"],
-                        opt.get("opt_type", ""),
-                        ltp,
-                        opt.get("oi"),
-                        opt.get("volume"),
-                        bar_ts,
-                    ),
-                )
-            except Exception:
-                pass
-        db.commit()
-    except Exception as e:
-        log.warning(f"Option persist failed for {instrument}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -455,8 +484,11 @@ def main():
             # ── Write 1-min bar to log file (append-only, crash-safe) ───
             _write_1min_log(instrument, completed)
 
-            # ── Write to capture SQLite directly (no consumer needed) ─────
-            _write_1min_sqlite(completed)
+            # ── Persist bar + option prices to SQLite in one txn (T14) ──
+            if instrument in INSTRUMENT_GAP:
+                _persist_bar_and_options(completed)
+            else:
+                _write_1min_sqlite(completed)
 
             # ── ATM shift check — ONCE PER MINUTE, bar close ─────────────
             if instrument in INSTRUMENT_GAP and completed["close"] > 0:
@@ -468,8 +500,6 @@ def main():
                     old_atm = _option_state[instrument]["atm"]
                     if new_atm != old_atm:
                         _rebalance_option_window(api, r, instrument, new_atm)
-                # T13: persist in-memory option premiums (WS-first, zero REST)
-                _persist_option_prices(instrument, completed["timestamp"])
 
         # per-instrument heartbeat — write to file every 60s (DataHealth reads files)
         _write_feed_heartbeat(instrument, bar["timestamp"])

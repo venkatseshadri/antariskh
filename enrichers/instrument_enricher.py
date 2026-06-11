@@ -11,10 +11,11 @@ import argparse
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -492,7 +493,7 @@ class Enricher:
                     greeks = compute_aggregate_greeks(
                         spot, self._get_weekly_expiry(), atm_strike, india_vix
                     )
-                    option_data = self._read_option_prices_from_db()
+                    option_data = self._read_option_prices_from_db(bar["timestamp"])
                     if option_data:
                         pcr = compute_pcr(option_data, atm_strike)
                         oi = compute_oi_analysis(option_data, atm_strike)
@@ -630,29 +631,42 @@ class Enricher:
         # Retired — feed.py now persists option data from WebSocket (T13).
         pass
 
-    def _read_option_prices_from_db(self) -> List[Dict]:
+    def _read_option_prices_from_db(self, bar_ts: str) -> List[Dict]:
         try:
-            latest = self.conn.execute(
-                "SELECT MAX(timestamp) FROM option_prices"
-            ).fetchone()
-            if not latest or not latest[0]:
-                return []
             rows = self.conn.execute(
-                """SELECT tsym, strike, option_type, ltp, oi
-                   FROM option_prices WHERE timestamp = ?""",
-                (latest[0],),
+                """SELECT tsym, strike, option_type, ltp, oi, timestamp
+                   FROM option_prices
+                   ORDER BY timestamp DESC
+                   LIMIT 300"""
             ).fetchall()
-            return [
-                {
-                    "tsym": r["tsym"],
-                    "strike": r["strike"],
-                    "option_type": r["option_type"],
-                    "oi": r["oi"],
-                    "iv": None,
-                    "ltp": r["ltp"],
-                }
-                for r in rows
-            ]
+            if not rows:
+                return []
+
+            latest_ts_str = rows[0]["timestamp"]
+            bar_dt = datetime.fromisoformat(bar_ts)
+            latest_dt = datetime.fromisoformat(latest_ts_str)
+            if (bar_dt - latest_dt) > timedelta(minutes=3):
+                return []
+
+            _monthly_rx = re.compile(r"^SENSEX\d{2}[A-Z]{3}\d+[CP][PE]$")
+            result = []
+            for r in rows:
+                if r["timestamp"] != latest_ts_str:
+                    continue
+                tsym = r["tsym"]
+                if self.instrument == "SENSEX" and _monthly_rx.match(tsym):
+                    continue
+                result.append(
+                    {
+                        "tsym": tsym,
+                        "strike": r["strike"],
+                        "option_type": r["option_type"],
+                        "oi": r["oi"],
+                        "iv": None,
+                        "ltp": r["ltp"],
+                    }
+                )
+            return result
         except Exception:
             return []
 

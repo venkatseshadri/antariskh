@@ -28,6 +28,10 @@ from pathlib import Path
 import redis
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from sim.sim_env import redis_kwargs  # PORCUPINE: redis target (prod 6379 / sim 6380)
+
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -94,6 +98,12 @@ def bucket_minute(instrument: str, tick: dict) -> dict | None:
     """
     minute = tick["timestamp"][:16]  # YYYY-MM-DDTHH:MM
     ltp = tick.get("close", 0) or 0
+    # Drop price-less ticks (lp=0): folding 0 into the bar permanently locks
+    # low=min(0,·)=0 (high=max recovers, low never does) — corrupted low on
+    # ~87% of bars, poisoning ATR/SuperTrend/pivots. A tick with no last price
+    # carries no OHLC observation. (Caught by PORCUPINE 2026-06-05.)
+    if ltp <= 0:
+        return None
     cur = _minute_bars.get(instrument)
     if cur is not None and minute == cur["timestamp"][:16]:
         cur["high"] = max(cur["high"], ltp)
@@ -318,7 +328,7 @@ def main():
     log.info(f"Instruments: {', '.join(active_instruments)}")
     log.info(f"Redis cap: {REDIS_CAP} bars/instrument")
 
-    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+    r = redis.Redis(**redis_kwargs())
     r.ping()
     log.info("Redis connected")
 

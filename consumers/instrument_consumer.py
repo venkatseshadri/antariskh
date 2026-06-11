@@ -27,7 +27,8 @@ import redis
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.sqlite_schema import open_capture_db, init_schemas
+from config.sqlite_schema import open_capture_db, init_schemas, get_sqlite_capture_path
+from sim.sim_env import redis_kwargs  # PORCUPINE: redis target (prod 6379 / sim 6380)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,13 +150,8 @@ def main():
 
     instrument = args.instrument
 
-    db_path = (
-        PROJECT_ROOT.parent
-        / "python-trader"
-        / "varaha"
-        / "data"
-        / f"capture_{instrument.lower()}.sqlite"
-    )
+    # PORCUPINE: resolve via sim_env so SIM_MODE redirects to the sandbox.
+    db_path = get_sqlite_capture_path(instrument)
 
     if instrument == "MCX":
         MCX_CONTRACTS = [
@@ -175,7 +171,7 @@ def main():
         f"Consumer starting: instrument={instrument}, feeds={feed_keys}, db={db_path}"
     )
 
-    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+    r = redis.Redis(**redis_kwargs())
     r.ping()
     log.info("Redis connected — waiting for producer bars...")
 
@@ -233,6 +229,18 @@ def main():
                 # Producer already aggregated to a completed 1-min bar.
                 completed = bar
 
+                # Reject zero/invalid-OHLC bars before they reach raw market_data:
+                # a 0 in any price field poisons low-based indicators and reaches
+                # the regime agent as spot=0 (A1). feed.py drops lp-less WS ticks,
+                # but bars arriving pre-aggregated via the queue need the same guard
+                # here — same bug class as #2, sibling write path. (Skipping is safe:
+                # the checkpoint advances on later good bars.)
+                if ((completed.get("close", 0) or 0) <= 0
+                        or (completed.get("low", 0) or 0) <= 0
+                        or (completed.get("high", 0) or 0) <= 0
+                        or (completed.get("open", 0) or 0) <= 0):
+                    continue
+
                 # Write 1-min bar to market_data
                 conn.execute(
                     """INSERT OR REPLACE INTO market_data
@@ -278,16 +286,30 @@ def main():
                     pub_key = f"bars:{instrument}:{tf}"
                     r.publish(pub_key, json.dumps(bucket))
 
-                last_ts[completed.get("instrument", instrument)] = completed["timestamp"]
+                last_ts[completed.get("instrument", instrument)] = completed[
+                    "timestamp"
+                ]
+
+            # Commit bar batch immediately — release lock so enricher can write
+            # market_data_enriched. Long transaction across option_prices was
+            # the root cause of sqlite3.OperationalError: database is locked.
+            if all_new_bars:
+                conn.execute(
+                    "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
+                    (f"last_ts:{instrument}", json.dumps(last_ts)),
+                )
+                conn.commit()
+                if bar_count % 60 == 0:
+                    log.info(
+                        f"Bars: {bar_count} (ckpt: {last_ts}), Options: {opt_count}"
+                    )
 
             # ── Process option LTPs (NIFTY + SENSEX) ─────────────────────────
-            # Latest LTP per strike lives in a Redis hash (one field per tsym),
-            # so cost is O(strikes) — independent of tick rate. See feed.py.
+            # Separate transaction from bars — options are best-effort.
             if instrument in ("NIFTY", "SENSEX"):
                 ltp_key = f"feed:{instrument}:options:ltp"
                 window_key = f"feed:{instrument}:options:window"
 
-                # Purge stale strikes from feed window signal
                 window_json = r.get(window_key)
                 if window_json:
                     try:
@@ -319,16 +341,7 @@ def main():
                     )
                     opt_count += 1
 
-            if all_new_bars:
-                conn.execute(
-                    "INSERT OR REPLACE INTO consumer_state (key, value) VALUES (?, ?)",
-                    (f"last_ts:{instrument}", json.dumps(last_ts)),
-                )
                 conn.commit()
-                if bar_count % 60 == 0:
-                    log.info(
-                        f"Bars: {bar_count} (ckpt: {last_ts}), Options: {opt_count}"
-                    )
 
             r.set(
                 f"consumer:{instrument}:heartbeat", datetime.now().isoformat(), ex=120

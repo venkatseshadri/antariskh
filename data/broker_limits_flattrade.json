@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "timestamp": "2026-06-11T08:30:06.437770",
+  "total_margin_available": 9696.19,
+  "used_margin": 0.0,
+  "free_margin": 9696.19,
+  "cash_available": 0.0,
+  "collateral_value": 9696.19,
+  "gross_collateral": 10773.54,
+  "account_id": "FT055702"
+}

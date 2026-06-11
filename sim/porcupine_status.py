@@ -53,6 +53,11 @@ def milestones() -> list[tuple[str, bool]]:
         ("P4 orchestrator (run_scenario)",      _has("sim/run_scenario.py", "assertions")),
         ("Synthetic fault driver (--fault)",    _has("sim/mock_feed.py", "--fault")),
         ("Lifecycle in sim (order→monitor→exit)", _has("sim/run_scenario.py", "position_manager")),
+        ("Lifecycle exit branches (SL/TP/EOD/floor/morph)", _has("sim/run_scenario.py", "LIFECYCLE")),
+        ("Path stack: option pricer",           _has("sim/option_pricer.py", "option_ltp")),
+        ("Path stack: multi-cycle driver",      _has("sim/path_driver.py", "run_bridge")),
+        ("Path scenarios (data + expect DSL)",  _has("sim/path_scenarios.py", "PATH_SCENARIOS")),
+        ("Fault→assertion binding (run_scenario)", _has("sim/run_scenario.py", "fault:")),
         ("Bug #3 harness guard (entry-agent fallback)", _has("sim/tests/test_fallback_inputs.py")),
         ("Bug #4 harness guard (VIX-null)",     _has("sim/tests/test_vix_null_guard.py")),
     ]
@@ -76,7 +81,8 @@ def report(send: bool, force: bool) -> int:
     total = len(ms)
     iso_ok = _test_ok("sim.tests.test_isolation")
     feed_ok = _test_ok("sim.tests.test_feed_bar_integrity")
-    complete = done == total and iso_ok and feed_ok
+    pricer_ok = _test_ok("sim.tests.test_option_pricer")
+    complete = done == total and iso_ok and feed_ok and pricer_ok
 
     pct = round(100 * done / total)
     remaining = [n for n, ok in ms if not ok]
@@ -87,7 +93,8 @@ def report(send: bool, force: bool) -> int:
 
     lines = [
         f"🦔 PORCUPINE build — {datetime.now():%Y-%m-%d %H:%M}",
-        f"Milestones: {done}/{total} ({pct}%)   Regression: isolation {'✅' if iso_ok else '❌'} · feed {'✅' if feed_ok else '❌'}",
+        f"Milestones: {done}/{total} ({pct}%)   Regression: isolation {'✅' if iso_ok else '❌'} · "
+        f"feed {'✅' if feed_ok else '❌'} · pricer {'✅' if pricer_ok else '❌'}",
     ]
     if remaining:
         lines.append("Remaining: " + "; ".join(remaining))
@@ -101,7 +108,7 @@ def report(send: bool, force: bool) -> int:
     # only notify on change (token-free: direct Telegram bot API, no LLM)
     # live_fixes are included in the signature so a later human fix still notifies,
     # but they are NOT in `complete` — the builder self-terminates on harness done.
-    sig = hashlib.sha1(json.dumps([ms, lf, iso_ok, feed_ok]).encode()).hexdigest()[:12]
+    sig = hashlib.sha1(json.dumps([ms, lf, iso_ok, feed_ok, pricer_ok]).encode()).hexdigest()[:12]
     prev = ""
     if STATE.exists():
         prev = json.loads(STATE.read_text()).get("sig", "")

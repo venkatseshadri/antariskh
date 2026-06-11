@@ -10,23 +10,40 @@ Usage:
 """
 
 import sqlite3
+import sys
 from pathlib import Path
 
-_DATA_DIR = Path("/home/trading_ceo/python-trader/varaha/data")
+# Route capture paths through PORCUPINE's sim_env so SIM_MODE redirects them to
+# the sandbox. In production (SIM_MODE unset) this resolves to the same path as
+# before. Bootstrap the antariksh root onto sys.path so the import works
+# regardless of which entrypoint imported this module.
+_ANTARIKSH_ROOT = Path(__file__).resolve().parent.parent
+if str(_ANTARIKSH_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ANTARIKSH_ROOT))
+from sim.sim_env import capture_path as _sim_capture_path, assert_sandboxed
 
 
 def get_sqlite_capture_path(instrument: str) -> Path:
-    return _DATA_DIR / f"capture_{instrument.lower()}.sqlite"
+    return _sim_capture_path(instrument)
 
 
-def open_capture_db(instrument: str) -> sqlite3.Connection:
-    """Open per-instrument SQLite with WAL, NORMAL sync, busy_timeout."""
+def open_capture_db(instrument: str, autocommit: bool = False) -> sqlite3.Connection:
+    """Open per-instrument SQLite with WAL, NORMAL sync, busy_timeout.
+
+    autocommit=True sets isolation_level=None so callers can manage explicit
+    `BEGIN IMMEDIATE`/`COMMIT` transactions (required for busy_timeout to be
+    honored on write-lock acquisition — see PENGUIN_ENRICHER_LOCK_FIX.md). The
+    consumer keeps the default implicit-transaction mode.
+    """
     path = get_sqlite_capture_path(instrument)
+    assert_sandboxed(path)  # PORCUPINE: refuse to open a prod path during a sim run
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), check_same_thread=False)
+    if autocommit:
+        conn.isolation_level = None
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.row_factory = sqlite3.Row
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]

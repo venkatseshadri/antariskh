@@ -453,6 +453,7 @@ data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 > → ✅ BUILT 0ffaad0 + brahmand 3331281 (test_t16_futures_roll 10/10 PASS — T-2 roll, T-3 no-roll, expiry raise, MCX skip-month, SENSEX, BSXFUT→BFO)
 >
 > ❌ **VALIDATION FAILED — validator 06-11 23:55 (0ffaad0 + 3331281). 2 blockers, fix-forward before 06-12 09:14.**
+> 🔧 **FIXED e1e1219 + brahmand bae4f93 (06-11 22:50).**
 > Good first: resolver logic sound (sorted expiries, T-2 roll, expired-root raises),
 > schema migration guarded (`PRAGMA table_info` before ALTER — safe on live DBs),
 > yaml now root-only, 10/10 tests pass. But tests cover the RESOLVER only — neither

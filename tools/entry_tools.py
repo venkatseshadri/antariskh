@@ -939,7 +939,10 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
         latest = bars[0]
 
         # Split bars by trading day (YYYY-MM-DD from timestamp prefix)
-        today_str = _dt.now().strftime("%Y-%m-%d")
+        # SHERPA_AS_OF: replay clock for the canonical-strategy backtest
+        # (format "YYYY-MM-DD HH:MM:SS"); unset = live behavior
+        _as_of = os.environ.get("SHERPA_AS_OF")
+        today_str = (_as_of or _dt.now().strftime("%Y-%m-%d"))[:10]
         today_bars = [b for b in bars if b.get("timestamp", "")[:10] == today_str]
         yesterday_bars = [b for b in bars if b.get("timestamp", "")[:10] != today_str]
 
@@ -1066,7 +1069,9 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
     # Load EMA values from brahmand data directory (organized by timeframe)
     # Primary: 60min TF for trend scoring (balanced resolution)
     # Fallback: 1min TF if 60min data is stale (>30 min old)
-    ema_base_dir = _Path("/home/trading_ceo/brahmand/data/ema_state")
+    ema_base_dir = _Path(
+        os.environ.get("BRAHMAND_EMA_DIR", "/home/trading_ceo/brahmand/data/ema_state")
+    )
     ema_dir = ema_base_dir / "60min"
     ema_values = {}
     ema_status = {}
@@ -1390,7 +1395,11 @@ _SESSION_SECONDS = 375 * 60  # 09:15–15:30 = 6.25 hours
 
 
 def _compute_completion_by_tf() -> dict:
-    now = _dt.now(_IST)
+    _as_of = os.environ.get("SHERPA_AS_OF")  # replay clock (SHERPA backtest)
+    if _as_of:
+        now = _dt.fromisoformat(_as_of).replace(tzinfo=_IST)
+    else:
+        now = _dt.now(_IST)
 
     session_start = now.replace(
         hour=_MARKET_OPEN_H, minute=_MARKET_OPEN_M, second=0, microsecond=0

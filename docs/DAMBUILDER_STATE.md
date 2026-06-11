@@ -559,6 +559,8 @@ as NEUTRAL or as a crash.
 > call → ZERO paper entries from 06-12 09:15 unless fixed before open. Tests 7/7 pass
 > because they mock around all three bugs. Validator ran the REAL gate against the
 > REAL prod files:**
+> 🔧 **FIXED brahmand f5c75b2 (23:08).** Real run: gate found path (B1), parsed naive ts (B2),
+> detected 14h-stale cache, live-refreshed get_limits(), returned MARGIN_OK. Ready for re-val.
 >
 > **T17-B1 (path bug):** `margin_gate.py` `_ANTARIKSH_ROOT = …parent.parent.parent /
 > "antariksh"` → resolves to `/home/antariksh` (one `.parent` too many; module sits at

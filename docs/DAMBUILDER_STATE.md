@@ -432,6 +432,20 @@ only NIFTY/SENSEX — same blind spot that hid this).
 backfilled 11:25→close; live rows appearing ≤1 min behind clock while MCX open;
 data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 
+> **Validator 22:30 — ✅✅ LIVE-VALIDATED (8abc2e5).** Validator restarted feed.service
+> 22:26 (Board-directed live test during MCX session; T14 note "don't restart" was
+> pre-T15 and is superseded). Results, all independently run:
+> - Backfill ✓: full-day per-commodity counts in capture_mcx (e.g. CRUDEOILM 778 →22:20),
+>   history intact 267,946 rows.
+> - LIVE rows ✓ 22:27, ALL 7 commodities incl. **GOLD — first data since GOLD05JUN26
+>   expired 06-05** (silent 6-day gap; see T16 below). GOLDPETAL30JUN26 token 510464
+>   verified vs MCX master (lot=1, 1g micro — Board MINI/MICRO preference).
+> - MCX_1min.log created ✓, feed journal clean ✓, tests 11/11 ✓ (t15+t14+t12).
+> - Husk note: pre-restart old-code feed recreated capture_alumini.sqlite (+wal/shm)
+>   AFTER DS archived it — archive again or leave; harmless now (new code routes to mcx).
+> Residual: §8 V11 morning+evening; enricher-mcx enrichment quality (mixed-commodity
+> MCX_1min.log → what does enricher write per instrument? check 06-12).
+
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
 entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never

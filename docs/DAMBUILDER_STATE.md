@@ -585,6 +585,18 @@ as NEUTRAL or as a crash.
 > `check_entry_margin` on this box returns `MARGIN_OK`/`MARGIN_INSUFFICIENT` (numbers,
 > not MISSING/STALE) during a fresh-cache window AND triggers live refresh on a stale
 > cache; plus one kickoff log line 06-12 showing the gate verdict. Paste in §5.
+>
+> ✅✅ **VALIDATED (code) — validator 06-11 23:11 (f5c75b2).** Validator re-ran the REAL
+> gate against REAL prod files: detected 14.6h-stale cache → fired live broker
+> `get_limits()` → rewrote broker_limits.json (ts 23:10:16) → returned
+> `MARGIN_OK: need 150,475 (net available 508,656, free 565,173)`. 7/7 tests pass.
+> B1/B2/B3 all confirmed fixed empirically, not from commit claims.
+> **Residual (minor, fix with T18 batch):** in the stale branch, if live refresh
+> succeeds but the re-read parse fails, `age` is None and the
+> `f"MARGIN_DATA_STALE: {age:.0f}m old"` f-string raises TypeError inside the gate →
+> tool error instead of clean block. Guard the format (`age if age is not None else -1`).
+> **Residual (live):** 06-12 first kickoff must show one gate-verdict log line in
+> run_kickoff/chain_tools output — validator checks after open.
 **Finding (validator audit 06-11):** the daily fetch works — cron 08:30
 `antariksh/margin_calculator.py` → `antariksh/data/broker_limits.json` (Shoonya) +
 `broker_limits_flattrade.json`, ran clean today, 60-min staleness flag exists

@@ -306,6 +306,17 @@ entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) a
 as NEUTRAL or as a crash.
 **Accept:** brahmand test with a fixture where 240m st_consensus=None vs fixture omitting
 240m → identical gate decision; paste both outputs.
+> ✅✅ **CLOSED BY VALIDATOR 22:15.** DS round 2 (6f1c0a6) validated the DATA layer
+> (real aggregate+indicators, 240m=None doesn't corrupt — PASS re-run) but still
+> never touched the decision layer. Validator went in directly and **found the live
+> bug T8b existed to catch**: `entry_tools.py:2185` `d.get("st_consensus","").upper()`
+> → `None.upper()` AttributeError — `score_trend` crashes on any TF with SMA data +
+> nulled ST (T8's new value). Fixed (`or ""`), wrote
+> `tests/test_t8b_decision_layer.py` exercising REAL `score_trend` +
+> `combine_entry_scores`: crash regression (verified FAIL pre-fix / PASS post-fix),
+> None==zero-boost (no coerced vote), combine stable. Outputs:
+> `240m st=None: BULLISH 2.20/66 == 240m st=NEUTRAL; combine go=True identical`.
+>
 > ❌ **Validator 21:50 — round 1 (8e2b9f9) NOT ACCEPTED.** `test_canonical_gate_null.py`
 > reimplements consensus INSIDE the test (`_compute_consensus`, "simplified version") —
 > it proves the mock excludes None, not that production does. Circular.

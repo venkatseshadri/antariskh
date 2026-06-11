@@ -2182,7 +2182,7 @@ def score_trend(index: str = "NIFTY") -> dict:
             aligned_count += 1
 
         # ST boost
-        st = d.get("st_consensus", "").upper()
+        st = (d.get("st_consensus") or "").upper()
         if st in ("BULLISH", "BEARISH"):
             tf_score += (
                 st_boost

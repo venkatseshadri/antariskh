@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sqlite3
 import sys
 import time
@@ -17,13 +18,37 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import redis
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+LIVE_DIR = PROJECT_ROOT / "data" / "live"
+
+
+def _read_latest_close(log_path: Path) -> Optional[float]:
+    """Read the last close price from a 1-min log file."""
+    if not log_path.exists():
+        return None
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)  # end
+            size = f.tell()
+            if size < 20:
+                return None
+            f.seek(max(0, size - 200))  # last ~200 bytes
+            lines = f.read().decode("utf-8", errors="replace").strip().split("\n")
+            if not lines:
+                return None
+            last_line = lines[-1]
+            parts = last_line.split("|")
+            if len(parts) >= 6:
+                return float(parts[5])  # close is index 5
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 from config.sqlite_schema import open_capture_db, init_enriched_schema
-from sim.sim_env import redis_kwargs  # PORCUPINE: redis target (prod 6379 / sim 6380)
 
 _TEXT_COLS = {
     "timestamp",
@@ -293,7 +318,6 @@ class Enricher:
         self.instrument = instrument
         self.conn = conn
         self.broker = broker
-        self.r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
         self.buf = IndicatorBuffer(maxlen=200)
         self.open_price = None
         self.intraday_high = None
@@ -489,15 +513,11 @@ class Enricher:
 
         if self.broker and self.broker.connected:
             try:
-                # ── VIX + futures now stream via WebSocket (zero REST) ──
-                # feed:INDIAVIX, feed:NIFTY-FUT, feed:SENSEX-FUT
-                vix_bar = self.r.lindex("feed:INDIAVIX", 0)
-                if vix_bar:
-                    india_vix = json.loads(vix_bar).get("close")
-                fut_key = f"feed:{self.instrument}-FUT"
-                fut_bar = self.r.lindex(fut_key, 0)
-                if fut_bar:
-                    futures_ltp = json.loads(fut_bar).get("close")
+                # ── VIX + futures read from live log files (zero REST, zero Redis) ──
+                india_vix = _read_latest_close(LIVE_DIR / "INDIAVIX_1min.log")
+                fut_path = LIVE_DIR / f"{self.instrument}-FUT_1min.log"
+                if fut_path.exists():
+                    futures_ltp = _read_latest_close(fut_path)
 
                 if india_vix:
                     vix_history = self._get_vix_history()
@@ -713,14 +733,10 @@ def run_live(instrument: str):
     if ema_hook:
         log.info("EMA integration hook loaded")
 
-    r = redis.Redis(**redis_kwargs())
-    r.ping()
+    log_path = LIVE_DIR / f"{instrument}_1min.log"
+    log.info(f"Watching {log_path}")
 
-    pubsub = r.pubsub()
-    channel = f"bars:{instrument}:1"
-    pubsub.subscribe(channel)
-    log.info(f"Subscribed to {channel} — waiting for bars...")
-
+    # Resume from last enriched bar
     row = conn.execute(
         "SELECT value FROM consumer_state WHERE key = ?",
         (f"last_enriched_bar_ts:{instrument}",),
@@ -730,80 +746,76 @@ def run_live(instrument: str):
         log.info(f"Resuming from: {last_ts}")
 
     bar_count = 0
+    last_size = 0
     try:
-        for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
+        while True:
+            time.sleep(1)
             try:
-                bar = json.loads(message["data"])
-            except (json.JSONDecodeError, TypeError):
+                current_size = os.path.getsize(log_path)
+            except OSError:
+                time.sleep(5)
                 continue
-
-            if last_ts and bar.get("timestamp", "") <= last_ts:
+            if current_size <= last_size:
                 continue
+            # Read new bytes
+            with open(log_path, "r") as f:
+                f.seek(last_size)
+                raw = f.read(current_size - last_size)
+            last_size = current_size
 
-            t0 = time.time()
-            row = enricher.enrich_bar(bar)
-            if row:
-                enricher.write_enriched(row)
-                bar_count += 1
-                last_ts = row["timestamp"]
-
-                if (
-                    len(enricher._write_buffer) >= enricher._flush_batch_size
-                    or (time.time() - enricher._last_flush) >= enricher._flush_interval
-                ):
-                    enricher.flush_enriched_batch()
-
-                queue_key = f"v3_ohlcv_queue_{instrument}"
+            for line in raw.strip().split("\n"):
+                line = line.strip()
+                if not line or line.count("|") < 5:
+                    continue
+                parts = line.split("|")
                 try:
-                    bridge_bar = {
-                        "timestamp": row["timestamp"],
-                        "index": instrument,
-                        "open": row.get("open_price") or bar.get("open", 0),
-                        "high": bar.get("high", bar.get("open", 0)),
-                        "low": bar.get("low", bar.get("open", 0)),
-                        "close": bar.get("close", bar.get("open", 0)),
-                        "volume": bar.get("volume", 0),
-                        "ema5": row.get("ema_5"),
-                        "ema20": row.get("ema_20"),
-                        "ema50": row.get("ema_50"),
-                        "rsi": row.get("rsi"),
-                        "atr": row.get("atr"),
-                        "adx": row.get("adx"),
-                        "st_direction": row.get("supertrend_direction"),
-                        "bb_pct_b": row.get("bb_pct_b"),
+                    bar = {
+                        "timestamp": parts[0],
+                        "instrument": parts[1],
+                        "open": float(parts[2]),
+                        "high": float(parts[3]),
+                        "low": float(parts[4]),
+                        "close": float(parts[5]),
+                        "volume": float(parts[6]) if len(parts) > 6 else 0,
                     }
-                    r.lpush(queue_key, json.dumps(bridge_bar))
-                    r.ltrim(queue_key, 0, 10079)
-                except Exception:
-                    pass
+                except (ValueError, IndexError):
+                    continue
 
-                if ema_hook and bar.get("close"):
-                    try:
-                        ema_hook(bar, index=instrument)
-                    except Exception:
-                        pass
+                if last_ts and bar.get("timestamp", "") <= last_ts:
+                    continue
 
-                elapsed = time.time() - t0
-                if elapsed > 5:
-                    log.warning(
-                        f"Enrichment took {elapsed:.1f}s for {row['timestamp']}"
-                    )
-                if bar_count % 30 == 0:
-                    log.info(f"Enriched {bar_count} bars (last: {last_ts})")
+                t0 = time.time()
+                row = enricher.enrich_bar(bar)
+                if row:
+                    enricher.write_enriched(row)
+                    bar_count += 1
+                    last_ts = row["timestamp"]
 
-            r.set(
-                f"enricher:{instrument}:heartbeat", datetime.now().isoformat(), ex=120
-            )
+                    if (
+                        len(enricher._write_buffer) >= enricher._flush_batch_size
+                        or (time.time() - enricher._last_flush)
+                        >= enricher._flush_interval
+                    ):
+                        enricher.flush_enriched_batch()
 
-    except KeyboardInterrupt:
-        log.info("Shutting down")
+                    if ema_hook and bar.get("close"):
+                        try:
+                            ema_hook(bar, index=instrument)
+                        except Exception:
+                            pass
+
+                    elapsed = time.time() - t0
+                    if elapsed > 5:
+                        log.warning(
+                            f"Enrichment took {elapsed:.1f}s for {row['timestamp']}"
+                        )
+                    if bar_count % 30 == 0:
+                        log.info(f"Enriched {bar_count} bars (last: {last_ts})")
+
+                # Heartbeat — file-based
+                heartbeat = LIVE_DIR / f"enricher_{instrument}.heartbeat"
+                heartbeat.write_text(datetime.now().isoformat())
     finally:
-        try:
-            enricher.flush_enriched_batch()
-        except sqlite3.OperationalError:
-            log.error("Final flush failed — buffered rows not persisted")
         conn.close()
         log.info(f"Enricher stopped — {bar_count} bars enriched")
 

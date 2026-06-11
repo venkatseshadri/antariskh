@@ -49,11 +49,17 @@ sys.path.insert(0, str(SHOONYA_DIR))
 sys.path.insert(0, "/usr/local/lib/python3.12/dist-packages")
 from api_helper import NorenApiPy
 
+sys.path.insert(0, str(PROJECT_ROOT))
+from config.sqlite_schema import open_capture_db
+
 CRED_FILE = SHOONYA_DIR / "cred.yml"
 INSTRUMENTS_FILE = PROJECT_ROOT / "config" / "instruments.yaml"
-# Producer emits 1-min OHLCV bars (not raw ticks) → ≈1 entry/min/instrument.
-# 7 trading days × ~855 min/day (MCX, the longest session) ≈ 5,985 → 7,000 with buffer.
-REDIS_CAP = 7000
+
+LIVE_DIR = PROJECT_ROOT / "data" / "live"
+LIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+_1min_logs: dict = {}  # instrument → file handle
+_1min_logs_day: str = ""  # rotate at midnight
 
 
 def load_instruments() -> dict:
@@ -138,6 +144,54 @@ def build_subscriptions(config: dict) -> list:
         for item in config.get(sect, []):
             subs.append(item)
     return subs
+
+
+def _write_1min_log(instrument: str, bar: dict):
+    """Append completed 1-min bar to live log file. Rotates at midnight."""
+    global _1min_logs, _1min_logs_day
+
+    today_str = datetime.now(IST).strftime("%Y%m%d")
+    if today_str != _1min_logs_day:
+        for f in _1min_logs.values():
+            f.close()
+        _1min_logs.clear()
+        _1min_logs_day = today_str
+
+    if instrument not in _1min_logs:
+        path = LIVE_DIR / f"{instrument}_1min.log"
+        _1min_logs[instrument] = open(path, "a", buffering=1)
+
+    line = (
+        f"{bar['timestamp']}|{bar['instrument']}|"
+        f"{bar['open']}|{bar['high']}|{bar['low']}|{bar['close']}|{bar['volume']}\n"
+    )
+    _1min_logs[instrument].write(line)
+
+
+def _write_1min_sqlite(bar: dict):
+    """Write 1-min bar to capture SQLite market_data (replaces consumer)."""
+    try:
+        db = open_capture_db(bar["instrument"])
+        if not db:
+            return
+        db.execute(
+            "INSERT OR REPLACE INTO market_data "
+            "(timestamp, instrument, open, high, low, close, volume, ltp, source) "
+            "VALUES (?,?,?,?,?,?,?,?,'feed')",
+            (
+                bar["timestamp"],
+                bar["instrument"],
+                bar["open"],
+                bar["high"],
+                bar["low"],
+                bar["close"],
+                bar.get("volume", 0),
+                bar.get("ltp", bar["close"]),
+            ),
+        )
+        db.commit()
+    except Exception as e:
+        log.warning(f"SQLite write failed for {bar['instrument']}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -323,7 +377,7 @@ def main():
     active_instruments = [s["name"] for s in subscriptions]
 
     log.info(f"Instruments: {', '.join(active_instruments)}")
-    log.info(f"Redis cap: {REDIS_CAP} bars/instrument")
+    log.info(f"Live log: {LIVE_DIR}")
 
     r = redis.Redis(**redis_kwargs())
     r.ping()
@@ -384,14 +438,16 @@ def main():
             return
 
         bar = normalize(msg, instrument)
-        feed_key = f"feed:{instrument}"
 
         # Aggregate ticks into 1-min OHLCV bars here; push only completed bars
         # (≈1/min) instead of every tick. Consumer persists them as-is.
         completed = bucket_minute(instrument, bar)
         if completed is not None:
-            r.lpush(feed_key, json.dumps(completed))
-            r.ltrim(feed_key, 0, REDIS_CAP)
+            # ── Write 1-min bar to log file (append-only, crash-safe) ───
+            _write_1min_log(instrument, completed)
+
+            # ── Write to capture SQLite directly (no consumer needed) ─────
+            _write_1min_sqlite(completed)
 
             # ── ATM shift check — ONCE PER MINUTE, bar close ─────────────
             if instrument in INSTRUMENT_GAP and completed["close"] > 0:

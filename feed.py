@@ -129,16 +129,32 @@ def bucket_minute(instrument: str, tick: dict) -> dict | None:
     return completed
 
 
+_INSTRUMENT_CONTRACT = {}
+_INSTRUMENT_EXPIRIES = {}
+
+
 def build_token_map(instruments: list) -> dict:
-    """Reverse-lookup: (exchange, token_str) → instrument name."""
     return {(cfg["exchange"], cfg["token"]): cfg["name"] for cfg in instruments}
 
 
 def build_subscriptions(config: dict) -> list:
-    """Flatten config into a list of dicts ready for subscribe()."""
+    """Flatten config into list of dicts; resolves product_root → token+tsym."""
+    from config.token_resolver import TokenResolver
+
+    resolver = TokenResolver()
     subs = []
     for sect in ("spot", "futures", "mcx"):
         for item in config.get(sect, []):
+            item = dict(item)
+            if "product_root" in item:
+                contract = resolver.resolve_nearest_future(
+                    item["product_root"], item["exchange"]
+                )
+                item["token"] = contract["token"]
+                item["tsym"] = contract["tsym"]
+                _INSTRUMENT_CONTRACT[item["name"]] = contract["tsym"]
+                _INSTRUMENT_EXPIRIES[item["name"]] = contract["expiry"]
+                del item["product_root"]
             subs.append(item)
     return subs
 
@@ -216,10 +232,11 @@ def _persist_bar_and_options(completed: dict):
         if not db:
             return
         db.execute("BEGIN IMMEDIATE")
+        contract_tsym = _INSTRUMENT_CONTRACT.get(instrument)
         db.execute(
             "INSERT OR REPLACE INTO market_data "
-            "(timestamp, instrument, open, high, low, close, volume, ltp, source) "
-            "VALUES (?,?,?,?,?,?,?,?,'feed')",
+            "(timestamp, instrument, open, high, low, close, volume, ltp, source, contract) "
+            "VALUES (?,?,?,?,?,?,?,?,'feed',?)",
             (
                 completed["timestamp"],
                 instrument,
@@ -229,6 +246,7 @@ def _persist_bar_and_options(completed: dict):
                 completed["close"],
                 completed.get("volume", 0),
                 completed.get("ltp", completed["close"]),
+                contract_tsym,
             ),
         )
         state = _option_state.get(instrument)
@@ -275,10 +293,11 @@ def _write_1min_sqlite(bar: dict):
         db = _get_capture_db(bar["instrument"])
         if not db:
             return
+        contract_tsym = _INSTRUMENT_CONTRACT.get(instrument)
         db.execute(
             "INSERT OR REPLACE INTO market_data "
-            "(timestamp, instrument, open, high, low, close, volume, ltp, source) "
-            "VALUES (?,?,?,?,?,?,?,?,'feed')",
+            "(timestamp, instrument, open, high, low, close, volume, ltp, source, contract) "
+            "VALUES (?,?,?,?,?,?,?,?,'feed',?)",
             (
                 bar["timestamp"],
                 bar["instrument"],
@@ -288,6 +307,7 @@ def _write_1min_sqlite(bar: dict):
                 bar["close"],
                 bar.get("volume", 0),
                 bar.get("ltp", bar["close"]),
+                contract_tsym,
             ),
         )
         db.commit()

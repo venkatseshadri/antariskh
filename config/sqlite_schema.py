@@ -68,9 +68,13 @@ def init_market_data_schema(conn: sqlite3.Connection):
             volume      REAL,
             ltp         REAL,
             source      TEXT DEFAULT 'feed',
+            contract    TEXT,
             PRIMARY KEY (timestamp, instrument)
         )
     """)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(market_data)")}
+    if "contract" not in existing:
+        conn.execute("ALTER TABLE market_data ADD COLUMN contract TEXT")
     conn.commit()
 
 

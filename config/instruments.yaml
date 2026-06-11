@@ -39,74 +39,65 @@ spot:
 
 futures:
   - name: NIFTY-FUT
+    product_root: NIFTY
     exchange: NFO
-    token: "62329"
-    tsym: NIFTY30JUN26F
     feed_type: t
     market_open: "09:15"
     market_close: "15:30"
 
   - name: SENSEX-FUT
+    product_root: BSXFUT
     exchange: BFO
-    token: "1105863"
-    tsym: SENSEX26JUNFUT
     feed_type: t
     market_open: "09:15"
     market_close: "15:30"
 
 mcx:
   - name: GOLD
+    product_root: GOLDPETAL
     exchange: MCX
-    token: "510464"
-    tsym: GOLDPETAL30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: SILVERMIC
+    product_root: SILVERMIC
     exchange: MCX
-    token: "477177"
-    tsym: SILVERMIC30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: CRUDEOILM
+    product_root: CRUDEOILM
     exchange: MCX
-    token: "499096"
-    tsym: CRUDEOILM18JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: NATGASMINI
+    product_root: NATGASMINI
     exchange: MCX
-    token: "504266"
-    tsym: NATGASMINI25JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: ZINCMINI
+    product_root: ZINCMINI
     exchange: MCX
-    token: "552712"
-    tsym: ZINCMINI30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: LEADMINI
+    product_root: LEADMINI
     exchange: MCX
-    token: "552710"
-    tsym: LEADMINI30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"
 
   - name: ALUMINI
+    product_root: ALUMINI
     exchange: MCX
-    token: "552707"
-    tsym: ALUMINI30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"

@@ -125,7 +125,7 @@ def _build_tsym_monthly_sensex(expiry: date, strike: int, opt: str) -> str:
 
 
 class TokenResolver:
-    """Loads master files and resolves rotating option tokens."""
+    """Loads master files and resolves rotating option + futures tokens."""
 
     def __init__(
         self, nifty_spot: Optional[float] = None, sensex_spot: Optional[float] = None
@@ -133,10 +133,11 @@ class TokenResolver:
         self.nifty_spot = nifty_spot
         self.sensex_spot = sensex_spot
         self._masters: dict[str, dict[(str, str), dict]] = {}
+        self._futures: dict[str, dict[str, list[dict]]] = {}
         self._load_masters()
 
     def _load_masters(self):
-        for exchange in ["NFO", "BFO"]:
+        for exchange in ["NFO", "BFO", "MCX"]:
             path = MASTER_DIR / f"{exchange}_symbols.txt"
             if not path.exists():
                 _download_master(exchange)
@@ -145,28 +146,74 @@ class TokenResolver:
                 print(f"WARNING: master file missing: {path}")
                 continue
             idx = {}
+            fut = {}
             with open(path) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if row.get("Instrument") != "OPTIDX":
-                        continue
-                    tsym = row.get("TradingSymbol", "")
-                    key = (exchange, tsym)
-                    idx[key] = {
-                        "token": row.get("Token", ""),
-                        "strike": float(row.get("StrikePrice", "0")),
-                        "opt_type": row.get("OptionType", ""),
-                        "expiry": row.get("Expiry", ""),
-                        "lot_size": row.get("LotSize", ""),
-                        "tsym": tsym,
-                        "exchange": exchange,
-                        "feed_type": "d",
-                    }
-            self._masters[exchange] = idx
+                    inst = row.get("Instrument", "")
+                    if inst == "OPTIDX":
+                        tsym = row.get("TradingSymbol", "")
+                        key = (exchange, tsym)
+                        idx[key] = {
+                            "token": row.get("Token", ""),
+                            "strike": float(row.get("StrikePrice", "0")),
+                            "opt_type": row.get("OptionType", ""),
+                            "expiry": row.get("Expiry", ""),
+                            "lot_size": row.get("LotSize", ""),
+                            "tsym": tsym,
+                            "exchange": exchange,
+                            "feed_type": "d",
+                        }
+                    elif inst in ("FUTIDX", "FUTCOM"):
+                        symbol = row.get("Symbol", "").strip()
+                        if symbol not in fut:
+                            fut[symbol] = []
+                        try:
+                            expiry_date = datetime.strptime(
+                                row["Expiry"], "%d-%b-%Y"
+                            ).date()
+                        except (ValueError, KeyError):
+                            continue
+                        fut[symbol].append(
+                            {
+                                "token": row.get("Token", ""),
+                                "tsym": row.get("TradingSymbol", ""),
+                                "expiry": expiry_date,
+                                "lot_size": int(row.get("LotSize", 0) or 0),
+                                "exchange": exchange,
+                                "instrument": inst,
+                            }
+                        )
+            if exchange in ("NFO", "BFO"):
+                self._masters[exchange] = idx
+            for symbol in fut:
+                fut[symbol].sort(key=lambda x: x["expiry"])
+            self._futures[exchange] = fut
 
     def _lookup(self, exchange: str, tsym: str) -> Optional[dict]:
         idx = self._masters.get(exchange, {})
         return idx.get((exchange, tsym))
+
+    def resolve_nearest_future(
+        self, product_root: str, exchange: str, _today: Optional[date] = None
+    ) -> dict:
+        """Resolve nearest unexpired futures contract. Rolls at T-2 before expiry.
+        Returns dict with token, tsym, exchange, expiry, lot_size, instrument."""
+        fut = self._futures.get(exchange, {}).get(product_root)
+        if not fut:
+            raise ValueError(f"No futures found for {product_root} on {exchange}")
+        today = _today or date.today()
+        for i, contract in enumerate(fut):
+            if contract["expiry"] >= today:
+                if (contract["expiry"] - today).days <= 2 and i + 1 < len(fut):
+                    successor = fut[i + 1]
+                    if successor["expiry"] >= today:
+                        return successor
+                return contract
+        raise ValueError(
+            f"No unexpired futures for {product_root} on {exchange} "
+            f"(latest expired {fut[-1]['expiry']})"
+        )
 
     def atm_strike(self, spot: float, gap: int) -> int:
         """Round spot to nearest strike gap. e.g., 23907 → 23900 (gap=50)."""

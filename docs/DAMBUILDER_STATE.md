@@ -1,14 +1,12 @@
 # DAMBUILDER — Live State & Continuity Handoff
 
-> 🔴 **DS START HERE (Board order 2026-06-11 evening):**
-> 1. Read §0e — your operating rules (5 hard CANNOTs, full speed on everything else).
-> 2. Work §4c FIX QUEUE top-down: **T7 → T8 tonight, BEFORE 06-12 09:00 IST** (both feed
->    live entry decisions), then T9 → T10 → T11.
-> 3. Every task: code → test → run Accept → commit `[deepseek]` with pasted output →
->    append `✅ BUILT <hash>` to the task line here.
-> Validator validates each batch async; queue never waits.
+> 🔴 **DS START HERE:** §4c fix queue is COMPLETE (T7–T11 + T8b all ✅✅, 06-11 night).
+> **Your job 06-12 is §8 — LIVE VALIDATION CHECKLIST.** Rules: §0e (5 hard CANNOTs).
+> Every §8 item: run the command at the stated time, paste OUTPUT (not narration) under
+> the item, mark `✅ <time>` or `❌ <time> + what you saw`. A ❌ with honest output is a
+> good result — find root cause, fix forward, re-run. NEVER mark ✅ without pasted output.
 
-**Updated:** 2026-06-11 ~17:45 IST · **Board order active: §0e rules + §4c fix queue.**
+**Updated:** 2026-06-12 (pre-open) · **Active: §8 live validation day.**
 Single source of truth for *where DAMBUILDER is*. Companion: `DATA_CAPTURE_REFACTOR_PLAN.md`
 (the why + architecture + §7 reviewer analysis). Update THIS file at the end of every work
 iteration — that is the continuity protocol; progress lives in git + this doc, never in any
@@ -431,6 +429,93 @@ Independently re-run verdicts:
 2. `live()` file-watch rewrite + test (e87776e) → ✅✅ VALIDATED (Claude re-ran `tests/test_multitf_live.py`: "OK multitf-live: 40 rows enriched, heartbeat present").
 3. T5 outcome tables → ◐ NOT VALIDATED. Tables exist in both capture DBs, 0 rows; Accept (sandbox kickoff row + lifecycle close row + parquet read) undemonstrated.
 4. T3 bucket math + higher-TF cold-start fail-closed policy → OPEN, feed live entry path; Board items, not implementer "accept for now" calls.
+
+## 8. 🔴 LIVE VALIDATION CHECKLIST — 2026-06-12 (DS executes, validator spot-audits)
+
+Everything built 06-11 meets reality for the first time. Paste output under each item.
+
+### V1 — 09:20 · Cold-start: all units alive
+```bash
+systemctl is-active feed.service enricher-nifty.service enricher-sensex.service enricher-mcx.service
+ls -la ~/antariksh/data/live/*.heartbeat | head -20   # all mtimes within last 2 min
+```
+**Expect:** 4× `active`; NIFTY/SENSEX feed+enricher heartbeats < 2 min old.
+
+### V2 — 09:25 · 1-min truth flowing, no low=0
+```bash
+python3 -c "
+import sqlite3
+for i in ['nifty','sensex']:
+    c=sqlite3.connect(f'file:/home/trading_ceo/python-trader/varaha/data/capture_{i}.sqlite?mode=ro',uri=True)
+    print(i, c.execute(\"select count(*),max(timestamp),sum(case when low<=0 then 1 else 0 end) from market_data where timestamp like '2026-06-12%'\").fetchone())"
+```
+**Expect:** count ≥ 8 by 09:25, max(timestamp) ≤ 1 min behind clock, low<=0 sum = 0.
+
+### V3 — 09:40 · Entry families live on the new grid (T7+T8+T8b in production)
+```bash
+cd ~/antariksh && python3 -c "
+from tools.entry_tools import query_all_families, score_trend
+import json
+print(score_trend('NIFTY'))
+r=json.loads(query_all_families('NIFTY')); print(list(r.keys()))"
+```
+**Expect:** score_trend returns dict (signal/score/confidence), NO AttributeError/NameError;
+higher TFs may be insufficient_history early — that is CORRECT (fail-closed), paste it.
+
+### V4 — after first kickoff (~09:35–10:00) · decision_trace row lands in LIVE DB (T9 residual — the SHERPA-v2 first data point)
+```bash
+python3 -c "
+import sqlite3
+c=sqlite3.connect('file:/home/trading_ceo/python-trader/varaha/data/capture_nifty.sqlite?mode=ro',uri=True)
+rows=c.execute(\"select * from decision_trace where timestamp like '2026-06-12%'\").fetchall()
+print(len(rows)); [print(r) for r in rows[:3]]"
+```
+**Expect:** ≥ 1 row after the first kickoff, decision_source/gate populated, vix not null.
+❌ here = T9 wiring broken in prod → root-cause same day.
+
+### V5 — ~11:00 · data_health silent while healthy (T11 negative case)
+```bash
+cd ~/brahmand && python3 data_health.py
+```
+**Expect:** no DATA stale/EMPTY warnings while feeds run. (Positive case already proven 06-11.)
+
+### V6 — ~12:00 · Option chain + enriched table populated
+```bash
+python3 -c "
+import sqlite3
+c=sqlite3.connect('file:/home/trading_ceo/python-trader/varaha/data/capture_nifty.sqlite?mode=ro',uri=True)
+print('opts:', c.execute(\"select count(*) from option_prices where timestamp like '2026-06-12%'\").fetchone())
+print(c.execute(\"select max(timestamp), india_vix, atm_strike from market_data_enriched where timestamp like '2026-06-12%'\").fetchone())"
+```
+**Expect:** option rows growing; india_vix + atm_strike non-null on latest enriched row.
+
+### V7 — 15:35 · Clean close
+```bash
+python3 -c "
+import sqlite3
+c=sqlite3.connect('file:/home/trading_ceo/python-trader/varaha/data/capture_nifty.sqlite?mode=ro',uri=True)
+print(c.execute(\"select count(*),max(timestamp) from market_data where timestamp like '2026-06-12%'\").fetchone())"
+systemctl is-active feed.service   # after RuntimeMax/close behavior
+```
+**Expect:** ~368-375 bars ending 15:29/15:30; units stopped or idle per design, NO restart-loop in `journalctl -u feed.service --since 15:25`.
+
+### V8 — 16:10 · Unattended cron backfill (first real firing)
+```bash
+tail -20 ~/antariksh/logs/eod_backfill_20260612.log
+python3 -c "
+import sqlite3
+for i in ['nifty','sensex']:
+    c=sqlite3.connect(f'file:/home/trading_ceo/python-trader/varaha/data/capture_{i}.sqlite?mode=ro',uri=True)
+    print(i,[r for r in c.execute(\"select timeframe_min,count(*) from market_data_multitf where timestamp like '2026-06-12%' group by timeframe_min\")])"
+```
+**Expect:** log shows cron-initiated run (~16:00), both exit=0; counts exactly 75/25/13/7/2/1
+(fewer 5m rows only if bars missed). ema20 non-null on post-warm-up 5m rows.
+
+### V9 — EOD · If any trade closed today: trade_outcomes row
+**Expect:** one row per closed trade with final_pnl + close_reason. No trades = N/A, say so.
+
+**Failure protocol:** any ❌ → paste output, root-cause, fix forward (§0e rules apply),
+re-run the item. Validator spot-audits V3/V4/V8 independently.
 
 ## 7. Open questions / follow-ups
 - **T5 (77a6afb, a4a7255) built — validation pending** (outcome tables + parquet; Accept: sandbox kickoff inserts decision_trace row, seeded lifecycle close inserts trade_outcomes, parquet pandas-readable).

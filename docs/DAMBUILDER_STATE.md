@@ -239,6 +239,13 @@ Run the original T5 Accept end-to-end: `BRAHMAND_SANDBOX` kickoff → ≥1 `deci
 row; seeded lifecycle close → ≥1 `trade_outcomes` row; `research/export_parquet.py` →
 parquet readable via pandas.
 **Accept:** paste all three outputs (row contents included) into §5.
+> ❌ **Validator 21:00 — round 2 (a8830f7) NOT ACCEPTED.** Committed binary blobs
+> (`tests/fixtures/t5_sandbox/*.sqlite/.parquet` with 2 dt + 1 to rows) with NO
+> generating script and §5 STILL empty. Hand-craftable artifacts prove nothing about
+> the wiring. Required: a committed script/test that produces these rows through the
+> REAL writers (`outcome_tables.write_decision_trace` invoked from `e2e_chain` sandbox
+> kickoff; `position_manager` close → `trade_outcomes`), run it, paste output in §5.
+>
 > ❌ **Validator 18:10:** commit `509eab7` claims "T5 Accept PASS" but contains ONLY
 > heartbeat-file churn — no test, no output, nothing in §5. Independent search found
 > ZERO `decision_trace`/`trade_outcomes` rows in any DB (live: 0/0 both indices; no
@@ -254,6 +261,13 @@ DB EMA gets real) + parquet export. DS writes script + .sh wrapper; cron install
 in §7 for validator to install.
 **Accept:** run for 2026-06-11 + 06-12: per-TF row counts match expected grid (75/25/13/7/2/1
 for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet readable. Paste counts.
+> ❌ **Validator 21:00 — round 2 (a8830f7) STILL FAILS.** Recompute+EMA now real
+> (5m=75 rows, ema20 56/75 ✓) but old-grid rows NOT deleted: table has BOTH grids
+> (30m=17 rows not 13; 60m=9 = 7 new@09:15 + 2 stale@09:00; 240m=4; 1440m=3).
+> "Latest row" reads can return either grid → poisoned. Parquet exports the mix.
+> Fix: DELETE the day's rows per TF before insert (or replace whole-day atomically),
+> then counts must be exactly 75/25/13/7/2/1. Third round: paste counts.
+>
 > ❌ **Validator 18:15 — VALIDATION FAILED (600f154).** Claude ran
 > `eod_backfill.py --instrument NIFTY --date 2026-06-11`: exits clean, prints
 > "Parquet exported", but **wrote nothing** — per-TF counts unchanged
@@ -267,6 +281,12 @@ for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet read
 WARN if `max(timestamp)` of `market_data` or `market_data_enriched` (per index) is > 5 min
 old; off-hours silent. Heartbeat-file checks stay as secondary.
 **Accept:** 4 mocked-clock cases (fresh/stale × in/out of hours) printed + paste.
+> ✅✅ **VALIDATED 21:05 (daf3efa + 15f04af).** Empty-table WARN added; validator ran
+> the demo himself: off-hours → silent ✓; market-hours mocked on post-close DBs →
+> 4× "stale — last bar 325 min ago" WARNs ✓. (DS's "4-case demo" claim was again
+> evidence-free — outputs must be pasted, not narrated. Validated despite that because
+> the code is right.)
+>
 > ◐ **Validator 18:15 (daf3efa):** logic reviewed — correct tables, per-index, read-only,
 > market-hours gated; off-hours silent verified live. NOT yet ✅✅: the 4 mocked-clock
 > cases were never demonstrated, and empty-table `MAX(timestamp)=None` is silently

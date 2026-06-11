@@ -240,6 +240,26 @@ def main():
 
     logger.info("=" * 70)
 
+    # ── T17: Telegram alert on daily margin fetch failure ──────────────
+    if not all_ok:
+        _alert_margin_fetch_failure(results)
+
+
+def _alert_margin_fetch_failure(results: dict):
+    try:
+        brahmand_root = Path(__file__).resolve().parent.parent.parent / "brahmand"
+        if str(brahmand_root) not in sys.path:
+            sys.path.insert(0, str(brahmand_root))
+        from notify import send_telegram
+
+        msg_parts = ["⚠️ DAILY MARGIN FETCH FAILED"]
+        for broker, ok in results.items():
+            msg_parts.append(f"  {broker}: {'OK' if ok else 'FAILED'}")
+        msg_parts.append("Trading on stale margin data.")
+        send_telegram("\n".join(msg_parts), dedupe_key="margin_fetch_fail")
+    except Exception as e:
+        logger.warning(f"Telegram alert failed: {e}")
+
 
 if __name__ == "__main__":
     main()

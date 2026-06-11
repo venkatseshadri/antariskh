@@ -88,9 +88,13 @@ def _compute_ema(closes: list, period: int) -> list:
     return result
 
 
+_ST_MIN_BARS = {5: 3, 15: 1, 30: 1, 60: 1, 240: 1, 1440: 1}
+
+
 def compute_row_indicators(tf_bars: list, i: int, tf: int) -> dict:
     """Indicators for tf_bars[i] using context tf_bars[:i+1] (same as the aggregator).
-    EMA computed independently (v4 aggregator uses SMA only)."""
+    EMA computed independently (v4 aggregator uses SMA only).
+    Returns None for st_consensus when the lookback window isn't satisfied."""
     ind = _CALC._aggregate_bucket([tf_bars[i]], tf, tf_bars[: i + 1])
     result = {c: ind.get(c) for c in IND_COLS}
     # Compute EMAs from the close prices of this TF's history
@@ -98,6 +102,11 @@ def compute_row_indicators(tf_bars: list, i: int, tf: int) -> dict:
     for period in _EMA_PERIODS:
         ema_list = _compute_ema(closes, period)
         result[f"ema{period}"] = ema_list[i] if i < len(ema_list) else None
+    # Fail-closed: st_consensus returns "NEUTRAL" when the aggregator lacks context.
+    # Null it so the entry pipeline treats it as NO-DATA, not a NEUTRAL signal.
+    st_val = (result.get("st_consensus") or "").strip()
+    if st_val == "NEUTRAL" and i < _ST_MIN_BARS.get(tf, 3):
+        result["st_consensus"] = None
     return result
 
 

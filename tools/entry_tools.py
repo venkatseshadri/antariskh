@@ -349,10 +349,12 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
             "ema50": e50,
             "ema_position": pos,
             "candle": candle,
-            "st_consensus": (tf_data.get("st_consensus") or "NEUTRAL").strip(),
-            "adx": _r(tf_data.get("adx"), 1),
-            "di_plus": _r(tf_data.get("di_plus"), 1),
-            "di_minus": _r(tf_data.get("di_minus"), 1),
+            "st_consensus": tf_data.get(
+                "st_consensus"
+            ),  # None when insufficient history
+            "adx": tf_data.get("adx"),
+            "di_plus": tf_data.get("di_plus"),
+            "di_minus": tf_data.get("di_minus"),
         }
     return _json.dumps(result, indent=2)
     try:

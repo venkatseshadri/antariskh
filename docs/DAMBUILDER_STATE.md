@@ -9,9 +9,41 @@ agent's context.
 ## 0. Operating protocol (why this doc exists)
 - Every iteration: code → test → **git commit** → update this doc. An agent dying mid-task
   loses at most one uncommitted step.
-- Tasks in §4 are written DeepSeek-implementable: exact files, exact acceptance command.
-  Claude (or any reviewer) validates against the acceptance line, never against memory.
 - Board (user) gates anything touching live capture or readers. Shadow-only work is pre-approved.
+
+### 0b. ROLES (fixed, 2026-06-11 Board decision)
+- **DeepSeek = implementer** of code tasks **T2, T3, T4, T5** (top-down). Writes code +
+  the task's test, runs the task's **Accept** command, commits.
+- **Claude = validator + Board interface.** Re-runs each Accept command independently,
+  flips status to validated, owns the human/Board-gated steps (T1 install, T6 retirement,
+  any reader flip) and updates memory/plan docs. Claude does NOT implement T2-T5 unless a
+  task is blocked > 1 day (then takes it over and notes that here).
+- Conflict rule: the **Accept command output is the arbiter** — not either agent's claim.
+
+### 0c. HOW TO UPDATE THIS DOC (implementer instructions — DeepSeek read this)
+After finishing (or getting blocked on) a task:
+1. Edit the task's heading line in §4: append status marker + evidence:
+   `→ 🔨 IN PROGRESS (started <date>)` / `→ ✅ BUILT <commit-hash> (accept output: "<one line>")` /
+   `→ ⛔ BLOCKED: <one-line reason>`.
+   Do NOT delete the task text; do NOT mark "validated" — only the validator does that
+   (`→ ✅✅ VALIDATED <date>` appended by Claude).
+2. Update the §2 status table row for the matching phase letter the same way.
+3. Append any session/parity outputs verbatim into §5 (timestamped).
+4. Commit THIS file together with the code:
+   `git commit -m "feat(dambuilder): T<n> <short> [deepseek]"` — suffix `[deepseek]` so
+   the validator can find unreviewed work with `git log --grep='\[deepseek\]'`.
+5. NEVER edit: §0b roles, §6 don'ts, the locked Board answers in §2, or another task's
+   status line. Questions for the Board go in §7 (add it if missing) — never act on an
+   open question.
+
+### 0d. COLD-START CHECKLIST (future Claude / fresh agent — do in order)
+1. Read §1-§2 (what + where), then §6 (don'ts).
+2. Ground-truth the doc: run the §3 verified commands — if one fails, the doc is stale;
+   fix the doc FIRST (with a commit) before any new work.
+3. `git log --oneline -15` in antariksh + `git log --grep='\[deepseek\]' --oneline` →
+   anything built-but-not-validated? Validate it (re-run Accept) before new work.
+4. Resume at the first task in §4 not yet ✅✅ VALIDATED that matches your role per §0b.
+5. End every iteration with: commit + this doc updated + (Claude only) memory updated.
 
 ## 1. What DAMBUILDER is (one paragraph)
 Capture refactor: ONE truth store (Penguin `capture_{index}.sqlite`: 1-min bars + option
@@ -99,6 +131,20 @@ After 5 clean parallel sessions + T4 flipped by Board: stop/disable v4 aggregato
 + supervisor cron, archive `.duckdb` files, grep-guard test that no live-path file
 imports the v4 DuckDB paths.
 **Accept:** grep-guard test green; one full session healthy on SQLite-only.
+
+## 4b. File map (cold-start orientation)
+| Thing | Path |
+|---|---|
+| Multi-TF enricher (backfill + live) | `antariksh/enrichers/multitf_enricher.py` |
+| Parity checker (SQLite vs v4) | `antariksh/enrichers/multitf_parity_check.py` |
+| Hermetic live-mode gate | `antariksh/tests/test_multitf_live.py` |
+| Shadow units + installer | `antariksh/deploy/multitf-enricher-*.{service,timer}`, `deploy/install_multitf_enricher.sh` |
+| Indicator math source (shared with v4) | `antariksh/data_capture_v4_queue_aggregator.py::_aggregate_bucket` |
+| Capture SQLite (truth store) | `/home/trading_ceo/python-trader/varaha/data/capture_{nifty,sensex}.sqlite` |
+| v4 DuckDBs (to retire, read-only ref) | `/home/trading_ceo/python-trader/varaha/data/market_data_multitf_*.duckdb` |
+| Reader functions to migrate (T4) | `antariksh/tools/entry_tools.py::query_*` (8 fns; map in plan §7.1) |
+| Outcome-table schema (T5) | plan `DATA_CAPTURE_REFACTOR_PLAN.md` §7.5 |
+| Health alerting (T2 target) | `brahmand/data_health.py` (+ Telegram via `brahmand/notify.py`) |
 
 ## 5. Shadow-session parity log (append results here)
 *(empty — first shadow session pending T1)*

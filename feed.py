@@ -365,6 +365,13 @@ def main():
 
     log.info(f"Instruments: {', '.join(active_instruments)}")
     log.info(f"Live log: {LIVE_DIR}")
+
+    # ── Shoonya session ───────────────────────────────────────────────────
+    api = NorenApiPy()
+    ret = api.injectOAuthHeader(
+        creds["Access_token"], creds["UID"], creds["Account_ID"]
+    )
+    api.set_credentials(creds["Access_token"], creds["UID"], creds["Account_ID"])
     log.info("Shoonya authenticated")
 
     socket_opened = False

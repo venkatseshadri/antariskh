@@ -185,8 +185,10 @@ _capture_dbs = {}
 
 
 def _get_capture_db(instrument: str):
+    # autocommit=True so the explicit BEGIN IMMEDIATE below owns the txn
+    # (busy_timeout honored on write-lock acquisition — PENGUIN_ENRICHER_LOCK_FIX.md)
     if instrument not in _capture_dbs:
-        _capture_dbs[instrument] = open_capture_db(instrument)
+        _capture_dbs[instrument] = open_capture_db(instrument, autocommit=True)
     return _capture_dbs[instrument]
 
 
@@ -243,6 +245,12 @@ def _persist_bar_and_options(completed: dict):
         db.commit()
     except Exception as e:
         log.warning(f"Bar+options write failed for {instrument}: {e}")
+        # cached conn: an open BEGIN IMMEDIATE would hold the write lock forever
+        # and poison every later bar ("transaction within a transaction")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _write_1min_sqlite(bar: dict):

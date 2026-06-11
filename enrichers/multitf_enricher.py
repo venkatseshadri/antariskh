@@ -167,34 +167,38 @@ def enrich_day(db_path: str, instrument: str, date: str) -> dict:
     """Backfill: compute + write indicators for one day's per-TF rows. Returns
     {tf: rows_written}."""
     conn = _open(db_path)
-    written = {}
+    enriched = 0
     try:
+        # 1-min bars are already in SQLite market_data; the log file triggered us.
+        # We just backfill indicators every time a new bar arrives (idempotent).
+        day = datetime.now().strftime("%Y-%m-%d")
+        # Already have _load_today_1m using 2-day lookback
+
         for tf in TIMEFRAMES:
-            written[tf] = enrich_tf(conn, instrument, tf, date)
+            n = enrich_tf(conn, instrument, tf, day)
+            enriched += n
+
+        # Heartbeat — file-based
+        heartbeat = LIVE_DIR / f"multitf_enricher_{instrument}.heartbeat"
+        heartbeat.write_text(datetime.now().isoformat())
     finally:
         conn.close()
     return written
 
 
 def live(db_path: str, instrument: str):
-    """Live mode: subscribe to bars:{inst}:1, aggregate 1-min bars to all 6 TFs,
-    compute + write indicators idempotently on each closed TF bar.
-    Heartbeat: multitf_enricher:{inst}:heartbeat (for data_health)."""
+    """Live mode: watches the instrument's 1-min log file. On each bar close,
+    backfills all 6 TFs' indicators from SQLite market_data (idempotent).
+    Heartbeat: data/live/multitf_enricher_{inst}.heartbeat."""
     import json
+    import os
+    import time
     from datetime import datetime
 
-    import redis
-
-    from multitf_recompute import aggregate_1min_to_tf, compute_row_indicators
-
-    writable = TIMEFRAMES  # remove the unused variable for clarity
-
-    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
-    r.ping()
-    pubsub = r.pubsub()
-    channel = f"bars:{instrument}:1"
-    pubsub.subscribe(channel)
-    print(f"[multitf_enricher] live: subscribed {channel}", flush=True)
+    print(
+        f"[multitf_enricher] live: watching {LIVE_DIR}/{instrument}_1min.log",
+        flush=True,
+    )
 
     conn = _open(db_path)
     enriched = 0

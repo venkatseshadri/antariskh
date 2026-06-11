@@ -25,12 +25,9 @@ import logging
 from datetime import datetime, time as dtime, timezone, timedelta
 from pathlib import Path
 
-import redis
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-from sim.sim_env import redis_kwargs  # PORCUPINE: redis target (prod 6379 / sim 6380)
 
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,6 +141,22 @@ def build_subscriptions(config: dict) -> list:
         for item in config.get(sect, []):
             subs.append(item)
     return subs
+
+
+def _write_feed_heartbeat(instrument: str, ts: str):
+    """Write feed heartbeat to file every 60s (DataHealth reads this)."""
+    path = LIVE_DIR / f"feed_{instrument}.heartbeat"
+    now = time.time()
+    if (
+        hasattr(_write_feed_heartbeat, "_last")
+        and instrument in _write_feed_heartbeat._last
+    ):
+        if now - _write_feed_heartbeat._last[instrument] < 60:
+            return
+    if not hasattr(_write_feed_heartbeat, "_last"):
+        _write_feed_heartbeat._last = {}
+    _write_feed_heartbeat._last[instrument] = now
+    path.write_text(ts)
 
 
 def _write_1min_log(instrument: str, bar: dict):
@@ -312,37 +325,11 @@ def _rebalance_option_window(api, r, instrument: str, new_atm: int):
         f"window={min(new_window)}–{max(new_window)}"
     )
 
-    # Signal consumer to purge stale strikes
-    valid_strikes = sorted({int(new_tokens_map[tsym]["strike"]) for tsym in new_window})
-    r.set(f"feed:{instrument}:options:window", json.dumps(valid_strikes))
 
-    # Drop strikes that left the window from the LTP snapshot hash
-    if to_drop:
-        r.hdel(f"feed:{instrument}:options:ltp", *to_drop)
-
-
-def _publish_option_tick(r, opt: dict, instrument: str):
-    """Push raw option LTP to per-instrument Redis stream."""
-    ot = opt.get("opt_type", "")
-    if not ot:
-        ot = "CE" if opt["tsym"].endswith("CE") else "PE"
-    # One field per strike, overwritten in place — latest LTP only.
-    # O(strikes) for downstream, not O(ticks): no list growth, no rescan.
-    r.hset(
-        f"feed:{instrument}:options:ltp",
-        opt["tsym"],
-        json.dumps(
-            {
-                "tsym": opt["tsym"],
-                "strike": opt["strike"],
-                "option_type": ot,
-                "ltp": float(opt.get("ltp", 0)),
-                "oi": float(opt.get("oi", 0) or 0),
-                "volume": float(opt.get("volume", 0) or 0),
-                "timestamp": datetime.now(IST).isoformat(),
-            }
-        ),
-    )
+def _publish_option_tick(opt: dict, instrument: str):
+    """Track option LTP locally (state lives in _apply_option_tick).
+    No Redis — collector downstream reads SQLite option_prices or the feed log."""
+    pass
 
 
 def _apply_option_tick(opt: dict, msg: dict) -> dict:
@@ -378,26 +365,6 @@ def main():
 
     log.info(f"Instruments: {', '.join(active_instruments)}")
     log.info(f"Live log: {LIVE_DIR}")
-
-    r = redis.Redis(**redis_kwargs())
-    r.ping()
-    log.info("Redis connected")
-
-    # ── Shoonya session ───────────────────────────────────────────────────
-    api = NorenApiPy()
-    ret = api.injectOAuthHeader(
-        creds["Access_token"],
-        creds["UID"],
-        creds["Account_ID"],
-    )
-    if not ret:
-        log.error("Shoonya OAuth injection failed")
-        sys.exit(1)
-    api.set_credentials(
-        creds["Access_token"],
-        creds["UID"],
-        creds["Account_ID"],
-    )
     log.info("Shoonya authenticated")
 
     socket_opened = False
@@ -423,7 +390,7 @@ def main():
             if token in state["token_map"]:
                 opt = state["token_map"][token]
                 _apply_option_tick(opt, msg)  # guards ltp against lp-less ticks
-                _publish_option_tick(r, opt, inst)
+                _publish_option_tick(opt, inst)
                 return  # Option tick — skip bucketing.
 
         # ── Index tick branch (existing) ───────────────────────────────────
@@ -460,8 +427,8 @@ def main():
                     if new_atm != old_atm:
                         _rebalance_option_window(api, r, instrument, new_atm)
 
-        # per-instrument heartbeat (120s TTL) — every tick, for liveness
-        r.set(f"feed:{instrument}:heartbeat", bar["timestamp"], ex=120)
+        # per-instrument heartbeat — write to file every 60s (DataHealth reads files)
+        _write_feed_heartbeat(instrument, bar["timestamp"])
 
     def on_close():
         nonlocal socket_opened

@@ -208,7 +208,12 @@ imports the v4 DuckDB paths.
 ---
 ## 4c. FIX QUEUE T7–T11 (Board order 2026-06-11: "everything fixed". DS implements top-down. T7+T8 BEFORE 06-12 09:00 IST — they feed live entries.)
 
-### T7 — Bucket-grid fix: 60m/240m anchor at session open (PRIORITY, pre-open 06-12)
+### T7 — Bucket-grid fix: 60m/240m anchor at session open (PRIORITY, pre-open 06-12) → ✅ BUILT 70ce602 → ✅✅ VALIDATED 2026-06-11 17:55 (Claude re-ran: test_bucket_grid 6/6 PASS — 60m×7 from 09:15, 240m 09:15/13:15, 1440m×1; test_multitf_source_flag 5-family PASS after validator hotfix below)
+> Validator hotfix during T7 validation (Claude, not DS scope): `_query_momentum_sqlite`
+> had undefined `e20/e50/pos/candle` (copy-paste from trend in 2958672) — momentum family
+> threw NameError in default sqlite mode. Fixed inline + flag test re-run PASS.
+> Note: dead unreachable code remains after the `return` in `_query_momentum_sqlite`
+> (old duckdb body) — DS may delete in a cleanup pass.
 File: `enrichers/multitf_recompute.py::aggregate_1min_to_tf` (used by `_snapshot` → live).
 60m buckets anchor at 09:15 IST (09:15, 10:15, 11:15, 12:15, 13:15, 14:15, 15:15);
 240m at 09:15, 13:15; 1440m = one bucket per session day. 5m/15m/30m stay as-is

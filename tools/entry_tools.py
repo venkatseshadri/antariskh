@@ -532,13 +532,26 @@ def _query_momentum_sqlite(index: str = "NIFTY") -> str:
         "timeframes": {},
     }
     for tf_label, tf_data in snap.items():
+        e20 = tf_data.get("ema20")
+        e50 = tf_data.get("ema50")
+        o = tf_data.get("open")
+        c = tf_data.get("close")
+        pos = (
+            "bullish"
+            if (e20 and e50 and e20 > e50)
+            else ("bearish" if (e20 and e50) else "neutral")
+        )
+        candle = "GREEN" if (o and c and c > o) else "RED" if (o and c) else "neutral"
         result["timeframes"][tf_label] = {
-            "close": _r(tf_data.get("close")),
-            "rsi": _r(tf_data.get("rsi"), 1),
-            "macd": _r(tf_data.get("macd"), 2),
-            "macd_signal": _r(tf_data.get("macd_signal"), 2),
-            "macd_histogram": _r(tf_data.get("macd_histogram"), 2),
-            "cci": _r(tf_data.get("cci"), 1),
+            "ema5": tf_data.get("ema5"),
+            "ema20": e20,
+            "ema50": e50,
+            "ema_position": pos,
+            "candle": candle,
+            "st_consensus": tf_data.get("st_consensus"),  # None when insufficient
+            "adx": tf_data.get("adx"),
+            "di_plus": tf_data.get("di_plus"),
+            "di_minus": tf_data.get("di_minus"),
         }
     return _json.dumps(result, indent=2)
     try:
@@ -638,10 +651,10 @@ def _query_volatility_sqlite(index: str = "NIFTY") -> str:
     }
     for tf_label, tf_data in snap.items():
         result["timeframes"][tf_label] = {
-            "atr": _r(tf_data.get("atr"), 2),
-            "bb_upper": _r(tf_data.get("bb_upper"), 2),
-            "bb_middle": _r(tf_data.get("bb_middle"), 2),
-            "bb_lower": _r(tf_data.get("bb_lower"), 2),
+            "atr": tf_data.get("atr"),
+            "bb_upper": tf_data.get("bb_upper"),
+            "bb_middle": tf_data.get("bb_middle"),
+            "bb_lower": tf_data.get("bb_lower"),
         }
     return _json.dumps(result, indent=2)
     try:
@@ -757,17 +770,17 @@ def _query_volume_sqlite(index: str = "NIFTY") -> str:
         if tf_min in (5, 15, 30):
             cm = tf_data.get("cmf")
             result["indicators"][tf_label] = {
-                "volume": _r(tf_data.get("volume"), 0),
-                "obv": _r(tf_data.get("obv"), 0) if tf_data.get("obv") else None,
-                "cmf": _r(cm, 3) if cm else None,
+                "volume": tf_data.get("volume"),
+                "obv": tf_data.get("obv"),
+                "cmf": cm,
                 "cmf_signal": (
                     "accumulation"
-                    if cm and cm > 0.05
+                    if cm is not None and cm > 0.05
                     else "distribution"
-                    if cm and cm < -0.05
+                    if cm is not None and cm < -0.05
                     else "neutral"
-                    if cm
-                    else "unknown"
+                    if cm is not None
+                    else None
                 ),
             }
     return _json.dumps(result, indent=2)

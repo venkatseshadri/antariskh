@@ -379,6 +379,7 @@ counts from both logs into §5).
 > Live Accept residual = §8 V6 + V10 per-day counts + PCR non-null.
 
 ### T14 — DB-hygiene + PCR-correctness follow-ups from T13 review (validator-filed, build after §8 passes)
+> 🔧 BUILT 96b4589 (built pre-open — no reason to run 06-12 with known bugs in pipe)
 1. feed.py opens a FRESH connection per bar per instrument — now ×2 (`_write_1min_sqlite`
    + `_persist_option_prices`), each re-running `PRAGMA journal_mode=WAL`; closure relies
    on refcount GC. Cache one conn per instrument at module level; write bar + options in
@@ -462,7 +463,16 @@ test_full_bar_22_quotes PASSED
 - REST calls for option data: 0 (only `get_quotes` retained for INDIAVIX)
 - Real acceptance: 06-12 live session must produce ≥5,000 rows/index + pcr_total/oi_skew non-null on >90% of enriched rows (first time ever).
 
-*(T1-era parity: superseded — v4 retired before any parallel session ran; see §7b.)*
+**T14 Accept output (test_t14_db_hygiene.py @ 96b4589, 3/3 PASS):**
+```
+test_staleness_guard_rejects_old_data PASSED
+test_sensex_weekly_filter_excludes_monthly PASSED
+test_sensex_filter_in_full_flow PASSED
+```
+1. Connection caching: _get_capture_db() reuses one conn per instrument; _persist_bar_and_options writes bar+options in single BEGIN IMMEDIATE txn (replaced _write_1min_sqlite + _persist_option_prices)
+2. Fail-silent: counted failures per bar, log.warning with count
+3. Staleness guard: skip rows > 3 min behind bar timestamp
+4. SENSEX PCR: regex filter excludes monthly expiry rows (^SENSEX\\d{2}[A-Z]{3}\\d+[CP][PE]$)*(T1-era parity: superseded — v4 retired before any parallel session ran; see §7b.)*
 
 ## 6. Don'ts (carry from cutover doc + plan)
 - No capture changes / installs / reader flips during a live session (09:00–15:35 IST).

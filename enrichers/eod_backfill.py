@@ -35,7 +35,22 @@ def backfill_date(instrument: str, date: str):
     db_path = str(get_sqlite_capture_path(instrument))
     print(f"[eod_backfill] {instrument} {date}")
 
-    # 1. Heal (recompute indicators from 1-min bars, write to market_data_multitf)
+    # 0. Purge the day's rows (stale old-grid consumer data from before 11:20)
+    conn_purge = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn_purge.execute("BEGIN IMMEDIATE")
+        for tf in TIMEFRAMES:
+            conn_purge.execute(
+                "DELETE FROM market_data_multitf "
+                "WHERE instrument=? AND timeframe_min=? AND substr(timestamp,1,10)=?",
+                (instrument, tf, date),
+            )
+        conn_purge.commit()
+        print("  Purged old rows for date")
+    finally:
+        conn_purge.close()
+
+    # 1. Heal (recompute indicators from 1-min data, INSERT fresh rows)
     n = heal(db_path, instrument, date)
     if n == 0:
         print(f"  WARNING: 0 rows healed — check 1-min data for {date}")

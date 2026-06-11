@@ -57,8 +57,8 @@ futures:
 mcx:
   - name: GOLD
     exchange: MCX
-    token: "459277"
-    tsym: GOLD05JUN26
+    token: "510464"
+    tsym: GOLDPETAL30JUN26
     feed_type: d
     market_open: "09:15"
     market_close: "23:30"

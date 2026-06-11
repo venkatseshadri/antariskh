@@ -42,7 +42,20 @@ def capture_dir() -> Path:
     return (sim_root() / "data") if sim_active() else _PROD_CAPTURE_DIR
 
 
+_MCX_INSTRUMENTS = {
+    "GOLD",
+    "SILVERMIC",
+    "CRUDEOILM",
+    "NATGASMINI",
+    "ZINCMINI",
+    "LEADMINI",
+    "ALUMINI",
+}
+
+
 def capture_path(instrument: str) -> Path:
+    if instrument in _MCX_INSTRUMENTS:
+        return capture_dir() / "capture_mcx.sqlite"
     return capture_dir() / f"capture_{instrument.lower()}.sqlite"
 
 
@@ -63,6 +76,4 @@ def assert_sandboxed(path) -> None:
     root = sim_root()
     p = Path(path).resolve()
     if p != root and root not in p.parents:
-        raise RuntimeError(
-            f"PORCUPINE SANDBOX LEAK: {p} is outside SIM_ROOT {root}"
-        )
+        raise RuntimeError(f"PORCUPINE SANDBOX LEAK: {p} is outside SIM_ROOT {root}")

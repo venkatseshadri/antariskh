@@ -159,10 +159,26 @@ def _write_feed_heartbeat(instrument: str, ts: str):
     path.write_text(ts)
 
 
+_MCX_INSTRUMENTS = {
+    "GOLD",
+    "SILVERMIC",
+    "CRUDEOILM",
+    "NATGASMINI",
+    "ZINCMINI",
+    "LEADMINI",
+    "ALUMINI",
+}
+
+
+def _log_instrument(instrument: str) -> str:
+    return "MCX" if instrument in _MCX_INSTRUMENTS else instrument
+
+
 def _write_1min_log(instrument: str, bar: dict):
     """Append completed 1-min bar to live log file. Rotates at midnight."""
     global _1min_logs, _1min_logs_day
 
+    log_instrument = _log_instrument(instrument)
     today_str = datetime.now(IST).strftime("%Y%m%d")
     if today_str != _1min_logs_day:
         for f in _1min_logs.values():
@@ -170,15 +186,15 @@ def _write_1min_log(instrument: str, bar: dict):
         _1min_logs.clear()
         _1min_logs_day = today_str
 
-    if instrument not in _1min_logs:
-        path = LIVE_DIR / f"{instrument}_1min.log"
-        _1min_logs[instrument] = open(path, "a", buffering=1)
+    if log_instrument not in _1min_logs:
+        path = LIVE_DIR / f"{log_instrument}_1min.log"
+        _1min_logs[log_instrument] = open(path, "a", buffering=1)
 
     line = (
         f"{bar['timestamp']}|{bar['instrument']}|"
         f"{bar['open']}|{bar['high']}|{bar['low']}|{bar['close']}|{bar['volume']}\n"
     )
-    _1min_logs[instrument].write(line)
+    _1min_logs[log_instrument].write(line)
 
 
 _capture_dbs = {}

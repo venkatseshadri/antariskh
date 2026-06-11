@@ -50,6 +50,8 @@ def open_capture_db(instrument: str, autocommit: bool = False) -> sqlite3.Connec
     if mode.lower() != "wal":
         conn.close()
         raise RuntimeError(f"SQLite WAL not enabled — got '{mode}' for {path}")
+
+    init_market_data_schema(conn)
     return conn
 
 

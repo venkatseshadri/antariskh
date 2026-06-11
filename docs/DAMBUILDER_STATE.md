@@ -553,7 +553,7 @@ as NEUTRAL or as a crash.
 > where 240m `st_consensus=None` vs the same payload omitting 240m → assert identical
 > `signal/go/confidence` and no crash. Paste both outputs in §5.
 
-### T17 — Margin lifecycle: gate entries on real margin, refresh after fills (validator-filed 06-11 23:55, Board-requested go-live prerequisite)
+### T17 — Margin lifecycle: gate entries on real margin, refresh after fills (validator-filed 06-11 23:55, Board-requested go-live prerequisite) → ✅ BUILT brahmand 1726c61 + antariksh f93cc64
 **Finding (validator audit 06-11):** the daily fetch works — cron 08:30
 `antariksh/margin_calculator.py` → `antariksh/data/broker_limits.json` (Shoonya) +
 `broker_limits_flattrade.json`, ran clean today, 60-min staleness flag exists

@@ -18,6 +18,7 @@ Modes:
   --backfill <YYYY-MM-DD>   compute indicators for a day's existing multitf rows
   --live                    subscribe to bars:{inst}:{tf}, enrich on each closed bar
 """
+
 import argparse
 import os
 import sqlite3
@@ -29,10 +30,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 TIMEFRAMES = [5, 15, 30, 60, 240, 1440]
 IND_COLS = [
-    "sma20", "sma50", "sma200", "rsi", "atr", "macd", "macd_signal",
-    "macd_histogram", "adx", "di_plus", "di_minus", "bb_upper", "bb_middle",
-    "bb_lower", "obv", "cmf", "cci", "st_consensus",
+    "ema5",
+    "ema20",
+    "ema50",
+    "ema100",
+    "ema200",
+    "sma20",
+    "sma50",
+    "sma200",
+    "rsi",
+    "atr",
+    "macd",
+    "macd_signal",
+    "macd_histogram",
+    "adx",
+    "di_plus",
+    "di_minus",
+    "bb_upper",
+    "bb_middle",
+    "bb_lower",
+    "obv",
+    "cmf",
+    "cci",
+    "st_consensus",
 ]
+_EMA_PERIODS = [5, 20, 50, 100, 200]
 
 # Reuse the v4 aggregator's pure indicator math WITHOUT its Redis/DuckDB __init__,
 # so the SQLite path and the (interim) DuckDB path compute identically.
@@ -41,10 +63,33 @@ from data_capture_v4_queue_aggregator import MultiTFAggregatorQueue  # noqa: E40
 _CALC = MultiTFAggregatorQueue.__new__(MultiTFAggregatorQueue)
 
 
+def _compute_ema(closes: list, period: int) -> list:
+    """Compute EMA list from closes. First bar seeds with SMA. Returns
+    same-length list (None for first period-1 bars)."""
+    if len(closes) < period:
+        return [None] * len(closes)
+    result = [None] * (period - 1)
+    sma = sum(closes[:period]) / period
+    multiplier = 2.0 / (period + 1)
+    prev = sma
+    result.append(round(prev, 2))
+    for i in range(period, len(closes)):
+        prev = (closes[i] - prev) * multiplier + prev
+        result.append(round(prev, 2))
+    return result
+
+
 def compute_row_indicators(tf_bars: list, i: int, tf: int) -> dict:
-    """Indicators for tf_bars[i] using context tf_bars[:i+1] (same as the aggregator)."""
+    """Indicators for tf_bars[i] using context tf_bars[:i+1] (same as the aggregator).
+    EMA computed independently (v4 aggregator uses SMA only)."""
     ind = _CALC._aggregate_bucket([tf_bars[i]], tf, tf_bars[: i + 1])
-    return {c: ind.get(c) for c in IND_COLS}
+    result = {c: ind.get(c) for c in IND_COLS}
+    # Compute EMAs from the close prices of this TF's history
+    closes = [b["close"] for b in tf_bars[: i + 1] if b.get("close")]
+    for period in _EMA_PERIODS:
+        ema_list = _compute_ema(closes, period)
+        result[f"ema{period}"] = ema_list[i] if i < len(ema_list) else None
+    return result
 
 
 def _open(db_path: str) -> sqlite3.Connection:
@@ -54,20 +99,25 @@ def _open(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def _write_indicators(conn: sqlite3.Connection, instrument: str, tf: int,
-                      rows: list, retries: int = 5) -> int:
+def _write_indicators(
+    conn: sqlite3.Connection, instrument: str, tf: int, rows: list, retries: int = 5
+) -> int:
     """Lock-safe batched UPDATE (BEGIN IMMEDIATE + retry) — the SQLite multi-writer
     pattern the capture path already uses; SQLite serializes, never crashes."""
     if not rows:
         return 0
     sets = ", ".join(f"{c}=?" for c in IND_COLS)
-    sql = (f"UPDATE market_data_multitf SET {sets} "
-           f"WHERE timestamp=? AND instrument=? AND timeframe_min=?")
+    sql = (
+        f"UPDATE market_data_multitf SET {sets} "
+        f"WHERE timestamp=? AND instrument=? AND timeframe_min=?"
+    )
     for attempt in range(retries):
         try:
             conn.execute("BEGIN IMMEDIATE")
             for r in rows:
-                conn.execute(sql, [r[c] for c in IND_COLS] + [r["timestamp"], instrument, tf])
+                conn.execute(
+                    sql, [r[c] for c in IND_COLS] + [r["timestamp"], instrument, tf]
+                )
             conn.commit()
             return len(rows)
         except sqlite3.OperationalError as e:
@@ -80,15 +130,36 @@ def _write_indicators(conn: sqlite3.Connection, instrument: str, tf: int,
 
 
 def enrich_tf(conn: sqlite3.Connection, instrument: str, tf: int, date: str) -> int:
-    """Compute + write indicators for one TF's rows on one day (idempotent)."""
-    tf_bars = [dict(r) for r in conn.execute(
-        "SELECT timestamp, open, high, low, close, volume FROM market_data_multitf "
-        "WHERE instrument=? AND timeframe_min=? AND substr(timestamp,1,10)=? "
-        "ORDER BY timestamp", (instrument, tf, date)).fetchall()]
+    """Compute + write indicators for one TF's rows on one day (idempotent).
+    Extends query to include previous day's tail so SMA20/SMA50/SMA200 have
+    sufficient window from the first bar of the day (no separate state file)."""
+    # Extend lookback: load bars from 2 days ago onward to seed indicator windows
+    from datetime import datetime, timedelta
+
+    dt = datetime.strptime(date, "%Y-%m-%d")
+    lookback_date = (dt - timedelta(days=2)).strftime("%Y-%m-%d")
+    tf_bars = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT timestamp, open, high, low, close, volume FROM market_data_multitf "
+            "WHERE instrument=? AND timeframe_min=? AND timestamp >= substr(?,1,10) "
+            "ORDER BY timestamp",
+            (instrument, tf, lookback_date),
+        ).fetchall()
+    ]
     if not tf_bars:
         return 0
-    rows = [{"timestamp": tf_bars[i]["timestamp"], **compute_row_indicators(tf_bars, i, tf)}
-            for i in range(len(tf_bars))]
+    # Only enrich today's rows, but use full lookback for indicator context
+    today_prefix = date
+    today_idxs = [
+        i for i, b in enumerate(tf_bars) if b["timestamp"].startswith(today_prefix)
+    ]
+    if not today_idxs:
+        return 0
+    rows = [
+        {"timestamp": tf_bars[i]["timestamp"], **compute_row_indicators(tf_bars, i, tf)}
+        for i in today_idxs
+    ]
     return _write_indicators(conn, instrument, tf, rows)
 
 
@@ -106,22 +177,24 @@ def enrich_day(db_path: str, instrument: str, date: str) -> dict:
 
 
 def live(db_path: str, instrument: str):
-    """Live mode: subscribe to bars:{inst}:{tf} for all TFs; on each closed TF bar,
-    re-enrich that TF's rows for the bar's day (idempotent UPDATE, lock-safe).
+    """Live mode: subscribe to bars:{inst}:1, aggregate 1-min bars to all 6 TFs,
+    compute + write indicators idempotently on each closed TF bar.
     Heartbeat: multitf_enricher:{inst}:heartbeat (for data_health)."""
     import json
     from datetime import datetime
 
     import redis
 
-    from sim.sim_env import redis_kwargs  # PORCUPINE: prod 6379 / sim 6380
+    from multitf_recompute import aggregate_1min_to_tf, compute_row_indicators
 
-    r = redis.Redis(**redis_kwargs())
+    writable = TIMEFRAMES  # remove the unused variable for clarity
+
+    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
     r.ping()
     pubsub = r.pubsub()
-    channels = [f"bars:{instrument}:{tf}" for tf in TIMEFRAMES]
-    pubsub.subscribe(*channels)
-    print(f"[multitf_enricher] live: subscribed {channels}", flush=True)
+    channel = f"bars:{instrument}:1"
+    pubsub.subscribe(channel)
+    print(f"[multitf_enricher] live: subscribed {channel}", flush=True)
 
     conn = _open(db_path)
     enriched = 0
@@ -130,45 +203,93 @@ def live(db_path: str, instrument: str):
             if message["type"] != "message":
                 continue
             try:
-                tf = int(message["channel"].rsplit(":", 1)[1])
                 bar = json.loads(message["data"])
-            except (ValueError, TypeError, json.JSONDecodeError):
+            except (ValueError, json.JSONDecodeError):
                 continue
-            day = str(bar.get("timestamp", ""))[:10] or datetime.now().strftime("%Y-%m-%d")
-            try:
-                n = enrich_tf(conn, instrument, tf, day)
-                enriched += n
-                r.set(f"multitf_enricher:{instrument}:heartbeat",
-                      datetime.now().isoformat())
-                print(f"[multitf_enricher] {bar.get('timestamp')} {tf}m → {n} rows "
-                      f"(total {enriched})", flush=True)
-            except sqlite3.OperationalError as e:
-                # lock-safe writer already retries; anything that escapes is logged,
-                # the loop survives (a missed bar self-heals on the next message)
-                print(f"[multitf_enricher] WRITE FAIL {tf}m: {e}", flush=True)
+            day = str(bar.get("timestamp", ""))[:10] or datetime.now().strftime(
+                "%Y-%m-%d"
+            )
+
+            # Load today's 1-min bars to build TF context (lightweight)
+            bars_1m = _load_today_1m(conn, instrument, day)
+
+            for tf in TIMEFRAMES:
+                candles = aggregate_1min_to_tf(bars_1m, tf)
+                if not candles:
+                    continue
+                indicators_list = [
+                    compute_row_indicators(candles, i, tf) for i in range(len(candles))
+                ]
+                rows = [
+                    {"timestamp": c["timestamp"], **ind}
+                    for c, ind in zip(candles, indicators_list)
+                ]
+                try:
+                    n = _write_indicators(conn, instrument, tf, rows)
+                    enriched += n
+                    r.set(
+                        f"multitf_enricher:{instrument}:heartbeat",
+                        datetime.now().isoformat(),
+                    )
+                except sqlite3.OperationalError as e:
+                    print(
+                        f"[multitf_enricher] WRITE FAIL {tf}m: {e}",
+                        flush=True,
+                    )
+                    continue
     finally:
         conn.close()
 
 
+def _load_today_1m(conn, instrument, day):
+    # 2-day lookback so aggregate_1min_to_tf has enough bars to seed indicator windows
+    from datetime import datetime, timedelta
+
+    dt = datetime.strptime(day, "%Y-%m-%d")
+    lookback = (dt - timedelta(days=2)).strftime("%Y-%m-%d")
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT timestamp, open, high, low, close, volume "
+            "FROM market_data "
+            "WHERE instrument=? AND timestamp >= ? "
+            "ORDER BY timestamp",
+            (instrument, lookback),
+        ).fetchall()
+    ]
+
+
 def main():
-    ap = argparse.ArgumentParser(description="SQLite multi-TF indicator enricher (no DuckDB)")
+    ap = argparse.ArgumentParser(
+        description="SQLite multi-TF indicator enricher (no DuckDB)"
+    )
     ap.add_argument("--instrument", default="NIFTY", choices=["NIFTY", "SENSEX", "MCX"])
-    ap.add_argument("--backfill", help="YYYY-MM-DD: enrich a day's multitf rows in place")
-    ap.add_argument("--live", action="store_true",
-                    help="subscribe bars:{inst}:{tf}, enrich on each closed TF bar")
-    ap.add_argument("--db", help="capture sqlite path (default: prod capture for instrument)")
+    ap.add_argument(
+        "--backfill", help="YYYY-MM-DD: enrich a day's multitf rows in place"
+    )
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="subscribe bars:{inst}:{tf}, enrich on each closed TF bar",
+    )
+    ap.add_argument(
+        "--db", help="capture sqlite path (default: prod capture for instrument)"
+    )
     a = ap.parse_args()
 
     if a.db:
         db_path = a.db
     else:
         from config.sqlite_schema import get_sqlite_capture_path
+
         db_path = str(get_sqlite_capture_path(a.instrument))
 
     if a.backfill:
         res = enrich_day(db_path, a.instrument, a.backfill)
-        print(f"[multitf_enricher] {a.instrument} {a.backfill}: "
-              + " ".join(f"{tf}m={n}" for tf, n in res.items()))
+        print(
+            f"[multitf_enricher] {a.instrument} {a.backfill}: "
+            + " ".join(f"{tf}m={n}" for tf, n in res.items())
+        )
     elif a.live:
         live(db_path, a.instrument)
     else:

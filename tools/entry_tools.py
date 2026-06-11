@@ -265,6 +265,50 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
     try:
         for minut in TF_WINDOWS:
             row = db.execute(
+                """SELECT open, high, low, close, ema5, ema20, ema50,
+                          st_consensus, adx, di_plus, di_minus
+                   FROM market_data_multitf
+                   WHERE instrument=? AND timeframe_min=?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (index, minut),
+            ).fetchone()
+            key = f"{minut}m"
+            if row:
+                o, h, l, c, e5, e20, e50, st, a, dp, dm = row
+                pos = (
+                    "bullish"
+                    if (e20 and e50 and e20 > e50)
+                    else ("bearish" if (e20 and e50) else "neutral")
+                )
+                candle = (
+                    "GREEN"
+                    if (o and c and c > o)
+                    else "RED"
+                    if (o and c)
+                    else "neutral"
+                )
+                result["timeframes"][key] = {
+                    "ema5": _r(e5, 2),
+                    "ema20": _r(e20, 2),
+                    "ema50": _r(e50, 2),
+                    "ema_position": pos,
+                    "candle": candle,
+                    "st_consensus": (st or "NEUTRAL").strip(),
+                    "adx": _r(a, 1),
+                    "di_plus": _r(dp, 1),
+                    "di_minus": _r(dm, 1),
+                }
+            else:
+                result["timeframes"][key] = {
+                    "ema_position": "no_data",
+                    "candle": "no_data",
+                }
+    finally:
+        db.close()
+    return _json.dumps(result, indent=2)
+    try:
+        for minut in TF_WINDOWS:
+            row = db.execute(
                 """SELECT open, high, low, close, sma20, sma50, sma200,
                           st_consensus, adx, di_plus, di_minus
                    FROM market_data_multitf

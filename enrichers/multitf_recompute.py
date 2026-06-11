@@ -32,6 +32,11 @@ _GRANULARITY_MS = {
 
 TIMEFRAMES = [5, 15, 30, 60, 240, 1440]
 IND_COLS = [
+    "ema5",
+    "ema20",
+    "ema50",
+    "ema100",
+    "ema200",
     "sma20",
     "sma50",
     "sma200",

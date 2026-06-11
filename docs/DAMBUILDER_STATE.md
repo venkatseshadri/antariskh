@@ -114,7 +114,7 @@ unless `--heal` passed). Thresholds: enums exact, floats |Δ|≤0.5.
 prints per-TF per-column PASS/DRIFT and exits 0 on a clean post-06-09 day. `--heal`
 rewrites rows and a re-run is clean.
 
-### T4 — Phase C reader migration, flag-gated (code, NO default flip)
+### T4 — Phase C reader migration, flag-gated (code, NO default flip) → ✅ BUILT 251a76c (accept: all 5 families shape+values match, test PASS)
 File: `antariksh/tools/entry_tools.py`. Env flag `MULTITF_SOURCE=sqlite|duckdb`
 (default duckdb). When sqlite: `query_trend/momentum/volatility/volume/macro` read
 `market_data_multitf` from the capture SQLite (same shapes out). traffic_light stays
@@ -167,3 +167,4 @@ imports the v4 DuckDB paths.
 - **T2 follow-up:** check_dambuilder skips silently when heartbeat key MISSING — right pre-T1, but post-T1 a never-started unit (timer-bug class, Penguin 06-02) is invisible. Post-T1: if multitf-enricher-nifty.timer installed AND market hours AND no heartbeat → WARN. Fold into T1 validation or T2b.
 - **Unattributed brahmand working-tree edits (entry_setup.py, margin_matrix.json) seen 06-11 08:45:** entry_setup drops in-python pgrep guard (wrapper guard + file lock remain; compiles; --dry-run intact) + SIM_NOW-aware now_dt(). Safe for today but UNCOMMITTED live-path edits violate protocol — Board: commit or revert deliberately.
 - **T3 (9cc3402) NOT yet independently validated** — next validator session: re-run its Accept (multitf_recompute.py --instrument NIFTY --date 2026-06-10; then --heal + clean re-run), flip ✅✅.
+- **T4 (251a76c) triaged pre-open (default=duckdb confirmed unchanged, imports clean, its 5-family test PASS) — full Accept re-run + ✅✅ flip pending next validator session.**

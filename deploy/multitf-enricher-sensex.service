@@ -1,0 +1,21 @@
+[Unit]
+Description=DAMBUILDER SENSEX multi-TF indicator enricher — bars:SENSEX:{tf} → market_data_multitf indicators (09:15-15:30)
+After=consumer-sensex.service
+Wants=consumer-sensex.service
+
+[Service]
+Type=simple
+User=trading_ceo
+WorkingDirectory=/home/trading_ceo/antariksh
+ExecStart=/usr/bin/python3 /home/trading_ceo/antariksh/enrichers/multitf_enricher.py --instrument SENSEX --live
+ExecCondition=/home/trading_ceo/antariksh/cron/check_market_hours.sh NSE
+Restart=on-failure
+RestartSec=10
+MemoryMax=512M
+SuccessExitStatus=0 143
+RuntimeMaxSec=22800
+StandardOutput=append:/home/trading_ceo/antariksh/logs/multitf_enricher_sensex.log
+StandardError=append:/home/trading_ceo/antariksh/logs/multitf_enricher_sensex.log
+
+[Install]
+WantedBy=multi-user.target

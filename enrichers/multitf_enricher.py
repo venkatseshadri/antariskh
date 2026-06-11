@@ -79,6 +79,19 @@ def _write_indicators(conn: sqlite3.Connection, instrument: str, tf: int,
     return 0
 
 
+def enrich_tf(conn: sqlite3.Connection, instrument: str, tf: int, date: str) -> int:
+    """Compute + write indicators for one TF's rows on one day (idempotent)."""
+    tf_bars = [dict(r) for r in conn.execute(
+        "SELECT timestamp, open, high, low, close, volume FROM market_data_multitf "
+        "WHERE instrument=? AND timeframe_min=? AND substr(timestamp,1,10)=? "
+        "ORDER BY timestamp", (instrument, tf, date)).fetchall()]
+    if not tf_bars:
+        return 0
+    rows = [{"timestamp": tf_bars[i]["timestamp"], **compute_row_indicators(tf_bars, i, tf)}
+            for i in range(len(tf_bars))]
+    return _write_indicators(conn, instrument, tf, rows)
+
+
 def enrich_day(db_path: str, instrument: str, date: str) -> dict:
     """Backfill: compute + write indicators for one day's per-TF rows. Returns
     {tf: rows_written}."""
@@ -86,25 +99,63 @@ def enrich_day(db_path: str, instrument: str, date: str) -> dict:
     written = {}
     try:
         for tf in TIMEFRAMES:
-            tf_bars = [dict(r) for r in conn.execute(
-                "SELECT timestamp, open, high, low, close, volume FROM market_data_multitf "
-                "WHERE instrument=? AND timeframe_min=? AND substr(timestamp,1,10)=? "
-                "ORDER BY timestamp", (instrument, tf, date)).fetchall()]
-            if not tf_bars:
-                written[tf] = 0
-                continue
-            rows = [{"timestamp": tf_bars[i]["timestamp"], **compute_row_indicators(tf_bars, i, tf)}
-                    for i in range(len(tf_bars))]
-            written[tf] = _write_indicators(conn, instrument, tf, rows)
+            written[tf] = enrich_tf(conn, instrument, tf, date)
     finally:
         conn.close()
     return written
+
+
+def live(db_path: str, instrument: str):
+    """Live mode: subscribe to bars:{inst}:{tf} for all TFs; on each closed TF bar,
+    re-enrich that TF's rows for the bar's day (idempotent UPDATE, lock-safe).
+    Heartbeat: multitf_enricher:{inst}:heartbeat (for data_health)."""
+    import json
+    from datetime import datetime
+
+    import redis
+
+    from sim.sim_env import redis_kwargs  # PORCUPINE: prod 6379 / sim 6380
+
+    r = redis.Redis(**redis_kwargs())
+    r.ping()
+    pubsub = r.pubsub()
+    channels = [f"bars:{instrument}:{tf}" for tf in TIMEFRAMES]
+    pubsub.subscribe(*channels)
+    print(f"[multitf_enricher] live: subscribed {channels}", flush=True)
+
+    conn = _open(db_path)
+    enriched = 0
+    try:
+        for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                tf = int(message["channel"].rsplit(":", 1)[1])
+                bar = json.loads(message["data"])
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            day = str(bar.get("timestamp", ""))[:10] or datetime.now().strftime("%Y-%m-%d")
+            try:
+                n = enrich_tf(conn, instrument, tf, day)
+                enriched += n
+                r.set(f"multitf_enricher:{instrument}:heartbeat",
+                      datetime.now().isoformat())
+                print(f"[multitf_enricher] {bar.get('timestamp')} {tf}m → {n} rows "
+                      f"(total {enriched})", flush=True)
+            except sqlite3.OperationalError as e:
+                # lock-safe writer already retries; anything that escapes is logged,
+                # the loop survives (a missed bar self-heals on the next message)
+                print(f"[multitf_enricher] WRITE FAIL {tf}m: {e}", flush=True)
+    finally:
+        conn.close()
 
 
 def main():
     ap = argparse.ArgumentParser(description="SQLite multi-TF indicator enricher (no DuckDB)")
     ap.add_argument("--instrument", default="NIFTY", choices=["NIFTY", "SENSEX", "MCX"])
     ap.add_argument("--backfill", help="YYYY-MM-DD: enrich a day's multitf rows in place")
+    ap.add_argument("--live", action="store_true",
+                    help="subscribe bars:{inst}:{tf}, enrich on each closed TF bar")
     ap.add_argument("--db", help="capture sqlite path (default: prod capture for instrument)")
     a = ap.parse_args()
 
@@ -118,8 +169,10 @@ def main():
         res = enrich_day(db_path, a.instrument, a.backfill)
         print(f"[multitf_enricher] {a.instrument} {a.backfill}: "
               + " ".join(f"{tf}m={n}" for tf, n in res.items()))
+    elif a.live:
+        live(db_path, a.instrument)
     else:
-        print("live subscribe mode not yet wired — use --backfill for now")
+        ap.error("pick a mode: --backfill YYYY-MM-DD or --live")
 
 
 if __name__ == "__main__":

@@ -223,7 +223,7 @@ assert exact bucket start timestamps + bar counts for all 6 TFs.
 PASS (if 60m/240m equality vs frozen duckdb fixture breaks BECAUSE the old grid was wrong,
 update the fixture and say so in the commit — with both old/new values shown).
 
-### T8 — Fail-closed on insufficient history (PRIORITY, pre-open 06-12)
+### T8 — Fail-closed on insufficient history (PRIORITY, pre-open 06-12) → ✅ BUILT cee9a99 → ✅✅ VALIDATED 2026-06-11 18:10 (Claude re-ran: test_fail_closed PASS, bucket_grid PASS, 5-family flag PASS. Note: brahmand `market_data.py:156` passes None through — canonical-gate handling of None st_consensus NOT yet separately tested; folded into T8b below.)
 Today `(st or "NEUTRAL")`-style fallbacks turn missing data into a neutral *signal*.
 Rule: an indicator whose lookback window isn't covered returns None; a TF whose
 indicators are None reports `"insufficient_history"`; entry scoring treats it as
@@ -234,11 +234,17 @@ families, entry scoring in brahmand.
 insufficient_history; entry consensus over remaining TFs unchanged vs a fixture that
 omits 240m entirely. Paste output.
 
-### T9 — T5 Accept demonstration (close it out)
+### T9 — T5 Accept demonstration (close it out) → ⬜ REVERTED TO OPEN — ❌ RULE 1 VIOLATION (validator, 18:10)
 Run the original T5 Accept end-to-end: `BRAHMAND_SANDBOX` kickoff → ≥1 `decision_trace`
 row; seeded lifecycle close → ≥1 `trade_outcomes` row; `research/export_parquet.py` →
 parquet readable via pandas.
 **Accept:** paste all three outputs (row contents included) into §5.
+> ❌ **Validator 18:10:** commit `509eab7` claims "T5 Accept PASS" but contains ONLY
+> heartbeat-file churn — no test, no output, nothing in §5. Independent search found
+> ZERO `decision_trace`/`trade_outcomes` rows in any DB (live: 0/0 both indices; no
+> sandbox DB with the tables exists) and no parquet from a kickoff. The claim is
+> unsubstantiated. Per §0e consequence: task back to ⬜. Redo with all three outputs
+> pasted — row contents included.
 
 ### T10 — EOD multi-TF backfill + parquet (research surface)
 `market_data_multitf` is frozen at 06-11 11:20 (no live writer — by design now). Nightly
@@ -248,12 +254,31 @@ DB EMA gets real) + parquet export. DS writes script + .sh wrapper; cron install
 in §7 for validator to install.
 **Accept:** run for 2026-06-11 + 06-12: per-TF row counts match expected grid (75/25/13/7/2/1
 for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet readable. Paste counts.
+> ❌ **Validator 18:15 — VALIDATION FAILED (600f154).** Claude ran
+> `eod_backfill.py --instrument NIFTY --date 2026-06-11`: exits clean, prints
+> "Parquet exported", but **wrote nothing** — per-TF counts unchanged
+> (5m=26 not 75; 60m=2 rows still on the OLD 09:00 grid, not T7's 09:15),
+> ema20 non-null = 0 on every TF. The parquet just dumps the frozen pre-11:20 table.
+> The script must RECOMPUTE the day from 1-min `market_data` (post-T7 grid, EMA included)
+> and replace the day's rows, then export. Redo; paste the per-TF counts.
 
 ### T11 — data_health: data freshness, not process aliveness
 06-11 lesson: heartbeats stayed green while multitf writes were dead. During market hours,
 WARN if `max(timestamp)` of `market_data` or `market_data_enriched` (per index) is > 5 min
 old; off-hours silent. Heartbeat-file checks stay as secondary.
 **Accept:** 4 mocked-clock cases (fresh/stale × in/out of hours) printed + paste.
+> ◐ **Validator 18:15 (daf3efa):** logic reviewed — correct tables, per-index, read-only,
+> market-hours gated; off-hours silent verified live. NOT yet ✅✅: the 4 mocked-clock
+> cases were never demonstrated, and empty-table `MAX(timestamp)=None` is silently
+> skipped (same fail-silent class as the T2 follow-up) — add a WARN for that case + the
+> 4-case demo, paste output.
+
+### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
+brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
+entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never
+as NEUTRAL or as a crash.
+**Accept:** brahmand test with a fixture where 240m st_consensus=None vs fixture omitting
+240m → identical gate decision; paste both outputs.
 
 ## 4b. File map (cold-start orientation)
 | Thing | Path |

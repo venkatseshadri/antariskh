@@ -284,6 +284,10 @@ def test_cron_paths():
         if not src_path.exists():
             continue
         text = src_path.read_text() if src_path.is_file() else ""
+        # skip commented-out crontab lines (retired entries stay as comments)
+        text = "\n".join(
+            ln for ln in text.splitlines() if not ln.lstrip().startswith("#")
+        )
         for m in re.finditer(r"(/home/\S+?/[\w\-_]+\.(?:py|sh))", text):
             p = m.group(1)
             if ".log" in p:

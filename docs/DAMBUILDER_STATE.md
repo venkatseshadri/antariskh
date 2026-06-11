@@ -163,6 +163,54 @@ imports the v4 DuckDB paths.
 - A green unit test ≠ session-proven: every step needs one real shadow session before the
   next step trusts it.
 
+## 7b. VALIDATOR AUDIT 2026-06-11 16:45 IST (Claude) — spec conformance verdict: FAILED
+
+The plan-of-record was abandoned mid-day 06-11 by the implementer. What exists now is a
+**different architecture**, built and self-deployed during a live session. Evidence:
+
+**Gate violations (all during 09:00–15:35 IST session, against §6 + §0b):**
+- T6 retirement executed unilaterally at 09:49 (`8b22237`) with **zero** parallel shadow
+  sessions (§5 still empty; T1 never ran). v4 + v3.1 archived to
+  `~/archive_dead_systems_20260611.tar.gz`; Penguin 7-unit stack replaced by
+  `feed.service` + `enricher-{nifty,sensex,mcx}` units.
+- T4 default flip (Board-gated) done unilaterally at 11:15 (`5f7d9f1`).
+- Unscoped rebuilds: full Redis purge (`37b7e24`/`a41700f` — Board had locked
+  "traffic_light keeps Redis, migrates LAST"), MCX commodity capture (new asset class,
+  never Board-scoped), in-memory multi-TF snapshot (`2958672`).
+- Mid-session breakage caused: enricher crash-loop 11:31–11:33 (15 restarts), feed broken
+  by accidental NorenApiPy removal (`e8967ef` self-fix at 12:00).
+
+**Data facts (capture_{nifty,sensex}.sqlite, 06-11):**
+- 1-min `market_data`: intact, 368/367 bars, 09:15–15:29, zero low<=0. ✓
+- `market_data_enriched`: 366 rows through 15:29. ✓ (this is what the new units write)
+- `market_data_multitf`: **dead since 11:20** — no writer anymore; table silently
+  abandoned. T3 recompute + parity infra now target a frozen table.
+- EMA columns (`ema5..ema200`): **0 non-null rows ever**, despite `289d087`/`2958672`
+  claiming "EMA populated". (EMA exists only in the in-memory snapshot.)
+
+**Per-task status vs spec:** T1 NEVER RUN · T2 ✅✅ but superseded same day
+(Redis key purged → check dead; `data_health` rewritten unvalidated `6ff765b`) ·
+T3 built, validation FAILED, **bug not fixed** · T4 ✅✅ code, gate violated on flip ·
+T5 built, no `decision_trace`/`trade_outcomes` rows or tables exist anywhere — unverified ·
+T6 executed prematurely.
+
+**NEW live-path bugs found (pre-open risk for 06-12):**
+1. `tools/entry_tools.py::_snapshot` cache is global with **no index key** + 5s TTL —
+   NIFTY/SENSEX cross-contamination if both queried in one process within 5s.
+2. `_snapshot` imports `aggregate_1min_to_tf` from `multitf_recompute.py` — the module
+   whose 60m/240m bucket grid FAILED T3 validation (:30 offsets vs top-of-hour). That
+   unvalidated math now feeds live entry decisions directly.
+3. 2-day snapshot lookback cannot warm 60m/240m/1440m indicators (sma200, ema200, ADX) —
+   higher-TF families run on insufficient history; no fail-closed policy defined.
+4. `tests/test_multitf_live.py` now crashes (`NameError: name 'LIVE_DIR' is not defined`
+   in `multitf_enricher.py:199`) — A1's validated artifact broken by the Redis purge.
+5. Uncommitted live-path WIP in `enrichers/instrument_enricher.py` ongoing at 16:44+
+   (option symbol format); implementer active.
+
+**Board decision needed:** adopt the de-facto architecture as new spec (with the fixes
+above as acceptance gates) or roll back to the archived stack. Validator recommendation:
+adopt + re-gate (see redesign proposal in session 2026-06-11 PM).
+
 ## 7. Open questions / follow-ups
 - **T5 (77a6afb, a4a7255) built — validation pending** (outcome tables + parquet; Accept: sandbox kickoff inserts decision_trace row, seeded lifecycle close inserts trade_outcomes, parquet pandas-readable).
 - **T2 follow-up:** check_dambuilder skips silently when heartbeat key MISSING — right pre-T1, but post-T1 a never-started unit (timer-bug class, Penguin 06-02) is invisible. Post-T1: if multitf-enricher-nifty.timer installed AND market hours AND no heartbeat → WARN. Fold into T1 validation or T2b.

@@ -394,6 +394,27 @@ counts from both logs into §5).
 **Accept:** all 4 with output; one live session with per-bar conns gone and SENSEX pcr
 computed from weekly-only rows (paste the filter query + one bar's strike list).
 
+### T15 — 🔴 MCX capture dead since 11:25 (validator-found 06-11 22:15 — Board asked "is MCX validated too?"; answer was no, and it was broken)
+MCX market OPEN until 23:30, WS feed alive (commodity 1-min logs current), but SQLite
+capture died at consumer elimination:
+- `capture_mcx.sqlite` `market_data` (instrument-column layout, written by retired
+  consumer-mcx) frozen 11:25; `market_data_enriched` also frozen 11:25 even though
+  enricher-mcx.service is active (restarted 11:55 after an exit-code crash — root-cause
+  why it writes nothing).
+- feed.py `_write_1min_sqlite` routes commodity bars by `bar["instrument"]` →
+  `capture_alumini.sqlite` etc. — files exist but have **ZERO tables** (feed never inits
+  schema; consumer used to own it) → every INSERT failed silently for 11 hours.
+- Today's MCX truth is recoverable: 1-min logs complete in `data/live/{COMMODITY}_1min.log`.
+Fix (DS): decide ONE layout — recommend keeping `capture_mcx.sqlite` instrument-column
+layout (history + readers live there): map commodity instruments → capture_mcx in
+`get_sqlite_capture_path` (or in feed), init schema if missing, backfill today's gap from
+the 1-min logs, root-cause enricher-mcx zero-writes. Archive (never delete — rule 5) the
+six empty per-commodity sqlite files. Add MCX to data_health freshness checks (T11 covers
+only NIFTY/SENSEX — same blind spot that hid this).
+**Accept:** `market_data` count for 2026-06-11 ≈ full session bars per commodity incl.
+backfilled 11:25→close; live rows appearing ≤1 min behind clock while MCX open;
+data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
+
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
 entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never
@@ -643,6 +664,16 @@ for i in ['nifty','sensex']:
 **Expect:** pcr_total/oi_skew non-null counts > 0 for the FIRST TIME EVER (they are 0 for
 all history — the 22-call REST path never worked, see T13). If still 0 → d623438's chain
 parse is broken too; root-cause with the actual get_option_chain response pasted.
+
+### V11 — ~10:00 + ~21:00 · MCX capture alive (T15 surface — NEW, was a blind spot)
+```bash
+python3 -c "
+import sqlite3
+c=sqlite3.connect('file:/home/trading_ceo/python-trader/varaha/data/capture_mcx.sqlite?mode=ro',uri=True)
+print(c.execute(\"select instrument, count(*), max(timestamp) from market_data where timestamp like '2026-06-12%' group by instrument\").fetchall())"
+```
+**Expect:** all 6 commodities present, max(timestamp) ≤ 2 min behind clock while MCX open
+(09:00–23:30). Run twice — morning + evening (MCX evening session was where it died unseen).
 
 **Failure protocol:** any ❌ → paste output, root-cause, fix forward (§0e rules apply),
 re-run the item. Validator spot-audits V3/V4/V8 independently.

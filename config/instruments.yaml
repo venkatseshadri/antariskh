@@ -30,6 +30,13 @@ spot:
     market_open: "09:15"
     market_close: "15:30"
 
+  - name: INDIAVIX
+    exchange: NSE
+    token: "26017"
+    feed_type: t
+    market_open: "09:15"
+    market_close: "15:30"
+
 futures:
   - name: NIFTY
     exchange: NFO

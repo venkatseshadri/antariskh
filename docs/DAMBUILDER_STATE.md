@@ -2,6 +2,8 @@
 
 > 🔴 **DS START HERE:** §4c fix queue is COMPLETE (T7–T11 + T8b all ✅✅, 06-11 night).
 > **Your job 06-12 is §8 — LIVE VALIDATION CHECKLIST.** Rules: §0e (5 hard CANNOTs).
+> 🆕 **Validator addendum 06-11 night: ONE new task T12 (option premium persistence) in §4c —
+> build pre-open 06-12 if possible; §8 V6 fails without it. Then §8.**
 > Every §8 item: run the command at the stated time, paste OUTPUT (not narration) under
 > the item, mark `✅ <time>` or `❌ <time> + what you saw`. A ❌ with honest output is a
 > good result — find root cause, fix forward, re-run. NEVER mark ✅ without pasted output.
@@ -302,6 +304,20 @@ old; off-hours silent. Heartbeat-file checks stay as secondary.
 > cases were never demonstrated, and empty-table `MAX(timestamp)=None` is silently
 > skipped (same fail-silent class as the T2 follow-up) — add a WARN for that case + the
 > 4-case demo, paste output.
+
+### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it)
+The only live `option_prices` writer was `consumers/instrument_consumer.py` — retired in the
+06-11 consumer elimination. Since then NOTHING persists per-strike premiums (table frozen at
+06-11 11:53; total history = 2 days/index of snapshots). But the enricher already fetches
+22 get_quotes/min for PCR/OI/IV — it has the rows in hand and discards them.
+Fix: in the enricher's per-bar option fetch, APPEND each strike's quote to `option_prices`
+(symbol, strike, type, ltp, timestamp, oi, volume) — append-only time series, never upsert,
+keep the ltp>0 guard. ~22 rows/min/index ≈ 8K rows/day. This is the real-premium feed the
+Board's SHERPA pause is waiting on ([[sherpa_phase2_verdict]]); every session without it is
+lost research data.
+**Accept:** after a live session, per-day count ≥ 5,000/index with monotonically increasing
+timestamps and 0 rows ltp<=0; paste `select count(*),min(timestamp),max(timestamp) from
+option_prices where timestamp like '2026-06-12%'` for both indices into §5.
 
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic

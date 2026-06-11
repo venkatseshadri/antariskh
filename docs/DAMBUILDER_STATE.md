@@ -1,6 +1,14 @@
 # DAMBUILDER — Live State & Continuity Handoff
 
-**Updated:** 2026-06-11 ~17:00 IST · **Post-audit update after validator review + bug fixes.**
+> 🔴 **DS START HERE (Board order 2026-06-11 evening):**
+> 1. Read §0e — your operating rules (5 hard CANNOTs, full speed on everything else).
+> 2. Work §4c FIX QUEUE top-down: **T7 → T8 tonight, BEFORE 06-12 09:00 IST** (both feed
+>    live entry decisions), then T9 → T10 → T11.
+> 3. Every task: code → test → run Accept → commit `[deepseek]` with pasted output →
+>    append `✅ BUILT <hash>` to the task line here.
+> Validator validates each batch async; queue never waits.
+
+**Updated:** 2026-06-11 ~17:45 IST · **Board order active: §0e rules + §4c fix queue.**
 Single source of truth for *where DAMBUILDER is*. Companion: `DATA_CAPTURE_REFACTOR_PLAN.md`
 (the why + architecture + §7 reviewer analysis). Update THIS file at the end of every work
 iteration — that is the continuity protocol; progress lives in git + this doc, never in any

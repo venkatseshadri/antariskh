@@ -451,6 +451,37 @@ data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 > 30-Jun then kills SEVEN at once: NIFTY30JUN26F + all 6 MCX contracts (incl. tonight's
 > GOLDPETAL30JUN26). With T-2 roll policy, T16 must be live by ~23-Jun.**
 > → ✅ BUILT 0ffaad0 + brahmand 3331281 (test_t16_futures_roll 10/10 PASS — T-2 roll, T-3 no-roll, expiry raise, MCX skip-month, SENSEX, BSXFUT→BFO)
+>
+> ❌ **VALIDATION FAILED — validator 06-11 23:55 (0ffaad0 + 3331281). 2 blockers, fix-forward before 06-12 09:14.**
+> Good first: resolver logic sound (sorted expiries, T-2 roll, expired-root raises),
+> schema migration guarded (`PRAGMA table_info` before ALTER — safe on live DBs),
+> yaml now root-only, 10/10 tests pass. But tests cover the RESOLVER only — neither
+> blocker is reachable from the test file.
+>
+> **T16-B1 (CRITICAL, breaks every futures/MCX bar at next feed restart):**
+> `antariksh/feed.py:296` — `_write_1min_sqlite(bar)` does
+> `_INSTRUMENT_CONTRACT.get(instrument)` but `instrument` is not defined in that
+> function's scope (only `bar` is; the copied-from `_persist_bar_and_options` defines
+> it at :229). → NameError on EVERY call, swallowed by the bare `except` at :314 as
+> "SQLite write failed" → ALL non-index instruments (all 6 MCX + dated futures legs)
+> write ZERO bars from next restart. This is the exact silent-gap class T16 exists to
+> kill, introduced by the T16 commit itself. NIFTY/SENSEX unaffected (they go via
+> `_persist_bar_and_options`, correct scope). **Fix: `bar["instrument"]`. One token.**
+> Add a test that calls `_write_1min_sqlite` with a real bar dict and asserts the row
+> lands (would have caught this).
+>
+> **T16-B2 (sentinel is dead code — commit claim #5 false as shipped):**
+> brahmand `data_health.py:check_mcx` does `from feed import _INSTRUMENT_EXPIRIES` —
+> wrong process AND wrong repo. That dict is populated only inside the running
+> feed.service process by `build_subscriptions()`; in the data_health cron process the
+> import either fails (feed.py lives in antariksh, not on brahmand's path → ImportError
+> → silently `pass`) or yields a fresh empty `{}`. Either way the expiry sentinel can
+> NEVER fire. **Fix: feed persists resolved contracts at startup (e.g.
+> `antariksh/data/resolved_contracts.json`: name → {tsym, token, expiry}); data_health
+> reads that file. Bonus: kills the unreachable `else 999` double-computation.**
+> Accept for re-validation: B1 — feed cold-restart (or harness) shows MCX bars landing
+> with non-NULL `contract`; B2 — set a fixture expiry ≤3d in the JSON, data_health
+> emits the WARN. Paste outputs in §5.
 GOLD05JUN26 expired 06-05 → feed subscribed a dead token for 6 days, silently (caught only
 via T15). Same bug class found TWICE more tonight: enricher had hardcoded `NIFTY30JUN26F`
 / `SENSEX26JUNFUT` (die 30-Jun), and `futures:` section of instruments.yaml is also dated.
@@ -503,6 +534,43 @@ as NEUTRAL or as a crash.
 > Required: call the REAL `combine_entry_scores` with a `query_trend`-shaped payload
 > where 240m `st_consensus=None` vs the same payload omitting 240m → assert identical
 > `signal/go/confidence` and no crash. Paste both outputs in §5.
+
+### T17 — Margin lifecycle: gate entries on real margin, refresh after fills (validator-filed 06-11 23:55, Board-requested go-live prerequisite)
+**Finding (validator audit 06-11):** the daily fetch works — cron 08:30
+`antariksh/margin_calculator.py` → `antariksh/data/broker_limits.json` (Shoonya) +
+`broker_limits_flattrade.json`, ran clean today, 60-min staleness flag exists
+(`broker_limits.py:190`). But the LIVE TRADING PATH NEVER READS IT: brahmand's entry
+chain (`run_kickoff` → entry gate → `tools/execution_tools.py`) has zero margin gate
+before order placement. `BrokerLimits.is_sufficient_for_trade()`
+(`antariksh/broker_limits.py:48`) exists and is called by NOTHING in the entry path.
+Nothing deducts margin on entry, nothing restores on close.
+`brahmand/tools/monitor_tools.py:218` leg-shift proposals get status
+`PENDING_MARGIN_CHECK` that nothing ever resolves. Paper mode masks all of this
+(broker reports used_margin=0); live money does not.
+Build (DS) — broker is the source of truth, NO local add/subtract arithmetic
+(multiplier moves with VIX, SPAN revises intraday; local ledgers drift):
+1. **Pre-entry gate** in brahmand entry path, immediately before order placement:
+   margin snapshot from broker `get_limits()` live, falling back to
+   `broker_limits.json` only if fresh (<5 min); estimated requirement from
+   `brahmand/data/margin_matrix.json` (span capture, already refreshed every 5 min)
+   for the chosen wing width; require `free_margin * 0.90 >= estimate`. FAIL-CLOSED:
+   no margin data or stale → no entry, CRITICAL log + Telegram.
+2. **Post-fill refresh**: after entry fill AND after close/exit, re-fetch
+   `get_limits()` → rewrite `broker_limits.json` (reuse
+   `broker_limits.fetch_live_limits_from_broker`). This IS the deduct/restore — read
+   back from broker, don't compute.
+3. **Resolve `PENDING_MARGIN_CHECK`**: leg-shift sell-side proposals call the same
+   gate from (1) before execution; status becomes MARGIN_OK / MARGIN_BLOCKED.
+4. **Alert on daily fetch failure**: 08:30 margin_calculator failure → Telegram
+   (picoclaw), not just a log line. Trading on yesterday's margin must be loud.
+**Note:** `sync_with_config()` mutates `CAPITAL.total_capital` in-process only — dies
+with the 08:30 process. Consumers must read the JSON, never assume config was synced.
+**Accept:** (a) test: gate blocks when free_margin insufficient / stale / missing,
+passes when sufficient — against REAL gate function, not a reimplementation;
+(b) test: post-fill path rewrites broker_limits.json (mock get_limits, assert file);
+(c) live demo: one paper entry logs gate decision with numbers
+(free, buffer, estimate, verdict); (d) kill the 08:30 token deliberately once →
+Telegram alert arrives. Paste outputs in §5.
 
 ## 4b. File map (cold-start orientation)
 | Thing | Path |

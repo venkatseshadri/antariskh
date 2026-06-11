@@ -205,7 +205,8 @@ def _option_unsubscribe(api, token: str):
 
 
 def _rebalance_option_window(api, r, instrument: str, new_atm: int):
-    """When ATM shifts by its gap, drop furthest OTM strikes, add new ones."""
+    """When ATM shifts at bar close, drop furthest OTM strikes, add new ones.
+    Called once per 1-min bar — no per-tick thrash, no hysteresis needed."""
     from config.token_resolver import TokenResolver
 
     state = _option_state.get(instrument)
@@ -214,9 +215,7 @@ def _rebalance_option_window(api, r, instrument: str, new_atm: int):
 
     gap = state["gap"]
     old_atm = state["atm"]
-    # Hysteresis: only rebalance once ATM crosses 1.5 gaps away, so spot
-    # sitting on a strike boundary doesn't thrash resubscribes every tick.
-    if abs(new_atm - old_atm) < 1.5 * gap:
+    if new_atm == old_atm:
         return
 
     log.info(f"ATM shifted [{instrument}]: {old_atm} → {new_atm} — rebalancing")
@@ -260,9 +259,7 @@ def _rebalance_option_window(api, r, instrument: str, new_atm: int):
     )
 
     # Signal consumer to purge stale strikes
-    valid_strikes = sorted(
-        {int(new_tokens_map[tsym]["strike"]) for tsym in new_window}
-    )
+    valid_strikes = sorted({int(new_tokens_map[tsym]["strike"]) for tsym in new_window})
     r.set(f"feed:{instrument}:options:window", json.dumps(valid_strikes))
 
     # Drop strikes that left the window from the LTP snapshot hash
@@ -396,20 +393,19 @@ def main():
             r.lpush(feed_key, json.dumps(completed))
             r.ltrim(feed_key, 0, REDIS_CAP)
 
+            # ── ATM shift check — ONCE PER MINUTE, bar close ─────────────
+            if instrument in INSTRUMENT_GAP and completed["close"] > 0:
+                gap = INSTRUMENT_GAP[instrument]
+                new_atm = round(completed["close"] / gap) * gap
+                if instrument not in _option_state:
+                    _init_option_feed(api, r, instrument, completed["close"])
+                else:
+                    old_atm = _option_state[instrument]["atm"]
+                    if new_atm != old_atm:
+                        _rebalance_option_window(api, r, instrument, new_atm)
+
         # per-instrument heartbeat (120s TTL) — every tick, for liveness
         r.set(f"feed:{instrument}:heartbeat", bar["timestamp"], ex=120)
-
-        # ── ATM shift check (NIFTY + SENSEX) ────────────────────────────────
-        if instrument in INSTRUMENT_GAP and bar["ltp"] > 0:
-            gap = INSTRUMENT_GAP[instrument]
-            new_atm = round(bar["ltp"] / gap) * gap
-
-            if instrument not in _option_state:
-                _init_option_feed(api, r, instrument, bar["ltp"])
-            else:
-                old_atm = _option_state[instrument]["atm"]
-                if abs(new_atm - old_atm) >= gap:
-                    _rebalance_option_window(api, r, instrument, new_atm)
 
     def on_close():
         nonlocal socket_opened

@@ -156,7 +156,27 @@ def build_subscriptions(config: dict) -> list:
                 _INSTRUMENT_EXPIRIES[item["name"]] = contract["expiry"]
                 del item["product_root"]
             subs.append(item)
+
+    # Persist resolved contracts for cross-process readers (T16 data_health sentinel)
+    _write_resolved_contracts()
+
     return subs
+
+
+def _write_resolved_contracts():
+    import json
+
+    data = {}
+    for name, expiry in _INSTRUMENT_EXPIRIES.items():
+        data[name] = {
+            "tsym": _INSTRUMENT_CONTRACT.get(name, ""),
+            "expiry": expiry.isoformat()
+            if hasattr(expiry, "isoformat")
+            else str(expiry),
+        }
+    path = PROJECT_ROOT / "data" / "resolved_contracts.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
 
 
 def _write_feed_heartbeat(instrument: str, ts: str):
@@ -293,7 +313,7 @@ def _write_1min_sqlite(bar: dict):
         db = _get_capture_db(bar["instrument"])
         if not db:
             return
-        contract_tsym = _INSTRUMENT_CONTRACT.get(instrument)
+        contract_tsym = _INSTRUMENT_CONTRACT.get(bar["instrument"])
         db.execute(
             "INSERT OR REPLACE INTO market_data "
             "(timestamp, instrument, open, high, low, close, volume, ltp, source, contract) "

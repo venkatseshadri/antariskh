@@ -454,6 +454,23 @@ data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 >
 > ❌ **VALIDATION FAILED — validator 06-11 23:55 (0ffaad0 + 3331281). 2 blockers, fix-forward before 06-12 09:14.**
 > 🔧 **FIXED e1e1219 + brahmand bae4f93 (06-11 22:50).**
+>
+> ✅✅ **LIVE-VALIDATED — validator 06-11 22:56 (e1e1219 + 710d986 + brahmand bae4f93 + 392b972).**
+> Validator re-ran: 11/11 tests PASS; restarted feed.service live during MCX session →
+> **found T16-B3 in the act**: first restart (22:52) CRASH-LOOPED on
+> `PermissionError: data/resolved_contracts.json` — DS's test run as root had created
+> the file root-owned, and `_write_resolved_contracts` is FATAL in the startup path.
+> Validator chown'd + restarted (22:53, capture restored ~80s outage); DS then moved
+> the file to LIVE_DIR (710d986) + reader follows (392b972). Live evidence after final
+> restart 22:54:23: MCX bars 22:54/22:55 land with contract populated
+> (GOLD→GOLDPETAL30JUN26, CRUDEOILM→CRUDEOILM18JUN26, …); sentinel fixture
+> (expiry 2026-06-13) fired `EXPIRY [GOLD]: … (2d) — successor needed`, prod file
+> restored. resolved_contracts.json now trading_ceo-owned in LIVE_DIR.
+> **Residual → T16c (build with T18, non-blocking):** (1) `_write_resolved_contracts`
+> still unguarded — wrap try/except (helper persistence must NEVER kill capture; B3 was
+> exactly this class) + atomic tmp+rename so data_health can't read partial JSON;
+> (2) tests importing `build_subscriptions` write the PROD LIVE_DIR file as a side
+> effect — run-as-root test reintroduces B3; point it at tmp path under test.
 > Good first: resolver logic sound (sorted expiries, T-2 roll, expired-root raises),
 > schema migration guarded (`PRAGMA table_info` before ALTER — safe on live DBs),
 > yaml now root-only, 10/10 tests pass. But tests cover the RESOLVER only — neither
@@ -572,6 +589,47 @@ passes when sufficient — against REAL gate function, not a reimplementation;
 (c) live demo: one paper entry logs gate decision with numbers
 (free, buffer, estimate, verdict); (d) kill the 08:30 token deliberately once →
 Telegram alert arrives. Paste outputs in §5.
+
+### T18 — Expiry-day (0DTE) handling contradicts the strategy: 4 divergent expiry computations roll to next week too early (validator-filed 06-12 00:15, Board statement is authority)
+**Board statement 06-12:** "the system trades on the day of expiry — on Tuesday it takes
+credit spreads to capture the max theta decay that happens that day." T16's futures T-2
+roll does NOT touch this (FUTIDX/FUTCOM capture subscriptions only; options never pass
+through `resolve_nearest_future`). But the validator traced option expiry selection and
+found FOUR independent implementations, each with its own roll rule, and on the exact
+days the strategy trades (NIFTY Mon 1DTE / Tue 0DTE; SENSEX Wed/Thu) they disagree:
+1. **Trading fallback** `brahmand/tools/chain_tools.py:23` `_weekly_expiry`: on Tuesday
+   `days=(1-1)%7=0 → forced to 7` → contract default = NEXT week. 0DTE entry impossible
+   via the fallback on the highest-theta day.
+2. **Capture/enrichment** `antariksh/enrichers/instrument_enricher.py:707`
+   `_weekly_expiry_date`: `days_ahead <= 0 → +7` → on Tuesday `market_data.expiry_weekly`
+   = NEXT week all day, `days_to_weekly`=7 not 0. Consumers: margin_capture._get_expiry
+   (span matrix priced on the wrong expiry on expiry day), greeks (`_get_weekly_expiry`),
+   anything resolving contracts from expiry_weekly.
+3. **Option premium feed** `antariksh/config/token_resolver.py:87` `_next_expiry`:
+   `(expiry - today).days < 2 → +7` → feed subscribes NEXT week's option chain on BOTH
+   Monday and Tuesday. Per-strike premium capture (T12/T13) is blind on 1DTE and 0DTE —
+   the two days the iron-fly calendar actually enters. SHERPA/PCR/OI research on
+   expiry-week behavior has no data for the traded contracts.
+4. **margin_capture fallback** `brahmand/margin_capture.py:77` hardcoded "22-MAY-2026".
+**⚠️ Wrong behavior is currently TEST-ENFORCED:** antariksh pre-commit plumbing asserts
+"Tue morning → next week" (checks 3.3/3.4). Those assertions encode the bug; they must
+flip with the fix or DS will be blocked by its own pre-commit.
+**Systemic cure (build ONE thing, not 4 patches):** single expiry oracle —
+`TokenResolver.resolve_weekly_expiry(index, now)` driven by the broker master file
+(authoritative + holiday-aware by construction: the listed contract IS the truth), rule:
+nearest unexpired weekly ≥ today, held until ~15:25 on expiry day, NO early roll for
+trading; capture subscribes BOTH dying + next chains on 0-1DTE days (≤ ~44 extra tokens,
+within WS budget) so research sees the theta tail AND the new week. All four call sites
+import the oracle; delete their local calendars. Fold in T16c residuals (guard +
+atomic-write `_write_resolved_contracts`; tests must not write prod LIVE_DIR).
+**Board question (answer before building capture half):** dual-chain capture on roll
+days, or dying chain only? Validator recommends dual — Mon's next-week premiums feed
+the following week's entry analysis.
+**Accept:** (a) oracle unit tests vs master fixture: Mon→tomorrow, Tue 09:30→TODAY
+(0DTE), Tue 15:35→next week, holiday-shifted week resolves from master not calendar;
+(b) plumbing checks 3.3/3.4 rewritten to assert 0DTE behavior, pre-commit green;
+(c) live Tue demo: contract default + expiry_weekly + margin matrix all show same-day
+expiry; feed subscribed both chains. Paste outputs in §5.
 
 ## 4b. File map (cold-start orientation)
 | Thing | Path |

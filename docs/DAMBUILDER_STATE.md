@@ -446,6 +446,34 @@ data_health WARNs when MCX stale during MCX hours. Paste counts per commodity.
 > Residual: §8 V11 morning+evening; enricher-mcx enrichment quality (mixed-commodity
 > MCX_1min.log → what does enricher write per instrument? check 06-12).
 
+### T16 — Futures contract auto-roll: resolve at startup, never hardcode dated symbols (validator-filed 06-11 23:00, Board discussion)
+GOLD05JUN26 expired 06-05 → feed subscribed a dead token for 6 days, silently (caught only
+via T15). Same bug class found TWICE more tonight: enricher had hardcoded `NIFTY30JUN26F`
+/ `SENSEX26JUNFUT` (die 30-Jun), and `futures:` section of instruments.yaml is also dated.
+**Disease = dated tsym in static config. Any such symbol dies at expiry.** Weekly options
+never had this bug because TokenResolver computes next expiry at startup — same cure here.
+Build (DS):
+1. TokenResolver: `resolve_nearest_future(root)` — nearest unexpired FUTCOM/FUTIDX for a
+   product root (GOLDPETAL, SILVERMIC, ..., NIFTY, SENSEX) from the master files; roll at
+   T-2 days before expiry (subscribe successor; capturing both legs during overlap is
+   optional, not required).
+2. instruments.yaml: mcx + futures entries hold product ROOT + preferences only; tsym/token
+   resolved at feed startup (feed restarts daily — startup IS the morning refresh).
+3. Contract identity in data: bars from futures store the resolved contract tsym (use the
+   `source` column or add `contract` TEXT) — research must see roll boundaries or stitched
+   series show phantom contango jumps.
+4. data_health expiry sentinel: WARN when any subscribed dated contract expires ≤ 3 days
+   and no successor resolved. Morning pre-open assert: feed REFUSES to start if a dated
+   symbol can't resolve (fail-closed, not fail-stale).
+**Explicitly rejected (Board grilling 06-11):** bolting roll onto the token-refresh /
+margin-check morning job — wrong layer (broker-auth job vs capture concern), wrong
+mechanics (yaml edit mid-day doesn't reload a running feed; skipped silently if the job
+fails), wrong trigger (expiry-day swap captures the dying contract's garbage tail all
+rollover week).
+**Accept:** unit test — frozen master fixture + mocked dates: T-3 resolves current,
+T-2 resolves successor, expired-only root raises; live: feed boots with zero dated symbols
+in yaml, GOLD bars carry contract identity; data_health sentinel demo. Paste outputs.
+
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
 entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never

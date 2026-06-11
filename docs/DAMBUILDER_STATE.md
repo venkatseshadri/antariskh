@@ -329,6 +329,40 @@ lost research data.
 timestamps and 0 rows ltp<=0; paste `select count(*),min(timestamp),max(timestamp) from
 option_prices where timestamp like '2026-06-12%'` for both indices into §5.
 
+### T13 — WS-first option data: persist from feed, REST only for gaps (BOARD DIRECTIVE 2026-06-11 night, validator-filed)
+**Board order:** "use as much as possible from the websocket feed; what is not there should
+come from REST." Current state violates this: feed.py already holds live ltp/oi/volume for
+ATM±5 CE/PE (22 NIFTY + 44 SENSEX subscribed depth tokens, `_apply_option_tick`) and
+persists NONE of it (`_publish_option_tick` is `pass`), while the enricher re-fetches the
+same strikes over REST.
+
+**Validator findings driving this task (06-11 ~21:45):**
+1. 🔴 The old 22-call path NEVER worked: `api.get_quotes(exchange, token)` takes a numeric
+   TOKEN, the code passed a tradingsymbol → every call failed silently → **pcr_total and
+   oi_skew are 0 non-null for ALL days, BOTH indices** (verified vs live DBs). §7c's
+   "8,250 calls/day" were 8,250 failures/day. T12's enricher-side persistence would have
+   written 0 rows tomorrow.
+2. ⚠️ d623438 (single get_option_chain) is directionally right but UNPROVEN (Rule 1):
+   no output pasted; `contract.get("values", {})` assumes a nested dict Shoonya may not
+   return (flat contract fields → chain stays empty); hardcoded `NIFTY30JUN26F` /
+   `SENSEX26JUNFUT` tsyms expire end-June; call site still passes `"NFO"` for SENSEX (BFO);
+   commit claims "option LTPs from WebSocket depth feed" but no mechanism exists — enricher
+   is a separate process from feed and feed persists nothing.
+
+**Design (supersedes T12's data source, keeps its schema):**
+- feed.py: at bar close (where `_rebalance_option_window` already runs), INSERT each
+  subscribed option's in-memory state (tsym, strike, type, ltp, oi, volume, bar_ts) into
+  `option_prices` — same append-only composite-PK table, same ltp>0 guard. Zero REST.
+- enricher: DELETE its REST chain path; compute PCR/OI by reading the latest bar's
+  `option_prices` rows. `_persist_option_premiums` retires (feed owns the table).
+- REST allowed ONLY for: login, token resolution (searchscrip/TokenResolver at startup +
+  rebalance), and data WS genuinely lacks (per-strike IV if ever needed — Greeks are a
+  batch layer per locked Board answer; BS-derived IV from persisted ltp covers SHERPA).
+**Accept:** one live session: (1) option_prices ≥5,000 rows/index with 0 REST chain calls
+in enricher log; (2) pcr_total + oi_skew non-null on >90% of session enriched rows —
+first time ever; (3) REST call count during session ≈ token-resolution only (paste grep
+counts from both logs into §5).
+
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
 entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never
@@ -550,6 +584,19 @@ for i in ['nifty','sensex']:
 
 ### V9 — EOD · If any trade closed today: trade_outcomes row
 **Expect:** one row per closed trade with final_pnl + close_reason. No trades = N/A, say so.
+
+### V10 — ~13:00 · REST call budget + PCR/OI actually populated (T13 surface; Board directive)
+```bash
+grep -c "get_option_chain\|get_quotes" ~/antariksh/logs/enricher_*$(date +%Y%m%d)* 2>/dev/null || true
+python3 -c "
+import sqlite3
+for i in ['nifty','sensex']:
+    c=sqlite3.connect(f'file:/home/trading_ceo/python-trader/varaha/data/capture_{i}.sqlite?mode=ro',uri=True)
+    print(i, c.execute(\"select count(*), sum(pcr_total is not null), sum(oi_skew is not null) from market_data_enriched where timestamp like '2026-06-12%'\").fetchone())"
+```
+**Expect:** pcr_total/oi_skew non-null counts > 0 for the FIRST TIME EVER (they are 0 for
+all history — the 22-call REST path never worked, see T13). If still 0 → d623438's chain
+parse is broken too; root-cause with the actual get_option_chain response pasted.
 
 **Failure protocol:** any ❌ → paste output, root-cause, fix forward (§0e rules apply),
 re-run the item. Validator spot-audits V3/V4/V8 independently.

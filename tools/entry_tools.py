@@ -52,6 +52,30 @@ _V31_SENSEX = _PROJECT_ROOT / "varaha" / "data" / "varaha_data_sensex.duckdb"
 
 _SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
 
+MULTITF_SOURCE = os.environ.get("MULTITF_SOURCE", "duckdb")  # "duckdb" | "sqlite"
+
+
+def _capture_sqlite_path(index: str = "NIFTY") -> str:
+    if _SANDBOX:
+        return os.environ.get(
+            "CAPTURE_SQLITE",
+            str(_Path(_SANDBOX) / f"capture_{index.lower()}.sqlite"),
+        )
+    return os.environ.get(
+        "CAPTURE_SQLITE",
+        str(_PROJECT_ROOT / "varaha" / "data" / f"capture_{index.lower()}.sqlite"),
+    )
+
+
+def _open_sqlite(path: str) -> Optional["sqlite3.Connection"]:
+    if not _Path(path).exists():
+        return None
+    import sqlite3
+
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 
 def _v4_db_path(index: str = "NIFTY"):
     if _SANDBOX:
@@ -114,6 +138,9 @@ def _r(val, precision=2):
 
 
 def query_trend(index: str = "NIFTY") -> str:
+    if MULTITF_SOURCE == "sqlite":
+        return _query_trend_sqlite(index)
+
     """
     Query multi-TF trend indicators from v4 + v3.1 DuckDB.
 
@@ -225,6 +252,61 @@ def query_trend(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
 
 
+def _query_trend_sqlite(index: str = "NIFTY") -> str:
+    db = _open_sqlite(_capture_sqlite_path(index))
+    result = {
+        "family": "Trend",
+        "index": index,
+        "timestamp": _dt.now().isoformat(),
+        "timeframes": {},
+    }
+    if not db:
+        return _json.dumps(result, indent=2)
+    try:
+        for minut in TF_WINDOWS:
+            row = db.execute(
+                """SELECT open, high, low, close, sma20, sma50, sma200,
+                          st_consensus, adx, di_plus, di_minus
+                   FROM market_data_multitf
+                   WHERE instrument=? AND timeframe_min=?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (index, minut),
+            ).fetchone()
+            key = f"{minut}m"
+            if row:
+                o, h, l, c, s20, s50, s200, st, a, dp, dm = row
+                pos = (
+                    "bullish"
+                    if (s20 and s50 and s20 > s50)
+                    else ("bearish" if (s20 and s50) else "neutral")
+                )
+                candle = (
+                    "GREEN"
+                    if (o and c and c > o)
+                    else "RED"
+                    if (o and c)
+                    else "neutral"
+                )
+                result["timeframes"][key] = {
+                    "sma20": _r(s20),
+                    "sma50": _r(s50),
+                    "sma_position": pos,
+                    "candle": candle,
+                    "st_consensus": (st or "NEUTRAL").strip(),
+                    "adx": _r(a, 1),
+                    "di_plus": _r(dp, 1),
+                    "di_minus": _r(dm, 1),
+                }
+            else:
+                result["timeframes"][key] = {
+                    "sma_position": "no_data",
+                    "candle": "no_data",
+                }
+    finally:
+        db.close()
+    return _json.dumps(result, indent=2)
+
+
 # ============================================================
 # 2. MOMENTUM — RSI14 per TF
 # ============================================================
@@ -232,6 +314,8 @@ def query_trend(index: str = "NIFTY") -> str:
 
 def query_momentum(index: str = "NIFTY") -> str:
     """Query RSI14 across all timeframes from v4 + v3.1."""
+    if MULTITF_SOURCE == "sqlite":
+        return _query_momentum_sqlite(index)
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -302,6 +386,38 @@ def query_momentum(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
 
 
+def _query_momentum_sqlite(index: str = "NIFTY") -> str:
+    db = _open_sqlite(_capture_sqlite_path(index))
+    result = {
+        "family": "Momentum",
+        "index": index,
+        "timestamp": _dt.now().isoformat(),
+        "timeframes": {},
+    }
+    if not db:
+        return _json.dumps(result, indent=2)
+    try:
+        for minut in TF_WINDOWS:
+            row = db.execute(
+                "SELECT close, rsi, macd, macd_signal, macd_histogram, cci FROM market_data_multitf "
+                "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
+                (index, minut),
+            ).fetchone()
+            if row:
+                c, r, m, ms, mh, cc = row
+                result["timeframes"][f"{minut}m"] = {
+                    "close": _r(c),
+                    "rsi": _r(r, 1),
+                    "macd": _r(m, 2),
+                    "macd_signal": _r(ms, 2),
+                    "macd_histogram": _r(mh, 2),
+                    "cci": _r(cc, 1),
+                }
+    finally:
+        db.close()
+    return _json.dumps(result, indent=2)
+
+
 # ============================================================
 # 3. VOLATILITY — ATR14, ATR_percentile per TF
 # ============================================================
@@ -309,6 +425,8 @@ def query_momentum(index: str = "NIFTY") -> str:
 
 def query_volatility(index: str = "NIFTY") -> str:
     """Query ATR14, BB width, and volatility context across TFs."""
+    if MULTITF_SOURCE == "sqlite":
+        return _query_volatility_sqlite(index)
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -365,6 +483,36 @@ def query_volatility(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
 
 
+def _query_volatility_sqlite(index: str = "NIFTY") -> str:
+    db = _open_sqlite(_capture_sqlite_path(index))
+    result = {
+        "family": "Volatility",
+        "index": index,
+        "timestamp": _dt.now().isoformat(),
+        "timeframes": {},
+    }
+    if not db:
+        return _json.dumps(result, indent=2)
+    try:
+        for minut in TF_WINDOWS:
+            row = db.execute(
+                "SELECT atr, bb_upper, bb_middle, bb_lower FROM market_data_multitf "
+                "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
+                (index, minut),
+            ).fetchone()
+            if row:
+                a, bu, bm, bl = row
+                result["timeframes"][f"{minut}m"] = {
+                    "atr": _r(a, 2),
+                    "bb_upper": _r(bu, 2),
+                    "bb_middle": _r(bm, 2),
+                    "bb_lower": _r(bl, 2),
+                }
+    finally:
+        db.close()
+    return _json.dumps(result, indent=2)
+
+
 # ============================================================
 # 4. VOLUME — VWAP_distance, volume_ratio, OBV, CMF
 # ============================================================
@@ -372,6 +520,8 @@ def query_volatility(index: str = "NIFTY") -> str:
 
 def query_volume(index: str = "NIFTY") -> str:
     """Query volume indicators from v4 (OBV/CMF) + v3.1 (VWAP/volume)."""
+    if MULTITF_SOURCE == "sqlite":
+        return _query_volume_sqlite(index)
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -440,6 +590,44 @@ def query_volume(index: str = "NIFTY") -> str:
             pass
         v31.close()
 
+    return _json.dumps(result, indent=2)
+
+
+def _query_volume_sqlite(index: str = "NIFTY") -> str:
+    db = _open_sqlite(_capture_sqlite_path(index))
+    result = {
+        "family": "Volume",
+        "index": index,
+        "timestamp": _dt.now().isoformat(),
+        "indicators": {},
+    }
+    if not db:
+        return _json.dumps(result, indent=2)
+    try:
+        for minut in [5, 15, 30]:
+            row = db.execute(
+                "SELECT volume, obv, cmf FROM market_data_multitf "
+                "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
+                (index, minut),
+            ).fetchone()
+            if row:
+                v, ob, cm = row
+                result["indicators"][f"{minut}m"] = {
+                    "volume": _r(v, 0),
+                    "obv": _r(ob, 0) if ob else None,
+                    "cmf": _r(cm, 3) if cm else None,
+                    "cmf_signal": (
+                        "accumulation"
+                        if cm and cm > 0.05
+                        else "distribution"
+                        if cm and cm < -0.05
+                        else "neutral"
+                        if cm
+                        else "unknown"
+                    ),
+                }
+    finally:
+        db.close()
     return _json.dumps(result, indent=2)
 
 
@@ -589,6 +777,8 @@ def query_flow(index: str = "NIFTY") -> str:
 
 def query_macro(index: str = "NIFTY") -> str:
     """Query macro indicators: VIX, gap, session state, pivots."""
+    if MULTITF_SOURCE == "sqlite":
+        return _query_macro_sqlite(index)
     v31 = _open_db(_v31_db_path(index))
     result = {
         "family": "Macro",
@@ -686,6 +876,89 @@ def query_macro(index: str = "NIFTY") -> str:
     )
 
     v31.close()
+    return _json.dumps(result, indent=2)
+
+
+def _query_macro_sqlite(index: str = "NIFTY") -> str:
+    db = _open_sqlite(_capture_sqlite_path(index))
+    result = {
+        "family": "Macro",
+        "index": index,
+        "timestamp": _dt.now().isoformat(),
+        "indicators": {},
+    }
+    if not db:
+        return _json.dumps(result, indent=2)
+    try:
+        # Read from market_data_enriched (has india_vix, spot, gap_pct, session_phase, pivots)
+        row = db.execute(
+            "SELECT india_vix, spot, open_price, prev_close, gap_pct, "
+            "session_phase, open_to_current_pct, prev_day_high, prev_day_low, "
+            "prev_day_range, pivot_pp, pivot_r1, pivot_r2, pivot_s1, pivot_s2, "
+            "distance_to_pivot_pct, distance_to_r1_pct, distance_to_s1_pct "
+            "FROM market_data_enriched WHERE instrument=? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (index,),
+        ).fetchone()
+        if row:
+            (
+                vix,
+                spot,
+                opn,
+                prev_c,
+                gap,
+                phase,
+                open_pct,
+                pd_h,
+                pd_l,
+                pd_range,
+                pp,
+                r1,
+                r2,
+                s1,
+                s2,
+                dst_pp,
+                dst_r1,
+                dst_s1,
+            ) = row
+            vix_level = (
+                "low"
+                if vix and vix < 14
+                else "normal"
+                if vix and vix < 20
+                else "elevated"
+                if vix and vix < 25
+                else "extreme"
+                if vix
+                else "unknown"
+            )
+            result["indicators"] = {
+                "vix": _r(vix, 2),
+                "vix_level": vix_level,
+                "spot": _r(spot),
+                "gap_pct": _r(gap, 2),
+                "open_price": _r(opn),
+                "prev_close": _r(prev_c),
+                "session_phase": str(phase).strip() if phase else "unknown",
+                "open_to_current_pct": _r(open_pct, 2),
+                "prev_day_high": _r(pd_h),
+                "prev_day_low": _r(pd_l),
+                "prev_day_range": _r(pd_range),
+                "pivot_pp": _r(pp),
+                "pivot_r1": _r(r1),
+                "pivot_s1": _r(s1),
+                "distance_to_pivot_pct": _r(dst_pp, 2),
+            }
+        result["indicators"]["fii_fut_5d_change"] = None
+        result["indicators"]["fii_data_note"] = (
+            "FII futures data not yet captured by Penguin"
+        )
+        result["indicators"]["vix_change"] = None
+        result["indicators"]["vix_change_note"] = (
+            "sequential query not yet implemented for SQLite"
+        )
+    finally:
+        db.close()
     return _json.dumps(result, indent=2)
 
 

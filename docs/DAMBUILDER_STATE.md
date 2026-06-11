@@ -19,6 +19,14 @@ agent's context.
   any reader flip) and updates memory/plan docs. Claude does NOT implement T2-T5 unless a
   task is blocked > 1 day (then takes it over and notes that here).
 - Conflict rule: the **Accept command output is the arbiter** — not either agent's claim.
+- **No-wait rule: the implementer NEVER waits for validation.** Finish a task, mark
+  `✅ BUILT`, start the next one immediately. Validation (`✅✅`) is async and only adds
+  trust; an absent validator (token-out, offline) must not stall the queue. If a later
+  task reveals a bug in an earlier unvalidated one, fix forward and note it.
+- **Validator-absence fallback:** T1 (install script, post-close) is runnable by the
+  Board/user directly — `bash deploy/install_multitf_enricher.sh` + paste parity output
+  into §5. Only T6 (retirement) and any reader DEFAULT flip truly require the
+  Board + validator together.
 
 ### 0c. HOW TO UPDATE THIS DOC (implementer instructions — DeepSeek read this)
 After finishing (or getting blocked on) a task:
@@ -96,7 +104,7 @@ must be < 10 min old once T1 units are live; WARN if missing/stale.
 **Accept:** `python3 data_health.py` off-hours prints nothing new; with a stale fake
 heartbeat key + market hours mocked, prints the warning. Commit to brahmand.
 
-### T3 — Phase B recompute-from-raw (code)
+### T3 — Phase B recompute-from-raw (code) → ✅ BUILT 9cc3402 (accept: 5m/15m/30m PASS clean, heal+rerun confirmed)
 New: `antariksh/enrichers/multitf_recompute.py`. Input: `market_data` 1-min bars for a
 date range; re-aggregate to 6 TFs (same bucket math as consumer); for low<=0 bars
 interpolate low := min(open, close, prev_low) and mark count; then call the SAME

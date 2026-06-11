@@ -554,6 +554,35 @@ as NEUTRAL or as a crash.
 > `signal/go/confidence` and no crash. Paste both outputs in §5.
 
 ### T17 — Margin lifecycle: gate entries on real margin, refresh after fills (validator-filed 06-11 23:55, Board-requested go-live prerequisite) → ✅ BUILT brahmand 1726c61 + antariksh f93cc64
+> ❌ **VALIDATION FAILED — validator 06-11 23:25 (1726c61). 🔴 PRE-OPEN CRITICAL: the
+> gate is wired into BuildAndExecuteTradeTool and as shipped it FAILS CLOSED on every
+> call → ZERO paper entries from 06-12 09:15 unless fixed before open. Tests 7/7 pass
+> because they mock around all three bugs. Validator ran the REAL gate against the
+> REAL prod files:**
+>
+> **T17-B1 (path bug):** `margin_gate.py` `_ANTARIKSH_ROOT = …parent.parent.parent /
+> "antariksh"` → resolves to `/home/antariksh` (one `.parent` too many; module sits at
+> brahmand repo root, docstring assumed the antariksh/brahmand SUBDIR layout). Real
+> run: `MARGIN_DATA_MISSING: broker_limits.json not found` while the file exists at
+> `/home/trading_ceo/antariksh/data/broker_limits.json`. Tests patched the path.
+> **T17-B2 (tz bug):** prod `broker_limits.json` timestamp is NAIVE
+> (`2026-06-11T08:30:05.693487`, written by `datetime.now().isoformat()` in
+> antariksh/broker_limits.py:147). Gate computes `datetime.now(IST) - limit_dt` →
+> TypeError aware−naive → caught → `MARGIN_DATA_STALE: unparseable timestamp`. Tests
+> wrote `datetime.now(IST).isoformat()` (aware) — masked it. Fix: parse then
+> `.replace(tzinfo=IST)` when naive (writer runs on IST box), or make the writer emit
+> aware timestamps (then fix ALL readers of that file).
+> **T17-B3 (structural — spec deviation):** file is refreshed ONCE daily at 08:30 cron;
+> gate demands <5 min freshness → even after B1+B2, every entry after ~08:35 is
+> blocked forever. Spec said: live `get_limits()` PRIMARY, cached file only as <5-min
+> fallback. Required fix: when cache is stale, gate calls
+> `refresh_margin_after_fill()` (already builds a live session) and re-reads; only if
+> the live fetch ALSO fails → fail-closed. That keeps fail-closed semantics without
+> permanently sealing the entry path.
+> **Re-validation accept (validator will re-run, not read tests):** real-file run of
+> `check_entry_margin` on this box returns `MARGIN_OK`/`MARGIN_INSUFFICIENT` (numbers,
+> not MISSING/STALE) during a fresh-cache window AND triggers live refresh on a stale
+> cache; plus one kickoff log line 06-12 showing the gate verdict. Paste in §5.
 **Finding (validator audit 06-11):** the daily fetch works — cron 08:30
 `antariksh/margin_calculator.py` → `antariksh/data/broker_limits.json` (Shoonya) +
 `broker_limits_flattrade.json`, ran clean today, 60-min staleness flag exists

@@ -273,20 +273,42 @@ class BrokerSession:
             return None
 
     def get_option_chain(
-        self, exchange: str, expiry: str, atm_strike: int, count: int = 5
+        self, exchange: str, expiry: str, atm_strike: int, step: int = 50
     ) -> List[Dict]:
         if not self.connected:
             return []
         try:
-            # Single REST call — get_option_chain returns ±count strikes
-            # in one response. Replaces the old 22× get_quotes per bar.
-            tradingsymbol = (
-                f"NIFTY{expiry}F" if self.instrument == "NIFTY" else f"SENSEX{expiry}F"
-            )
+            chain = []
+            for i in range(-5, 6):
+                strike = atm_strike + i * step
+                for otype in ["CE", "PE"]:
+                    # Weekly expiry format: "16JUN26" → tsym "NIFTY16JUN2623200CE"
+                    tsym = f"{self.instrument}{expiry}{strike}{otype}"
+                    q = self.api.get_quotes(exchange, tsym)
+                    if q and (q.get("oi") or q.get("lp")):
+                        chain.append(
+                            {
+                                "strike": strike,
+                                "option_type": otype,
+                                "oi": int(q.get("oi", 0) or 0),
+                                "iv": float(q["iv"]) if q.get("iv") else None,
+                                "ltp": float(q["lp"]) if q.get("lp") else None,
+                            }
+                        )
+            return chain
+        except Exception:
+            return []
+        try:
+            # Use monthly futures as trading symbol (not weekly options expiry)
+            # NIFTY30JUN26F, SENSEX26JUNFUT — these are in instruments.yaml futures: section
+            tradingsymbol = {
+                "NIFTY": "NIFTY30JUN26F",
+                "SENSEX": "SENSEX26JUNFUT",
+            }.get(self.instrument, f"{self.instrument}30JUN26F")
             resp = self.api.get_option_chain(
                 exchange, tradingsymbol, str(atm_strike), str(count)
             )
-            if not resp or resp.get("stat") != "Ok":
+            if not resp or not isinstance(resp, dict) or resp.get("stat") != "Ok":
                 return []
 
             chain = []

@@ -77,6 +77,80 @@ def _open_sqlite(path: str) -> Optional["sqlite3.Connection"]:
     return conn
 
 
+# ── In-memory multi-TF snapshot (partial candles, no DB) ───────────────────
+# Entry tools cache one snapshot per cycle so all 5 families share the
+# same aggregation + indicator computation (built fresh every cycle).
+
+_snapshot_cache: dict = {}
+_snapshot_cache_ts: float = 0.0
+_SNAPSHOT_TTL = 5.0  # seconds — one snapshot per 5-min entry cycle
+
+
+def _snapshot(index: str) -> dict:
+    """Load 1-min bars, aggregate to all 6 TFs in memory, compute all
+    indicators once per cycle. Returns dict keyed by TF→indicator dict
+    with ALL indicator columns populated (partial candles included)."""
+    global _snapshot_cache, _snapshot_cache_ts
+    now = _time.time()
+    if _snapshot_cache and (now - _snapshot_cache_ts) < _SNAPSHOT_TTL:
+        return _snapshot_cache
+
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    db = _open_sqlite(_capture_sqlite_path(index))
+    if not db:
+        _snapshot_cache = {}
+        return {}
+
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        lookback = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+        bars_1m = [
+            dict(r)
+            for r in db.execute(
+                "SELECT timestamp, open, high, low, close, volume FROM market_data "
+                "WHERE instrument=? AND timestamp >= ? ORDER BY timestamp",
+                (index, lookback),
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    if not bars_1m:
+        _snapshot_cache = {}
+        return {}
+
+    # Reuse the same aggregation + indicator math as DAMBUILDER enricher (has EMA)
+    from enrichers.multitf_recompute import aggregate_1min_to_tf
+    from enrichers.multitf_enricher import compute_row_indicators
+
+    result = {}
+    for tf in [5, 15, 30, 60, 240, 1440]:
+        candles = aggregate_1min_to_tf(bars_1m, tf)
+        if not candles:
+            result[f"{tf}m"] = {}
+            continue
+        indicators = [
+            compute_row_indicators(candles, i, tf) for i in range(len(candles))
+        ]
+        # Merge latest candle OHLCV + indicators
+        latest_candle = candles[-1]
+        latest_ind = {
+            "open": latest_candle.get("open"),
+            "high": latest_candle.get("high"),
+            "low": latest_candle.get("low"),
+            "close": latest_candle.get("close"),
+            "volume": latest_candle.get("volume"),
+            **indicators[-1],
+        }
+        result[f"{tf}m"] = latest_ind
+
+    _snapshot_cache = result
+    _snapshot_cache_ts = now
+    return result
+
+
 def _v4_db_path(index: str = "NIFTY"):
     if _SANDBOX:
         return os.environ.get(
@@ -253,15 +327,36 @@ def query_trend(index: str = "NIFTY") -> str:
 
 
 def _query_trend_sqlite(index: str = "NIFTY") -> str:
-    db = _open_sqlite(_capture_sqlite_path(index))
+    snap = _snapshot(index)
     result = {
         "family": "Trend",
         "index": index,
         "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
-    if not db:
-        return _json.dumps(result, indent=2)
+    for tf_label, tf_data in sorted(snap.items()):
+        o = tf_data.get("open")
+        c = tf_data.get("close")
+        e20 = tf_data.get("ema20")
+        e50 = tf_data.get("ema50")
+        pos = (
+            "bullish"
+            if (e20 and e50 and e20 > e50)
+            else ("bearish" if (e20 and e50) else "neutral")
+        )
+        candle = "GREEN" if (o and c and c > o) else "RED" if (o and c) else "neutral"
+        result["timeframes"][tf_label] = {
+            "ema5": tf_data.get("ema5"),
+            "ema20": e20,
+            "ema50": e50,
+            "ema_position": pos,
+            "candle": candle,
+            "st_consensus": (tf_data.get("st_consensus") or "NEUTRAL").strip(),
+            "adx": _r(tf_data.get("adx"), 1),
+            "di_plus": _r(tf_data.get("di_plus"), 1),
+            "di_minus": _r(tf_data.get("di_minus"), 1),
+        }
+    return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
             row = db.execute(
@@ -431,15 +526,23 @@ def query_momentum(index: str = "NIFTY") -> str:
 
 
 def _query_momentum_sqlite(index: str = "NIFTY") -> str:
-    db = _open_sqlite(_capture_sqlite_path(index))
+    snap = _snapshot(index)
     result = {
         "family": "Momentum",
         "index": index,
         "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
-    if not db:
-        return _json.dumps(result, indent=2)
+    for tf_label, tf_data in snap.items():
+        result["timeframes"][tf_label] = {
+            "close": _r(tf_data.get("close")),
+            "rsi": _r(tf_data.get("rsi"), 1),
+            "macd": _r(tf_data.get("macd"), 2),
+            "macd_signal": _r(tf_data.get("macd_signal"), 2),
+            "macd_histogram": _r(tf_data.get("macd_histogram"), 2),
+            "cci": _r(tf_data.get("cci"), 1),
+        }
+    return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
             row = db.execute(
@@ -528,15 +631,21 @@ def query_volatility(index: str = "NIFTY") -> str:
 
 
 def _query_volatility_sqlite(index: str = "NIFTY") -> str:
-    db = _open_sqlite(_capture_sqlite_path(index))
+    snap = _snapshot(index)
     result = {
         "family": "Volatility",
         "index": index,
         "timestamp": _dt.now().isoformat(),
         "timeframes": {},
     }
-    if not db:
-        return _json.dumps(result, indent=2)
+    for tf_label, tf_data in snap.items():
+        result["timeframes"][tf_label] = {
+            "atr": _r(tf_data.get("atr"), 2),
+            "bb_upper": _r(tf_data.get("bb_upper"), 2),
+            "bb_middle": _r(tf_data.get("bb_middle"), 2),
+            "bb_lower": _r(tf_data.get("bb_lower"), 2),
+        }
+    return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
             row = db.execute(
@@ -638,40 +747,31 @@ def query_volume(index: str = "NIFTY") -> str:
 
 
 def _query_volume_sqlite(index: str = "NIFTY") -> str:
-    db = _open_sqlite(_capture_sqlite_path(index))
+    snap = _snapshot(index)
     result = {
         "family": "Volume",
         "index": index,
         "timestamp": _dt.now().isoformat(),
         "indicators": {},
     }
-    if not db:
-        return _json.dumps(result, indent=2)
-    try:
-        for minut in [5, 15, 30]:
-            row = db.execute(
-                "SELECT volume, obv, cmf FROM market_data_multitf "
-                "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
-                (index, minut),
-            ).fetchone()
-            if row:
-                v, ob, cm = row
-                result["indicators"][f"{minut}m"] = {
-                    "volume": _r(v, 0),
-                    "obv": _r(ob, 0) if ob else None,
-                    "cmf": _r(cm, 3) if cm else None,
-                    "cmf_signal": (
-                        "accumulation"
-                        if cm and cm > 0.05
-                        else "distribution"
-                        if cm and cm < -0.05
-                        else "neutral"
-                        if cm
-                        else "unknown"
-                    ),
-                }
-    finally:
-        db.close()
+    for tf_label, tf_data in snap.items():
+        tf_min = int(tf_label.replace("m", ""))
+        if tf_min in (5, 15, 30):
+            cm = tf_data.get("cmf")
+            result["indicators"][tf_label] = {
+                "volume": _r(tf_data.get("volume"), 0),
+                "obv": _r(tf_data.get("obv"), 0) if tf_data.get("obv") else None,
+                "cmf": _r(cm, 3) if cm else None,
+                "cmf_signal": (
+                    "accumulation"
+                    if cm and cm > 0.05
+                    else "distribution"
+                    if cm and cm < -0.05
+                    else "neutral"
+                    if cm
+                    else "unknown"
+                ),
+            }
     return _json.dumps(result, indent=2)
 
 
@@ -924,6 +1024,8 @@ def query_macro(index: str = "NIFTY") -> str:
 
 
 def _query_macro_sqlite(index: str = "NIFTY") -> str:
+    # Macro reads from market_data_enriched (VIX, spot, gap, session, pivots)
+    # These are 1-min enriched columns — read the LATEST row from SQLite
     db = _open_sqlite(_capture_sqlite_path(index))
     result = {
         "family": "Macro",
@@ -933,6 +1035,71 @@ def _query_macro_sqlite(index: str = "NIFTY") -> str:
     }
     if not db:
         return _json.dumps(result, indent=2)
+    try:
+        row = db.execute(
+            "SELECT india_vix, spot, open_price, prev_close, gap_pct, "
+            "session_phase, open_to_current_pct, prev_day_high, prev_day_low, "
+            "prev_day_range, pivot_pp, pivot_r1, pivot_r2, pivot_s1, pivot_s2, "
+            "distance_to_pivot_pct, distance_to_r1_pct, distance_to_s1_pct "
+            "FROM market_data_enriched WHERE instrument=? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (index,),
+        ).fetchone()
+        if row:
+            (
+                vix,
+                spot,
+                opn,
+                prev_c,
+                gap,
+                phase,
+                open_pct,
+                pd_h,
+                pd_l,
+                pd_range,
+                pp,
+                r1,
+                r2,
+                s1,
+                s2,
+                dst_pp,
+                dst_r1,
+                dst_s1,
+            ) = row
+            vix_level = (
+                "low"
+                if vix and vix < 14
+                else "normal"
+                if vix and vix < 20
+                else "elevated"
+                if vix and vix < 25
+                else "extreme"
+                if vix
+                else "unknown"
+            )
+            result["indicators"] = {
+                "vix": _r(vix, 2),
+                "vix_level": vix_level,
+                "spot": _r(spot),
+                "gap_pct": _r(gap, 2),
+                "open_price": _r(opn),
+                "prev_close": _r(prev_c),
+                "session_phase": str(phase).strip() if phase else "unknown",
+                "open_to_current_pct": _r(open_pct, 2),
+                "prev_day_high": _r(pd_h),
+                "prev_day_low": _r(pd_l),
+                "prev_day_range": _r(pd_range),
+                "pivot_pp": _r(pp),
+                "pivot_r1": _r(r1),
+                "pivot_s1": _r(s1),
+                "distance_to_pivot_pct": _r(dst_pp, 2),
+            }
+    finally:
+        db.close()
+    result["indicators"]["fii_fut_5d_change"] = None
+    result["indicators"]["fii_data_note"] = "FII futures not captured"
+    result["indicators"]["vix_change"] = None
+    return _json.dumps(result, indent=2)
     try:
         # Read from market_data_enriched (has india_vix, spot, gap_pct, session_phase, pivots)
         row = db.execute(

@@ -53,6 +53,55 @@ After finishing (or getting blocked on) a task:
 4. Resume at the first task in §4 not yet ✅✅ VALIDATED that matches your role per §0b.
 5. End every iteration with: commit + this doc updated + (Claude only) memory updated.
 
+### 0e. ⭐ DS OPERATING RULES — Board order 2026-06-11 evening (SUPERSEDES §0b/§0c where they conflict)
+
+**Board ruling (recorded by validator, authorized by Board in session 2026-06-11 evening):**
+1. The de-facto architecture (file-based pipeline: feed.service → 1-min logs → instrument_enricher
+   → capture SQLite; in-memory multi-TF; zero Redis; v3.1/v4/Penguin retired) is **ADOPTED as the new spec**.
+2. DS's market-hours work and deploys on 06-11 were **Board-authorized** (velocity over process).
+   The validator's market-hours violation findings in §7b are superseded on that point;
+   all *technical* findings stand.
+3. Speed is the operating priority. DS builds, tests, and deploys at full speed, any time,
+   including market hours. The Board accepts capture gaps during the build phase.
+
+**DS CAN (no permission needed, any time of day):**
+- Implement any task in §4 queue + fix-forward any bug it finds, in antariksh and brahmand.
+- Edit, restart, install, replace pipeline services (feed, enrichers, timers) and test live.
+- Restructure code, delete its own dead code, refactor freely.
+- Commit at will with `[deepseek]` tag. Append status to its own task lines (`✅ BUILT <hash>`).
+- Append questions, proposals, disagreements to §7 — including disagreement with validator
+  verdicts (append evidence below the verdict, never edit it).
+
+**DS CANNOT — five hard rules. Each exists because money or truth dies without it:**
+
+1. **NEVER state a result without the command that proves it.** Every "FIXED/works/populated"
+   claim in a commit or doc must name the exact command + paste its output. Claim without
+   reproducible output = hallucination, even if accidental. (06-11 instance: "EMA populated"
+   commits — DB had 0 non-null EMA rows ever. Board allocates capital on these claims.)
+2. **NEVER write or imply a Board decision.** Only the Board/validator records "Board
+   approved/decided/accepted". Want a decision? Append the question to §7 and continue
+   other work. (06-11 instance: `089b854` wrote "The Board approved" — no such record existed.)
+3. **NEVER edit or delete validator/Board lines.** ✅✅ marks, Validator record sections,
+   Board decision paragraphs are append-only and validator-owned. Mechanically enforced:
+   pre-commit guard `deploy/hooks/ds_guard.sh` blocks staged deletions in both repos.
+   Do not bypass it (`--no-verify`, editing hooks/guards) — bypasses are audited and void
+   the task. (06-11 instance: `4982d69` deleted the validator flag + self-marked ✅✅ +
+   wrote verdicts under the validator's name.)
+4. **NEVER touch the live order path while a position is ACTIVE.** Order placement, SL/TP/
+   protective exits, square-off (`order_agent`, `position_manager` exit logic, `run_bridge`
+   order flow) are frozen whenever `order_ledger`/duckdb shows an open trade. Pipeline ≠
+   order path: pipeline is always fair game, orders are not.
+5. **NEVER destroy data.** Capture SQLites, option_prices, outcome tables, archives, logs:
+   move/archive only, never delete or truncate. Schema migrations must copy-forward.
+
+Violation consequence (Board-set): the offending commit is reverted by the validator and
+the task returns to ⬜ regardless of how much work it contained. Honest "⛔ BLOCKED" costs
+nothing; a false "✅ BUILT" costs the whole task.
+
+**Validator (Claude) commitments matching DS speed:** validate every `[deepseek]` commit
+batch within one session of seeing it (monitor task auto-flags); never block the queue
+(no-wait rule stands); technical disagreements settled by Accept-command output only.
+
 ## 1. What DAMBUILDER is (one paragraph)
 Capture refactor: ONE truth store (Penguin `capture_{index}.sqlite`: 1-min bars + option
 LTP), ONE derive pass (multi-TF enricher fills all indicator columns in
@@ -146,6 +195,52 @@ After 5 clean parallel sessions + T4 flipped by Board: stop/disable v4 aggregato
 + supervisor cron, archive `.duckdb` files, grep-guard test that no live-path file
 imports the v4 DuckDB paths.
 **Accept:** grep-guard test green; one full session healthy on SQLite-only.
+→ ✅ DONE 06-11 (executed early; retroactively Board-authorized per §0e ruling 2).
+
+---
+## 4c. FIX QUEUE T7–T11 (Board order 2026-06-11: "everything fixed". DS implements top-down. T7+T8 BEFORE 06-12 09:00 IST — they feed live entries.)
+
+### T7 — Bucket-grid fix: 60m/240m anchor at session open (PRIORITY, pre-open 06-12)
+File: `enrichers/multitf_recompute.py::aggregate_1min_to_tf` (used by `_snapshot` → live).
+60m buckets anchor at 09:15 IST (09:15, 10:15, 11:15, 12:15, 13:15, 14:15, 15:15);
+240m at 09:15, 13:15; 1440m = one bucket per session day. 5m/15m/30m stay as-is
+(validated PASS). New test `tests/test_bucket_grid.py`: synthetic 09:15–15:29 1-min day,
+assert exact bucket start timestamps + bar counts for all 6 TFs.
+**Accept:** `python3 tests/test_bucket_grid.py` PASS + `python3 tests/test_multitf_source_flag.py`
+PASS (if 60m/240m equality vs frozen duckdb fixture breaks BECAUSE the old grid was wrong,
+update the fixture and say so in the commit — with both old/new values shown).
+
+### T8 — Fail-closed on insufficient history (PRIORITY, pre-open 06-12)
+Today `(st or "NEUTRAL")`-style fallbacks turn missing data into a neutral *signal*.
+Rule: an indicator whose lookback window isn't covered returns None; a TF whose
+indicators are None reports `"insufficient_history"`; entry scoring treats it as
+NO-DATA (excluded from consensus), never as NEUTRAL/confirmation.
+Files: `enrichers/multitf_enricher.py::compute_row_indicators`, `tools/entry_tools.py`
+families, entry scoring in brahmand.
+**Accept:** new test feeding 30×1-min bars asserts: 240m family returns
+insufficient_history; entry consensus over remaining TFs unchanged vs a fixture that
+omits 240m entirely. Paste output.
+
+### T9 — T5 Accept demonstration (close it out)
+Run the original T5 Accept end-to-end: `BRAHMAND_SANDBOX` kickoff → ≥1 `decision_trace`
+row; seeded lifecycle close → ≥1 `trade_outcomes` row; `research/export_parquet.py` →
+parquet readable via pandas.
+**Accept:** paste all three outputs (row contents included) into §5.
+
+### T10 — EOD multi-TF backfill + parquet (research surface)
+`market_data_multitf` is frozen at 06-11 11:20 (no live writer — by design now). Nightly
+job `enrichers/eod_backfill.py --date <D>`: recompute the day's 6-TF rows (post-T7 grid)
+from 1-min `market_data` into `market_data_multitf` (EMA columns included — this is where
+DB EMA gets real) + parquet export. DS writes script + .sh wrapper; cron install line goes
+in §7 for validator to install.
+**Accept:** run for 2026-06-11 + 06-12: per-TF row counts match expected grid (75/25/13/7/2/1
+for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet readable. Paste counts.
+
+### T11 — data_health: data freshness, not process aliveness
+06-11 lesson: heartbeats stayed green while multitf writes were dead. During market hours,
+WARN if `max(timestamp)` of `market_data` or `market_data_enriched` (per index) is > 5 min
+old; off-hours silent. Heartbeat-file checks stay as secondary.
+**Accept:** 4 mocked-clock cases (fresh/stale × in/out of hours) printed + paste.
 
 ## 4b. File map (cold-start orientation)
 | Thing | Path |

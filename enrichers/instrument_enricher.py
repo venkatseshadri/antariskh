@@ -48,7 +48,11 @@ def _read_latest_close(log_path: Path) -> Optional[float]:
     return None
 
 
-from config.sqlite_schema import open_capture_db, init_enriched_schema
+from config.sqlite_schema import (
+    open_capture_db,
+    init_enriched_schema,
+    init_option_prices_schema,
+)
 
 _TEXT_COLS = {
     "timestamp",
@@ -291,9 +295,11 @@ class BrokerSession:
                     if q and (q.get("oi") or q.get("lp")):
                         chain.append(
                             {
+                                "tsym": tsym,
                                 "strike": strike,
                                 "option_type": otype,
                                 "oi": int(q.get("oi", 0) or 0),
+                                "volume": int(q.get("v", 0) or 0),
                                 "iv": float(q["iv"]) if q.get("iv") else None,
                                 "ltp": float(q["lp"]) if q.get("lp") else None,
                             }
@@ -558,6 +564,7 @@ class Enricher:
                     if option_data:
                         pcr = compute_pcr(option_data, atm_strike)
                         oi = compute_oi_analysis(option_data, atm_strike)
+                        self._persist_option_premiums(option_data, bar["timestamp"])
             except Exception as e:
                 log.debug(f"Broker enrichment error: {e}")
 
@@ -688,6 +695,29 @@ class Enricher:
                     )
                     raise
 
+    def _persist_option_premiums(self, option_data: List[Dict], bar_ts: str):
+        for opt in option_data:
+            ltp = opt.get("ltp")
+            if not ltp or ltp <= 0:
+                continue
+            try:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO option_prices
+                       (tsym, strike, option_type, ltp, oi, volume, timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        opt["tsym"],
+                        opt["strike"],
+                        opt["option_type"],
+                        ltp,
+                        opt.get("oi"),
+                        opt.get("volume"),
+                        bar_ts,
+                    ),
+                )
+            except sqlite3.Error:
+                pass
+
     def _get_vix_history(self) -> List[float]:
         rows = self.conn.execute(
             """SELECT india_vix FROM market_data_enriched
@@ -749,6 +779,7 @@ def _init_ema_hook():
 def run_live(instrument: str):
     conn = open_capture_db(instrument, autocommit=True)
     init_enriched_schema(conn)
+    init_option_prices_schema(conn)
     _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
     broker = BrokerSession(instrument)
@@ -848,6 +879,7 @@ def run_live(instrument: str):
 def run_backfill(instrument: str, date_from: str, date_to: str):
     conn = open_capture_db(instrument, autocommit=True)
     init_enriched_schema(conn)
+    init_option_prices_schema(conn)
     _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
     enricher = Enricher(instrument, conn, broker=None)

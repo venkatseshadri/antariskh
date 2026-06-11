@@ -251,27 +251,63 @@ def init_enriched_schema(conn: sqlite3.Connection):
 
 
 def init_option_prices_schema(conn: sqlite3.Connection):
-    """Per-strike option LTPs from WebSocket feed — used by position_manager SL/TP checks."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS option_prices (
-            tsym        TEXT PRIMARY KEY,
-            strike      INTEGER NOT NULL,
-            option_type TEXT NOT NULL CHECK (option_type IN ('CE', 'PE')),
-            ltp         REAL,
-            oi          REAL,
-            volume      REAL,
-            timestamp   TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_option_prices_strike
-        ON option_prices(strike, option_type)
-    """)
-    # Additive migration for pre-existing DBs (oi/volume added 2026-06-03).
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(option_prices)")}
+    """Per-strike option LTPs — append-only time series with (tsym, timestamp) PK."""
+    existing_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='option_prices'"
+    ).fetchone()
+
+    if not existing_table:
+        conn.execute("""
+            CREATE TABLE option_prices (
+                tsym        TEXT NOT NULL,
+                strike      INTEGER NOT NULL,
+                option_type TEXT NOT NULL CHECK (option_type IN ('CE', 'PE')),
+                ltp         REAL,
+                oi          REAL,
+                volume      REAL,
+                timestamp   TEXT NOT NULL,
+                PRIMARY KEY (tsym, timestamp)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_option_prices_strike
+            ON option_prices(strike, option_type)
+        """)
+        conn.commit()
+        return
+
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(option_prices)")}
     for col in ("oi", "volume"):
-        if col not in existing:
+        if col not in existing_cols:
             conn.execute(f"ALTER TABLE option_prices ADD COLUMN {col} REAL")
+
+    pk_cols = conn.execute("PRAGMA table_info(option_prices)").fetchall()
+    pk_names = [row[1] for row in pk_cols if row[5] > 0]
+    if "timestamp" not in pk_names:
+        conn.execute("BEGIN")
+        conn.execute("""
+            CREATE TABLE option_prices_new (
+                tsym        TEXT NOT NULL,
+                strike      INTEGER NOT NULL,
+                option_type TEXT NOT NULL CHECK (option_type IN ('CE', 'PE')),
+                ltp         REAL,
+                oi          REAL,
+                volume      REAL,
+                timestamp   TEXT NOT NULL,
+                PRIMARY KEY (tsym, timestamp)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO option_prices_new (tsym, strike, option_type, ltp, oi, volume, timestamp)
+            SELECT tsym, strike, option_type, ltp, oi, volume, timestamp FROM option_prices
+        """)
+        conn.execute("DROP TABLE option_prices")
+        conn.execute("ALTER TABLE option_prices_new RENAME TO option_prices")
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_option_prices_strike
+            ON option_prices(strike, option_type)
+        """)
+        conn.commit()
     conn.commit()
 
 

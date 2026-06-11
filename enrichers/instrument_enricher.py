@@ -231,9 +231,10 @@ ENRICHED_COLUMNS = [
 class BrokerSession:
     """Thin wrapper for option chain fetches. Gracefully degrades if unavailable."""
 
-    def __init__(self):
+    def __init__(self, instrument: str = "NIFTY"):
         self.api = None
         self.connected = False
+        self.instrument = instrument
         self._connect()
 
     def _connect(self):
@@ -281,9 +282,11 @@ class BrokerSession:
             chain = []
             for i in range(-5, 6):
                 strike = atm_strike + i * step
-                for otype in ["CE", "PE"]:
-                    # Weekly expiry format: "16JUN26" → tsym "NIFTY16JUN2623200CE"
-                    tsym = f"{self.instrument}{expiry}{strike}{otype}"
+                strike_padded = f"{strike:05d}"  # 5-digit zero-padded
+                for otype, cp in [("CE", "C"), ("PE", "P")]:
+                    # Shoonya format: NIFTY{DD}{Mmm}{YY}{C/P}{5-digit-strike}
+                    # e.g. NIFTY16JUN26C23200 (feed.py uses same format)
+                    tsym = f"{self.instrument}{expiry}{cp}{strike_padded}"
                     q = self.api.get_quotes(exchange, tsym)
                     if q and (q.get("oi") or q.get("lp")):
                         chain.append(
@@ -748,7 +751,7 @@ def run_live(instrument: str):
     init_enriched_schema(conn)
     _reconcile_enriched_schema(conn, ENRICHED_COLUMNS)
 
-    broker = BrokerSession()
+    broker = BrokerSession(instrument)
     enricher = Enricher(instrument, conn, broker)
 
     ema_hook = _init_ema_hook()

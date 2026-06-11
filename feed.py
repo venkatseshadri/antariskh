@@ -174,7 +174,7 @@ def _write_resolved_contracts():
             if hasattr(expiry, "isoformat")
             else str(expiry),
         }
-    path = PROJECT_ROOT / "data" / "resolved_contracts.json"
+    path = LIVE_DIR / "resolved_contracts.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 

@@ -90,9 +90,8 @@ run the parity check for both instruments; paste output into §5 below.
 **Accept:** parity output exists for 1 full session; no `WRITE FAIL` lines in
 `logs/multitf_enricher_*.log`; enricher heartbeat fresh during session (redis key).
 
-### T2 — data_health invariant for the new enricher (code)
-File: `brahmand/data_health.py`. Add to `check_porcupine()` (or a new `check_dambuilder()`
-wired into `run_all`): during market hours, redis `multitf_enricher:{NIFTY,SENSEX}:heartbeat`
+### T2 — data_health invariant for the new enricher (code) → ✅ BUILT d465a50 (accept: off-hours silent, stale heartbeat warns)
+File: `brahmand/data_health.py`. Added `check_dambuilder()` + wired into `run_all`: during market hours, redis `multitf_enricher:{NIFTY,SENSEX}:heartbeat`
 must be < 10 min old once T1 units are live; WARN if missing/stale.
 **Accept:** `python3 data_health.py` off-hours prints nothing new; with a stale fake
 heartbeat key + market hours mocked, prints the warning. Commit to brahmand.

@@ -52,7 +52,7 @@ _V31_SENSEX = _PROJECT_ROOT / "varaha" / "data" / "varaha_data_sensex.duckdb"
 
 _SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
 
-MULTITF_SOURCE = os.environ.get("MULTITF_SOURCE", "duckdb")  # "duckdb" | "sqlite"
+MULTITF_SOURCE = os.environ.get("MULTITF_SOURCE", "sqlite")  # "duckdb" | "sqlite"
 
 
 def _capture_sqlite_path(index: str = "NIFTY") -> str:

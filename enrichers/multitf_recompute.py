@@ -119,35 +119,44 @@ def load_1min_bars(db_path: str, instrument: str, date: str) -> list:
     return raw
 
 
-# ── Multi-TF aggregation (same bucket math as consumer) ────────────────────
+# ── Multi-TF aggregation (session-start anchored) ──────────────────────────
+
+_SESSION_START_MIN = 9 * 60 + 15  # 555 minutes past midnight IST
 
 
-def _floor_to_bucket(epoch_ms: int, granularity_ms: int) -> int:
-    return (epoch_ms // granularity_ms) * granularity_ms
+def _ts_to_session_min(ts: str) -> int:
+    """Convert 'YYYY-MM-DDTHH:MM:SS' to minutes past 09:15 IST (session start)."""
+    parts = ts[11:].split(":")
+    hour, minute = int(parts[0]), int(parts[1])
+    return hour * 60 + minute - _SESSION_START_MIN
+
+
+def _bucket_minute(tf: int, session_min: int) -> int:
+    """Bucket session_min into tf-minute grid anchored at session start.
+    First bucket for 60m is 0-59 → label 09:15, 60-119 → 10:15, etc."""
+    return (session_min // tf) * tf
 
 
 def aggregate_1min_to_tf(bars_1min: list, tf: int) -> list[dict]:
-    """Aggregate 1-min bars → TF candles. Returns list of per-bar dicts
-    compatible with ``compute_row_indicators`` (keys: timestamp, open, high,
-    low, close, volume)."""
+    """Aggregate 1-min bars → TF candles anchored at session open (09:15)."""
     if not bars_1min:
         return []
-    granularity_ms = _GRANULARITY_MS[tf]
     buckets: dict[int, list[dict]] = {}
     for bar in bars_1min:
-        ts_ms = _iso_to_epoch_ms(bar["timestamp"])
-        bucket = _floor_to_bucket(ts_ms, granularity_ms)
+        sm = _ts_to_session_min(bar["timestamp"])
+        if sm < 0:
+            continue  # pre-session bar, skip
+        bucket = _bucket_minute(tf, sm)
         buckets.setdefault(bucket, []).append(bar)
 
     candles: list[dict] = []
-    for bucket_ms in sorted(buckets.keys()):
-        bars = buckets[bucket_ms]
-        from datetime import datetime, timezone, timedelta
-
-        IST = timezone(timedelta(hours=5, minutes=30))
-        candle_ts = datetime.fromtimestamp(bucket_ms / 1000, tz=IST).strftime(
-            "%Y-%m-%dT%H:%M:%S"
-        )
+    for bucket_min in sorted(buckets.keys()):
+        bars = buckets[bucket_min]
+        day_prefix = bars[0]["timestamp"][:10]
+        # Reconstruct bucket start timestamp from session minutes
+        abs_minutes = _SESSION_START_MIN + bucket_min
+        hour, minute = abs_minutes // 60, abs_minutes % 60
+        candle_ts = f"{day_prefix}T{hour:02d}:{minute:02d}:00"
         opens, highs, lows, closes, volumes = [], [], [], [], []
         for b in bars:
             o = b.get("open") or 0

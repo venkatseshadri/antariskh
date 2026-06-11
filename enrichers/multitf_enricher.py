@@ -28,7 +28,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-LIVE_DIR = Path(__file__).resolve().parent.parent / "data" / "live"
+
+def _live_dir():
+    return Path(
+        os.environ.get(
+            "LIVE_DIR", str(Path(__file__).resolve().parent.parent / "data" / "live")
+        )
+    )
+
+
 TIMEFRAMES = [5, 15, 30, 60, 240, 1440]
 IND_COLS = [
     "ema5",
@@ -191,57 +199,69 @@ def live(db_path: str, instrument: str):
     """Live mode: watches the instrument's 1-min log file. On each bar close,
     backfills all 6 TFs' indicators from SQLite market_data (idempotent).
     Heartbeat: data/live/multitf_enricher_{inst}.heartbeat."""
-    import json
     import os
     import time
     from datetime import datetime
 
-    print(
-        f"[multitf_enricher] live: watching {LIVE_DIR}/{instrument}_1min.log",
-        flush=True,
-    )
+    log_path = _live_dir() / f"{instrument}_1min.log"
+    print(f"[multitf_enricher] live: watching {log_path}", flush=True)
 
     conn = _open(db_path)
+    last_size = 0
     enriched = 0
     try:
-        for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
+        while True:
+            time.sleep(1)
             try:
-                bar = json.loads(message["data"])
-            except (ValueError, json.JSONDecodeError):
+                current_size = os.path.getsize(log_path)
+            except OSError:
+                time.sleep(5)
                 continue
-            day = str(bar.get("timestamp", ""))[:10] or datetime.now().strftime(
-                "%Y-%m-%d"
-            )
+            if current_size <= last_size:
+                continue
 
-            # Load today's 1-min bars to build TF context (lightweight)
-            bars_1m = _load_today_1m(conn, instrument, day)
+            with open(log_path, "r") as f:
+                f.seek(last_size)
+                raw = f.read(current_size - last_size)
+            last_size = current_size
 
-            for tf in TIMEFRAMES:
-                candles = aggregate_1min_to_tf(bars_1m, tf)
-                if not candles:
+            for line in raw.strip().split("\n"):
+                line = line.strip()
+                if not line or line.count("|") < 5:
                     continue
-                indicators_list = [
-                    compute_row_indicators(candles, i, tf) for i in range(len(candles))
-                ]
-                rows = [
-                    {"timestamp": c["timestamp"], **ind}
-                    for c, ind in zip(candles, indicators_list)
-                ]
+                parts = line.split("|")
                 try:
-                    n = _write_indicators(conn, instrument, tf, rows)
-                    enriched += n
-                    r.set(
-                        f"multitf_enricher:{instrument}:heartbeat",
-                        datetime.now().isoformat(),
-                    )
-                except sqlite3.OperationalError as e:
+                    ts = parts[0]
+                except (ValueError, IndexError):
+                    continue
+                day = ts[:10] or datetime.now().strftime("%Y-%m-%d")
+
+                start = time.time()
+                for tf in TIMEFRAMES:
+                    try:
+                        n = enrich_tf(conn, instrument, tf, day)
+                        enriched += n
+                    except sqlite3.OperationalError as e:
+                        print(
+                            f"[multitf_enricher] WRITE FAIL {tf}m: {e}",
+                            flush=True,
+                        )
+
+                heartbeat = _live_dir() / f"multitf_enricher_{instrument}.heartbeat"
+                heartbeat.write_text(datetime.now().isoformat())
+
+                elapsed = time.time() - start
+                if elapsed > 10:
                     print(
-                        f"[multitf_enricher] WRITE FAIL {tf}m: {e}",
+                        f"[multitf_enricher] slow enrich {ts} ({elapsed:.1f}s, total {enriched})",
                         flush=True,
                     )
-                    continue
+                    enricher_flush()  # NEW — flush after slow bar writes
+                elif enriched % 100 == 0:
+                    print(
+                        f"[multitf_enricher] {ts} ({enriched} enriched)",
+                        flush=True,
+                    )
     finally:
         conn.close()
 

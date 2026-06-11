@@ -248,27 +248,41 @@ class BrokerSession:
             return None
 
     def get_option_chain(
-        self, exchange: str, expiry: str, atm_strike: int, step: int = 50
+        self, exchange: str, expiry: str, atm_strike: int, count: int = 5
     ) -> List[Dict]:
         if not self.connected:
             return []
         try:
+            # Single REST call — get_option_chain returns ±count strikes
+            # in one response. Replaces the old 22× get_quotes per bar.
+            tradingsymbol = (
+                f"NIFTY{expiry}F" if self.instrument == "NIFTY" else f"SENSEX{expiry}F"
+            )
+            resp = self.api.get_option_chain(
+                exchange, tradingsymbol, str(atm_strike), str(count)
+            )
+            if not resp or resp.get("stat") != "Ok":
+                return []
+
             chain = []
-            for i in range(-5, 6):
-                strike = atm_strike + i * step
-                for otype in ["CE", "PE"]:
-                    tsym = f"NIFTY{expiry}{strike}{otype}"
-                    q = self.api.get_quotes(exchange, tsym)
-                    if q and q.get("oi"):
-                        chain.append(
-                            {
-                                "strike": strike,
-                                "option_type": otype,
-                                "oi": int(q.get("oi", 0)),
-                                "iv": float(q["iv"]) if q.get("iv") else None,
-                                "ltp": float(q["lp"]) if q.get("lp") else None,
-                            }
-                        )
+            for contract in resp.get("values", []):
+                q = contract.get("values", {}) if isinstance(contract, dict) else {}
+                if not q or not q.get("oi"):
+                    continue
+                chain.append(
+                    {
+                        "strike": int(
+                            float(contract.get("strprc", q.get("strprc", 0)))
+                        ),
+                        "option_type": contract.get("optt", q.get("optt", "")).strip(),
+                        "oi": int(q.get("oi", 0)),
+                        "iv": float(q["iv"]) if q.get("iv") else None,
+                        "ltp": float(q["lp"]) if q.get("lp") else None,
+                        "token": contract.get("token", q.get("token", "")),
+                        "tsym": contract.get("tsym", q.get("tsym", ""))
+                        or contract.get("tsym", ""),
+                    }
+                )
             return chain
         except Exception:
             return []
@@ -472,20 +486,17 @@ class Enricher:
         india_vix = None
         futures_ltp = None
 
-        _FUTURES_CFG = {
-            "NIFTY": ("NFO", "62329"),
-            "SENSEX": ("BFO", "1105863"),
-        }
-
         if self.broker and self.broker.connected:
             try:
-                india_vix = self.broker.get_vix()
-
-                fut_cfg = _FUTURES_CFG.get(self.instrument)
-                if fut_cfg:
-                    q = self.broker.get_quotes(*fut_cfg)
-                    if q and q.get("lp"):
-                        futures_ltp = float(q["lp"])
+                # ── VIX + futures now stream via WebSocket (zero REST) ──
+                # feed:INDIAVIX, feed:NIFTY-FUT, feed:SENSEX-FUT
+                vix_bar = r.lindex(f"feed:INDIAVIX", 0)
+                if vix_bar:
+                    india_vix = json.loads(vix_bar).get("close")
+                fut_key = f"feed:{self.instrument}-FUT"
+                fut_bar = r.lindex(fut_key, 0)
+                if fut_bar:
+                    futures_ltp = json.loads(fut_bar).get("close")
 
                 if india_vix:
                     vix_history = self._get_vix_history()
@@ -618,10 +629,10 @@ class Enricher:
                 except sqlite3.Error:
                     pass
                 if attempt < max_retries - 1:
-                    backoff = 0.5 * (2 ** attempt)
+                    backoff = 0.5 * (2**attempt)
                     log.warning(
                         f"Enriched flush locked ({e}); retry "
-                        f"{attempt+1}/{max_retries} in {backoff:.1f}s"
+                        f"{attempt + 1}/{max_retries} in {backoff:.1f}s"
                     )
                     time.sleep(backoff)
                 else:

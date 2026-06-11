@@ -38,7 +38,7 @@ spot:
     market_close: "15:30"
 
 futures:
-  - name: NIFTY
+  - name: NIFTY-FUT
     exchange: NFO
     token: "62329"
     tsym: NIFTY30JUN26F
@@ -46,7 +46,7 @@ futures:
     market_open: "09:15"
     market_close: "15:30"
 
-  - name: SENSEX
+  - name: SENSEX-FUT
     exchange: BFO
     token: "1105863"
     tsym: SENSEX26JUNFUT

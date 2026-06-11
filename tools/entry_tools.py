@@ -81,26 +81,26 @@ def _open_sqlite(path: str) -> Optional["sqlite3.Connection"]:
 # Entry tools cache one snapshot per cycle so all 5 families share the
 # same aggregation + indicator computation (built fresh every cycle).
 
-_snapshot_cache: dict = {}
-_snapshot_cache_ts: float = 0.0
-_SNAPSHOT_TTL = 5.0  # seconds — one snapshot per 5-min entry cycle
+_snapshot_cache: dict = {}  # keyed by index
+_snapshot_cache_ts: dict = {}  # keyed by index — per-index invalidation
+_SNAPSHOT_TTL = 5.0
 
 
 def _snapshot(index: str) -> dict:
-    """Load 1-min bars, aggregate to all 6 TFs in memory, compute all
-    indicators once per cycle. Returns dict keyed by TF→indicator dict
-    with ALL indicator columns populated (partial candles included)."""
     global _snapshot_cache, _snapshot_cache_ts
     now = _time.time()
-    if _snapshot_cache and (now - _snapshot_cache_ts) < _SNAPSHOT_TTL:
-        return _snapshot_cache
+    if (
+        _snapshot_cache_ts.get(index, 0)
+        and now - _snapshot_cache_ts.get(index, 0) < _SNAPSHOT_TTL
+    ):
+        return _snapshot_cache.get(index, {})
 
     import sqlite3
     from datetime import datetime, timedelta
 
     db = _open_sqlite(_capture_sqlite_path(index))
     if not db:
-        _snapshot_cache = {}
+        _snapshot_cache[index] = {}
         return {}
 
     try:
@@ -118,10 +118,9 @@ def _snapshot(index: str) -> dict:
         db.close()
 
     if not bars_1m:
-        _snapshot_cache = {}
+        _snapshot_cache[index] = {}
         return {}
 
-    # Reuse the same aggregation + indicator math as DAMBUILDER enricher (has EMA)
     from enrichers.multitf_recompute import aggregate_1min_to_tf
     from enrichers.multitf_enricher import compute_row_indicators
 
@@ -134,7 +133,6 @@ def _snapshot(index: str) -> dict:
         indicators = [
             compute_row_indicators(candles, i, tf) for i in range(len(candles))
         ]
-        # Merge latest candle OHLCV + indicators
         latest_candle = candles[-1]
         latest_ind = {
             "open": latest_candle.get("open"),
@@ -146,8 +144,8 @@ def _snapshot(index: str) -> dict:
         }
         result[f"{tf}m"] = latest_ind
 
-    _snapshot_cache = result
-    _snapshot_cache_ts = now
+    _snapshot_cache[index] = result
+    _snapshot_cache_ts[index] = now
     return result
 
 

@@ -3,7 +3,7 @@
 # Matches V1-V9 from DAMBUILDER_STATE.md §live-verification
 # Each step logs to ~/antariksh/logs/verify_20260612.log
 
-LOG="$HOME/antariksh/logs/verify_20260612.log"
+LOG="/home/trading_ceo/antariksh/logs/verify_20260612.log"  # absolute: at-jobs run as root ($HOME=/root)
 mkdir -p "$(dirname "$LOG")"
 
 vcheck() {
@@ -42,6 +42,14 @@ from unicorn_raw_query import UnicornRawQuery
 rq = UnicornRawQuery()
 result = rq.run('NIFTY')
 print(f'Raw query sections: {list(result.keys()) if isinstance(result,dict) else \"string ok\"}')"
+    # §8 V3 proper: entry scoring live on new grid — T7/T8/T8b production surface
+    vcheck "V3-score_trend" python3 -c "
+import sys
+sys.path.insert(0,'/home/trading_ceo/antariksh')
+from tools.entry_tools import score_trend
+s = score_trend('NIFTY')
+print({k: s.get(k) for k in ('signal','score','confidence')})
+print('reasoning:', s.get('reasoning','')[:160])"
     ;;
 
   V4) # 10:15 — decision_trace rows from first kickoffs

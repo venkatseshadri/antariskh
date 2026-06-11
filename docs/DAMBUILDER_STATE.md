@@ -364,6 +364,35 @@ in enricher log; (2) pcr_total + oi_skew non-null on >90% of session enriched ro
 first time ever; (3) REST call count during session ≈ token-resolution only (paste grep
 counts from both logs into §5).
 
+> **Validator verdict on T13 build (7382566) — 06-11 22:20: ✅✅ VALIDATED (code), follow-ups → T14.**
+> Independently re-ran: t12 test 6/6 PASS, multitf_live PASS, both files compile. Design
+> matches Board directive: feed persists WS state at bar close (keys verified — master-file
+> `OptionType`=CE/PE satisfies the CHECK constraint; `_apply_option_tick` mutates the same
+> token_map dicts feed persists). Enricher REST chain DELETED — option REST = 0.
+> **DB-hygiene audit (Board-requested 06-11 night):** correct per-instrument DBs ✓ (options
+> land in own capture_{inst}.sqlite); WAL persistent + busy_timeout 30s ✓; ONE writer per
+> table ✓ (market_data+option_prices=feed, enriched=enricher, multitf=EOD backfill only,
+> decision_trace=e2e_chain, trade_outcomes=position_manager — T13 correctly retired the
+> enricher's option_prices writer, avoiding a two-writer table); enricher batch flush
+> BEGIN IMMEDIATE intact (06-05 fix) ✓; outcome_tables short-lived conns use BEGIN
+> IMMEDIATE + timeout ✓; journald lock-error count since 09:00 = 0 ✓.
+> Live Accept residual = §8 V6 + V10 per-day counts + PCR non-null.
+
+### T14 — DB-hygiene + PCR-correctness follow-ups from T13 review (validator-filed, build after §8 passes)
+1. feed.py opens a FRESH connection per bar per instrument — now ×2 (`_write_1min_sqlite`
+   + `_persist_option_prices`), each re-running `PRAGMA journal_mode=WAL`; closure relies
+   on refcount GC. Cache one conn per instrument at module level; write bar + options in
+   ONE `BEGIN IMMEDIATE` txn. (No lock errors observed yet — churn, not breakage.)
+2. `_persist_option_prices` inner `except Exception: pass` per row — fail-silent class
+   (T2/T11 lesson). Count failures, log.warning once per bar with the count.
+3. `_read_option_prices_from_db` has NO staleness guard: if feed dies, enricher computes
+   PCR/OI from the last frozen snapshot indefinitely. Skip rows older than 3 min.
+4. 🔴 SENSEX PCR contamination: feed subscribes weekly+monthly (44 tokens) and persists all;
+   reader takes ALL rows at the latest ts → `compute_pcr`/`compute_oi_analysis` mix two
+   expiries. Filter to nearest weekly expiry (parse from tsym or store an expiry column).
+**Accept:** all 4 with output; one live session with per-bar conns gone and SENSEX pcr
+computed from weekly-only rows (paste the filter query + one bar's strike list).
+
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic
 entry gate / scoring treats a None-TF as absent (consensus over remaining TFs) and never

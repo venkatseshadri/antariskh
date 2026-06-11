@@ -261,6 +261,12 @@ DB EMA gets real) + parquet export. DS writes script + .sh wrapper; cron install
 in §7 for validator to install.
 **Accept:** run for 2026-06-11 + 06-12: per-TF row counts match expected grid (75/25/13/7/2/1
 for a full NIFTY day), ema20 non-null on all 5m rows after warm-up, parquet readable. Paste counts.
+> ✅✅ **VALIDATED 21:30 — round 3 (3311ee1).** Validator re-ran both indices:
+> counts exactly 75/25/13/7/2/1, every TF grid starts 09:15, ema20 56/75 on 5m + 6/25
+> on 15m (nulls = sub-warm-up rows, correct fail-closed), 30m+ ema20 None (< 20 bars
+> intraday — correct), 60m parquet = exactly the 7 new-grid rows. Re-run idempotent.
+> Pending ops: cron install line for nightly run → §7 for validator to install.
+>
 > ❌ **Validator 21:00 — round 2 (a8830f7) STILL FAILS.** Recompute+EMA now real
 > (5m=75 rows, ema20 56/75 ✓) but old-grid rows NOT deleted: table has BOTH grids
 > (30m=17 rows not 13; 60m=9 = 7 new@09:15 + 2 stale@09:00; 240m=4; 1440m=3).

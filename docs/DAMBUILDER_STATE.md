@@ -305,7 +305,17 @@ old; off-hours silent. Heartbeat-file checks stay as secondary.
 > skipped (same fail-silent class as the T2 follow-up) — add a WARN for that case + the
 > 4-case demo, paste output.
 
-### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it) → ✅ BUILT e6f34f7 (accept: test_t12_option_premiums.py 6/6 PASS — composite PK migration, append-only same-tsym, INSERT OR IGNORE dedup, ltp<=0 guard, 22-quote bar cycle)
+### T12 — Persist per-strike option premiums (NEW, validator-filed 06-11 night — SHERPA prerequisite + §8 V6 will fail without it) → ✅ BUILT e6f34f7 (accept: test_t12_option_premiums.py 6/6 PASS — composite PK migration, append-only same-tsym, INSERT OR IGNORE dedup, ltp<=0 guard, 22-quote bar cycle) → ✅✅ VALIDATED (code) 2026-06-11 21:45
+> **Validator 21:45:** re-ran test 6/6 PASS (needs `PYTHONPATH=.` — test lacks sys.path
+> bootstrap, DS note your Accept command). Migration additionally proven against a COPY of
+> the real NIFTY capture DB: 46 rows → 46 rows, PK (tsym)→(tsym,timestamp), same-tsym
+> two-timestamp insert works. Both LIVE DBs already migrated (NIFTY 46, SENSEX 70 rows,
+> composite PK, zero loss — rule 5 satisfied). RESIDUAL = the real Accept: 06-12 live
+> session per-day count ≥ 5,000/index, paste into §5 (= §8 V6).
+> Minor follow-ups (non-blocking): (1) `_persist_option_premiums` swallows `sqlite3.Error`
+> silently — same fail-silent class as T2/T11 lessons, add log.debug at least;
+> (2) chain dict carries `iv` but table has no iv column — SHERPA can derive IV from ltp,
+> but persisting broker IV is cheap and useful; consider iv REAL column in a later pass.
 The only live `option_prices` writer was `consumers/instrument_consumer.py` — retired in the
 06-11 consumer elimination. Since then NOTHING persists per-strike premiums (table frozen at
 06-11 11:53; total history = 2 days/index of snapshots). But the enricher already fetches

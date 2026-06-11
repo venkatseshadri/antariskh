@@ -98,7 +98,7 @@ run the parity check for both instruments; paste output into §5 below.
 **Accept:** parity output exists for 1 full session; no `WRITE FAIL` lines in
 `logs/multitf_enricher_*.log`; enricher heartbeat fresh during session (redis key).
 
-### T2 — data_health invariant for the new enricher (code) → ✅ BUILT d465a50 (accept: off-hours silent, stale heartbeat warns)
+### T2 — data_health invariant for the new enricher (code) → ✅ BUILT d465a50 → ✅✅ VALIDATED 2026-06-11 (Claude re-ran accept 4/4: off-hours silent, pre-T1 missing-key silent, stale warns, fresh silent)
 File: `brahmand/data_health.py`. Added `check_dambuilder()` + wired into `run_all`: during market hours, redis `multitf_enricher:{NIFTY,SENSEX}:heartbeat`
 must be < 10 min old once T1 units are live; WARN if missing/stale.
 **Accept:** `python3 data_health.py` off-hours prints nothing new; with a stale fake
@@ -162,3 +162,8 @@ imports the v4 DuckDB paths.
 - traffic_light Redis path migrates LAST (proven; latency-sensitive).
 - A green unit test ≠ session-proven: every step needs one real shadow session before the
   next step trusts it.
+
+## 7. Open questions / follow-ups
+- **T2 follow-up:** check_dambuilder skips silently when heartbeat key MISSING — right pre-T1, but post-T1 a never-started unit (timer-bug class, Penguin 06-02) is invisible. Post-T1: if multitf-enricher-nifty.timer installed AND market hours AND no heartbeat → WARN. Fold into T1 validation or T2b.
+- **Unattributed brahmand working-tree edits (entry_setup.py, margin_matrix.json) seen 06-11 08:45:** entry_setup drops in-python pgrep guard (wrapper guard + file lock remain; compiles; --dry-run intact) + SIM_NOW-aware now_dt(). Safe for today but UNCOMMITTED live-path edits violate protocol — Board: commit or revert deliberately.
+- **T3 (9cc3402) NOT yet independently validated** — next validator session: re-run its Accept (multitf_recompute.py --instrument NIFTY --date 2026-06-10; then --heal + clean re-run), flip ✅✅.

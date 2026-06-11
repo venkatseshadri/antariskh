@@ -104,7 +104,7 @@ must be < 10 min old once T1 units are live; WARN if missing/stale.
 **Accept:** `python3 data_health.py` off-hours prints nothing new; with a stale fake
 heartbeat key + market hours mocked, prints the warning. Commit to brahmand.
 
-### T3 — Phase B recompute-from-raw (code) → ✅ BUILT 9cc3402 (accept: 5m/15m/30m PASS clean, heal+rerun confirmed)
+### T3 — Phase B recompute-from-raw (code) → ✅ BUILT 9cc3402 → ❌ VALIDATION FAILED 2026-06-11 (Claude re-ran Accept: exit 1 — 60m/240m recompute buckets at :30 offsets but STORED grid is top-of-hour 09:00/10:00…; 8 rows MISSING. Fix: align recompute bucket origin to the consumer's. 5m/15m/30m/1440m PASS. Fix-forward per no-wait rule.)
 New: `antariksh/enrichers/multitf_recompute.py`. Input: `market_data` 1-min bars for a
 date range; re-aggregate to 6 TFs (same bucket math as consumer); for low<=0 bars
 interpolate low := min(open, close, prev_low) and mark count; then call the SAME
@@ -114,7 +114,7 @@ unless `--heal` passed). Thresholds: enums exact, floats |Δ|≤0.5.
 prints per-TF per-column PASS/DRIFT and exits 0 on a clean post-06-09 day. `--heal`
 rewrites rows and a re-run is clean.
 
-### T4 — Phase C reader migration, flag-gated (code, NO default flip) → ✅ BUILT 251a76c (accept: all 5 families shape+values match, test PASS)
+### T4 — Phase C reader migration, flag-gated (code, NO default flip) → ✅ BUILT 251a76c → ✅✅ VALIDATED 2026-06-11 (5-family equality test PASS; flag unset/empty/non-sqlite all route duckdb — default safe) → ✅ BUILT 251a76c (accept: all 5 families shape+values match, test PASS)
 File: `antariksh/tools/entry_tools.py`. Env flag `MULTITF_SOURCE=sqlite|duckdb`
 (default duckdb). When sqlite: `query_trend/momentum/volatility/volume/macro` read
 `market_data_multitf` from the capture SQLite (same shapes out). traffic_light stays
@@ -164,6 +164,7 @@ imports the v4 DuckDB paths.
   next step trusts it.
 
 ## 7. Open questions / follow-ups
+- **T5 (77a6afb, a4a7255) built — validation pending** (outcome tables + parquet; Accept: sandbox kickoff inserts decision_trace row, seeded lifecycle close inserts trade_outcomes, parquet pandas-readable).
 - **T2 follow-up:** check_dambuilder skips silently when heartbeat key MISSING — right pre-T1, but post-T1 a never-started unit (timer-bug class, Penguin 06-02) is invisible. Post-T1: if multitf-enricher-nifty.timer installed AND market hours AND no heartbeat → WARN. Fold into T1 validation or T2b.
 - **Unattributed brahmand working-tree edits (entry_setup.py, margin_matrix.json) seen 06-11 08:45:** entry_setup drops in-python pgrep guard (wrapper guard + file lock remain; compiles; --dry-run intact) + SIM_NOW-aware now_dt(). Safe for today but UNCOMMITTED live-path edits violate protocol — Board: commit or revert deliberately.
 - **T3 (9cc3402) NOT yet independently validated** — next validator session: re-run its Accept (multitf_recompute.py --instrument NIFTY --date 2026-06-10; then --heal + clean re-run), flip ✅✅.

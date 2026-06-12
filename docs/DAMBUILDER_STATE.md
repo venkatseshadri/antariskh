@@ -543,9 +543,21 @@ audit time despite regime agent running; (c) `outcome_tables.write_decision_trac
 `sqlite3.OperationalError` silently (10:11 cycle lost a row, zero trace).
 **Accept:** one live cycle where both gate rows carry real source/signal/conf + vix/regime
 non-null; swallow replaced with WARN log; paste rows + the failing-case WARN output into §5.
+> ◐ **Validator 06-12 ~15:10: NOT STARTED** (brahmand working-tree delta = reformat churn
+> + data files only).
 
 ### T20 — Kill the undefined-name bug class (validator-filed 06-12 — DS implements; Board asked "everything fixed")
 > ✅ **BOARD APPROVED 2026-06-12: pyflakes/F821 pre-commit gate in BOTH repos.** Build both halves.
+> ◐ **Validator interim audit 06-12 ~15:10 (UNCOMMITTED working tree — no [deepseek] commit,
+> no §5 output; §0c requires commit per task):**
+> - DONE so far: `[tool.ruff.lint] select=["F821"]` added to antariksh pyproject.toml.
+> - NOT done: ruff is NOT installed on this box (pyflakes is, at /root/.local/bin/pyflakes);
+>   NEITHER repo's pre-commit hook invokes any linter — the gate currently enforces nothing.
+> - Validator ran the scan DS's gate would run: **antariksh = 14 undefined names**
+>   (incl. `enrichers/multitf_enricher.py`: `datetime`, `LIVE_DIR`, `written`,
+>   `enricher_flush` — this service is LIVE; `tools/entry_tools.py`: `db`, `sqlite3`),
+>   **brahmand = 8**. Fix or explicitly dead-code these as part of T20 or the gate blocks
+>   every commit. Sentinel half (feed.log callback-error WARN) not started.
 FOUR instances in 24h (T16-B1 `instrument`, V12 `r`, V4 `spot`, T17-site `log`), all swallowed
 by bare except / WS callback handler. Build: (1) pyflakes (or ruff F821) pre-commit gate in
 BOTH repos — each of the four was statically catchable; (2) data_health sentinel: count
@@ -560,6 +572,14 @@ Guard: families report insufficient_history when latest row predates today/sessi
 (Live kickoff path unaffected — uses `_snapshot()` — but any direct `query_*` consumer is exposed.)
 **Accept:** test on a fixture DB frozen at yesterday: every family returns
 insufficient_history, not NEUTRAL; paste output into §5.
+> ◐ **Validator interim audit 06-12 ~15:10 (UNCOMMITTED working tree):** real substance
+> in `tools/entry_tools.py` (+237/−239): `_multitf_is_stale()` guard at 4 sites returning
+> `insufficient_history`; sqlite-mode families rewired to compute from 1-min truth via
+> `_snapshot()` with TTL cache + new `config/db_paths.py` single-source paths. Verified
+> live: `query_trend('NIFTY')` returns CURRENT 15m EMAs/ST at 15:04 (was scoring
+> yesterday's frozen rows). **Gap: `score_trend()` still un-guarded** — returns all-NEUTRAL
+> from the empty multitf table (the exact V3 finding); guard it or mark the path dead.
+> No test, no commit, no §5 paste yet — Accept not met.
 
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic

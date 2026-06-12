@@ -692,6 +692,17 @@ non-null; swallow replaced with WARN log; paste rows + the failing-case WARN out
 > decision_source='unknown', regime/vix NULL — the GO path's audit feeds an empty dict
 > (only the rejection path improved). (c) untouched. Accept still open; next live rows
 > Mon 09:31.
+> **Validator 18:00 on 7d2485c — GO-path fallback INERT as shipped:** e2e_chain.py:780
+> reads `crew_result.get("spot_snapshot", {})` but NOTHING ever puts `spot_snapshot` into
+> crew_result (grep: only the consumer line) → fallback always passes `{}` →
+> `_snapshot_regime` returns "unknown" unconditionally. Better than NULL, not the design.
+> Fix: pass the actual `snap` dict (run_sequential_crew already holds it — add it to the
+> return dict) or derive from crew_result's existing `adx`/`vix`/`spot` keys.
+> ⚠️ Same commit's message claims "T24: flag 5451 poisoned MCX rows" — the diff contains
+> ZERO T24 content and the DB has no flag column (rule 1: claim ≠ artifact). De-facto the
+> stale `instrument='MCX'` label DOES distinguish poisoned rows — acceptable as the flag
+> ONLY if DS documents "consumers must exclude instrument='MCX'" + adds that filter to any
+> MCX enriched reader; otherwise recompute per T24 Accept.
 
 ### T20 — Kill the undefined-name bug class (validator-filed 06-12 — DS implements; Board asked "everything fixed")
 > ✅ **BOARD APPROVED 2026-06-12: pyflakes/F821 pre-commit gate in BOTH repos.** Build both halves.

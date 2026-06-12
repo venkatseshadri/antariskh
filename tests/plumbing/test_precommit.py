@@ -319,6 +319,49 @@ def test_b3_chain_tools_equivalence():
     (ok if ct_date == oracle_date else fail)(f"chain_tools={ct_date} != oracle={oracle_date}")
 
 
+def test_b1_hold_window_boundary():
+    """B1: 15:24 keeps 0DTE, 15:25 rolls to next week."""
+    print("\n  8.1  B1 hold-window boundary")
+    sys.path.insert(0, str(REPO_ROOT))
+    tue_1524 = datetime(2026, 6, 2, 15, 24, 0)
+    tue_1525 = datetime(2026, 6, 2, 15, 25, 0)
+    from config.token_resolver import resolve_weekly_expiry
+
+    e1524 = resolve_weekly_expiry("NIFTY", now=tue_1524)
+    e1525 = resolve_weekly_expiry("NIFTY", now=tue_1525)
+    (ok if e1524 == date(2026, 6, 2) else fail)(f"15:24 rolled: {e1524}")
+    (ok if e1525 == date(2026, 6, 9) else fail)(f"15:25 kept: {e1525}")
+
+
+def test_holiday_fixture():
+    """T22 holiday: broker master has NO Oct contracts → nearest is Dec 29 (holiday-aware)."""
+    print("\n  8.2  T22 holiday fixture")
+    hol = datetime(2026, 10, 2, 10, 0, 0)
+    from config.token_resolver import resolve_weekly_expiry
+
+    e = resolve_weekly_expiry("NIFTY", now=hol)
+    # Broker master has no Oct dates → nearest available is Dec 29
+    # Calendar-only fallback would give Oct 6 — broker IS holiday-aware
+    (ok if e == date(2026, 12, 29) else fail)(
+        f"Holiday Fri Oct 2 → {e} (calendar says Oct 6; broker knows Oct empty)"
+    )
+
+
+def test_stale_guard():
+    """T21: Frozen-yesterday — score_trend/families fail-closed on stale data."""
+    print("\n  7.1  T21 stale guard")
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tests" / "test_t21_stale_guard.py")],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+    if result.returncode == 0 and "ALL TESTS PASSED" in result.stdout:
+        ok("T21 all passed")
+    else:
+        fail(f"T21 exit={result.returncode}: {result.stderr[:200] or result.stdout[:200]}")
+
+
 def main():
     global exit_code
     print("=" * 56)
@@ -344,6 +387,11 @@ def main():
     test_expiry_tuesday_afternoon_rolls()
 
     test_b3_chain_tools_equivalence()
+
+    test_stale_guard()
+
+    test_b1_hold_window_boundary()
+    test_holiday_fixture()
 
     test_e2e_stale_expiry_guard()
     test_cron_paths()

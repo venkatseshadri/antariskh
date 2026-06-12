@@ -45,7 +45,14 @@ except ImportError:
     load_dotenv = None
 
 
-# DB paths — sourced from config (single source of truth)
+# DB paths — sourced from config (single source of truth).
+# Self-locate: this file is spec-loaded by brahmand (entry_gate_tools.py), where
+# the antariksh root is not on sys.path — without this the entry chain dies.
+import sys as _sys
+
+_ANTARIKSH_ROOT = str(_Path(__file__).resolve().parent.parent)
+if _ANTARIKSH_ROOT not in _sys.path:
+    _sys.path.insert(0, _ANTARIKSH_ROOT)
 from config.db_paths import (
     get_v31_db_path as _v31_path,
     get_multitf_db_path as _v4_path,

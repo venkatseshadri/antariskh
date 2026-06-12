@@ -1335,6 +1335,13 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 > **Validator 16:15 on 8f33393:** `score_trend` guard added — correct by read (returns
 > insufficient_history dict when query_trend flags it). Unprovable ad hoc now that
 > `_snapshot` feeds live data; Accept still needs the frozen-yesterday fixture test + §5.
+> **Validator 18:10 on c3a39e0 — ◐ half-accepted:** re-ran `test_t21_stale_guard.py`
+> independently: 4/4 PASS, and it exercises the REAL `score_trend`/families (not a
+> reimplementation — good). BUT it patches `query_trend` to RETURN the stale flag, so the
+> DB-side half of the seam (frozen-yesterday DB → `_multitf_is_stale` → query_trend EMITS
+> insufficient_history) is mocked away — T8b-round-1 class, milder. Remaining for ✅✅:
+> one test building a tmp sqlite whose multitf/1-min rows are all yesterday and asserting
+> the real `query_trend` emits `insufficient_history` end-to-end. Then §5 paste.
 >
 > Per §0e: statuses stay unflipped. Fix-forward queue: blocker first, then B1-B3, then
 > T19/T20/T21 Accepts with §5 outputs.

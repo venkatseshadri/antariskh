@@ -162,6 +162,48 @@ outcome tables + out-of-sample discipline (SHERPA method). Full rationale + Boar
 T23 recovery + margin verdict on first real GO; T19 row quality at 09:31 kickoff;
 NIFTY option_prices ≥ 5,000 unaided; T4 full Accept re-run.
 
+### 2-PRE-b. ⭐ VALIDATOR CONCERNS IN DETAIL (appended 06-12 18:30 EOD — supersedes the list above where they overlap)
+
+**Concern 1 — 🔴 T23(f) STALE FILL PRICES: the only remaining red on the money path.**
+Every read of `option_prices` by tsym without `ORDER BY timestamp DESC LIMIT 1` returns
+the EARLIEST row of the day (composite PK since T12; 321 rows/tsym verified 06-12).
+Two known sites: `brahmand/order_routing.py:98` (entry fills) and
+`brahmand/position_manager.py::_read_live_ltp` (911f96b — the guard added to FIX this
+re-imported the bug). Consequences compound silently: entries fill at morning prices,
+exits "detect" phantom-₹0 against wrong baselines, every P&L derived from these is
+fiction. SHERPA research on these fills inherits the fiction. **No paper-trade result is
+trustworthy until both sites are fixed + a regression test pins the query shape.**
+Suggested test: insert 3 rows same tsym (09:15 ltp=100, 12:00 ltp=50, now ltp=80) →
+fill/ltp readers must return 80; age the newest beyond 3 min → reader must refuse.
+
+**Concern 2 — claims-vs-artifacts is now the dominant failure mode.** The mechanical bug
+class (undefined names) died with the T20 gate — validated by seeded-block demo. What the
+gate CANNOT catch, and what happened repeatedly today: commit messages claiming work the
+diff doesn't contain (7d2485c "flag 5451 rows" → zero T24 content), fallbacks wired to
+keys that don't exist (T19 `spot_snapshot` — inert, returns "unknown" forever), guards
+that mock away the seam they claim to prove (T21 round 1; T8b round 1 before it).
+**Mitigation already in §0e rule 1 (output-or-it-didn't-happen) — but §5 is STILL EMPTY
+after ~14 DS commits today.** Validator recommendation to Board: make §5 paste a
+mechanical gate too — pre-commit warns when a commit message contains "T\d+" but the
+commit doesn't touch §5 of this doc. Cheap, kills the pattern.
+
+**Concern 3 — Monday 09:15 readiness (NIFTY 1DTE).** GREEN: capture chain (V1-V8 all
+passed), expiry oracle (B1/B2/B3 validated, 0DTE correct, master-driven), entry chain
+alive (kickoffs evaluating), margin gate proven, F821 gate live, MCX per-commodity
+enrichment. AMBER: dual-chain subscribe (built, first exercise IS Monday open — if it
+fails, T12/T13 premium capture for the dying chain is the loss); T23 recovery cache
+(code-validated, first real exercise = first GO); T19 trace rows (GO-path will still say
+'unknown'/regime-unknown until the key fix — research data quality, not safety).
+RED: T23(f) above — if unfixed by Monday, paper fills remain fiction and the day's
+results can't be graded.
+
+**Concern 4 — leftover debt with owners assigned (non-blocking):** entry_tools dead `db`
+bodies (delete > noqa); `entry_quantity=65` fallback hardcode (master owns lot size);
+ratio-spread per-leg qty assumption; B1 test print labels swapped; holiday fixture
+artificial; sentinel `check_feed_callbacks` never demo'd; poisoned MCX rows decision
+(document label-as-flag + reader filters, or recompute); tests/_f821_seed_demo.py
+placeholder removable; conf-0.1 floor + 15:05 cutoff await Board.
+
 ## 2. STATUS (2026-06-11 ~17:00 — post-session)
 
 **The spec was superseded mid-session. The de-facto architecture is now LIVE and simpler than the original plan. See §7c for the new spec conformance recertification.**

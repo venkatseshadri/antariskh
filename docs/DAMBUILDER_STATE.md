@@ -566,6 +566,47 @@ Oracle 0DTE logic is verified correct; finish the job:
 resolves from master with the fixture; B3 `_weekly_expiry` == oracle on Mon/Tue/post-close;
 (b) live or harness demo: 0-1DTE day subscribes both chains (paste token list);
 (c) §5 paste of all outputs. Per §0c: append status to THIS heading, commit [deepseek].
+> **Validator 06-12 16:15 on 8f33393 + c3f5bff + 134ccbb:**
+> - **B1 ✅✅** — re-ran 5 edges: Tue 16:10→next wk, 15:24→today, 15:26→next wk, 0DTE both
+>   indices same-day. Tuple compare correct.
+> - **B3 ✅✅** — `chain_tools._weekly_expiry()` → oracle, returns 16-JUN-2026; path
+>   resolution correct.
+> - **B2 ◐ mechanism fixed, DATA DEAD** — duckdb read + dual date-format + logged warning ✓,
+>   BUT prod `static_metadata.db` holds only EXPIRED NIFTY rows (May 14/21) and ZERO SENSEX
+>   rows → master path silently contributes nothing (expired data raises no exception →
+>   no warning) → calendar fallback always → holiday-awareness STILL not real. Fix: read
+>   `data/masters/*_symbols.txt` (TokenResolver already refreshes daily) or add a
+>   static_metadata refresh job + WARN when master yields no unexpired expiry.
+> - **Dual-chain ◐ BUILT, unproven** — code + log line present (134ccbb); no 0-1DTE day to
+>   test. Natural live Accept: Mon 15-Jun (NIFTY 1DTE) — paste subscribed token list.
+> - **T16c ✓** — `_write_resolved_contracts` atomic tmp+rename + try/except + warning.
+> - No tests in any commit, §5 still empty — Accept (a)/(c) unmet. Statuses stay open.
+
+### T23 — 🔴 GO path: crew output loss = SPLIT-BRAIN ORDERS (validator-filed 06-12 15:50 — HIGHEST PRIORITY, blocks any paper-trade trust)
+Live evidence 15:36-15:37 cycle (TRD-20260612153711, paper): UNICORN gate GO → margin gate
+MARGIN_OK (T17 ✓) → BuildAndExecuteTradeTool RAN (ledger orders 1195-1198: entry SELL/BUY +
+SL + TP written 15:37:11) → **CrewAI strategy crew returned `tasks_output=None`** →
+`Strategy crew returned no tasks_output: NoneType` → provenance CLAMPED → "Execution: no
+trade returned — aborting" → chain forgot the position it had just opened. PM exit orders
+1199/1200 at ENTRY prices (phantom ₹0 fill, PORCUPINE bug #5 class). trade_outcomes: 0 rows
+(§8 V9 ❌). Same death at 11:42 and 15:42 GOs — 3-for-3 GO cycles lose crew output.
+**Live money translation: an order placed at the broker with no internal owner.**
+Fix queue (a-first):
+(a) Crew output extraction on the strategy/execution crew — same class as
+    [[crewai_output_extraction_bug]]; tool side-effects must never outrun chain state.
+    Make BuildAndExecuteTrade idempotent/transactional: if crew output is lost, the chain
+    must RECONCILE from the ledger (find orphan trade_id), not abort into amnesia.
+(b) Entry window: 15:36 GO fired POST-CLOSE (known entry-tail-to-15:56 hole) — clamp
+    entries to market hours minus buffer (last entry ~15:00?  Board to confirm cutoff).
+(c) SL/TP qty=50 vs position qty=65 (risk_agent hardcodes old lot size; NIFTY lot=65 per
+    master) — SL would leave 15 qty naked on a real fill.
+(d) Gate passed at confidence 0.1 — UNICORN go-threshold review (Board question: min conf?).
+(e) On close, position_manager must write trade_outcomes (wiring exists from T9/T5 — this
+    lifecycle bypassed it because the trade dict was lost; fixing (a) likely fixes (e)).
+**Accept:** PORCUPINE/MONGOOSE scenario: GO cycle with simulated crew-output loss → ledger
+and chain state agree (position tracked or rolled back atomically); post-close cycle places
+NO entry; SL qty == position qty from master lot size; closed trade writes trade_outcomes.
+Paste all outputs §5.
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —
@@ -582,6 +623,11 @@ non-null; swallow replaced with WARN log; paste rows + the failing-case WARN out
 > REMAINING for Accept: (a) regime still NULL every row; (b) rejection rows fabricate
 > signal: record the agent's ACTUAL signal (NONE), not the gate label 'NOT_UP'/'REGIME_SKIP';
 > (c) `write_decision_trace` OperationalError swallow → log WARN. Then §5 paste.
+> **Validator 16:15 on c3f5bff:** (b) fixed in code ✓ (actual agent signal recorded);
+> regime falls back to snapshot ✓ in diff. BUT live 15:42 GO-cycle row still shows
+> decision_source='unknown', regime/vix NULL — the GO path's audit feeds an empty dict
+> (only the rejection path improved). (c) untouched. Accept still open; next live rows
+> Mon 09:31.
 
 ### T20 — Kill the undefined-name bug class (validator-filed 06-12 — DS implements; Board asked "everything fixed")
 > ✅ **BOARD APPROVED 2026-06-12: pyflakes/F821 pre-commit gate in BOTH repos.** Build both halves.
@@ -1049,9 +1095,21 @@ for i in ['nifty','sensex']:
 ```
 **Expect:** log shows cron-initiated run (~16:00), both exit=0; counts exactly 75/25/13/7/2/1
 (fewer 5m rows only if bars missed). ema20 non-null on post-warm-up 5m rows.
+> ✅ 16:12 (validator, automated watcher): cron fired 16:00, SENSEX exit=0, parquet exported;
+> ```
+> nifty [(5,75),(15,25),(30,13),(60,7),(240,2),(1440,1)] sensex [(5,75),(15,25),(30,13),(60,7),(240,2),(1440,1)]
+> ```
+> Exact expected grid both indices — first unattended firing clean. T10 ops loop CLOSED.
 
 ### V9 — EOD · If any trade closed today: trade_outcomes row
 **Expect:** one row per closed trade with final_pnl + close_reason. No trades = N/A, say so.
+> ❌ 15:50 (validator): one full paper lifecycle DID occur (TRD-20260612153711, 15:37 entry
+> + PM exit) and trade_outcomes has **0 rows** — the chain lost the trade dict when the
+> strategy crew returned tasks_output=None, so the close never reached the writer.
+> Root cause + fix queue = T23 (split-brain orders). Positive sub-results from the same
+> cycle: T17 margin gate verdict logged live ✓
+> (`Margin gate: MARGIN_OK: need 116,833 (net available 508,754, free 565,282)`) — T17
+> live residual MET.
 
 ### V10 — ~13:00 · REST call budget + PCR/OI actually populated (T13 surface; Board directive)
 ```bash
@@ -1143,8 +1201,15 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 > **T20 (◐):** F821 config in both pyprojects, BUT ruff not installed, neither pre-commit
 > hook invokes any linter, and the violations remain (antariksh 14, brahmand 8 — unchanged).
 > Gate is decorative. Sentinel `check_feed_callbacks` added ✓ (not yet demo'd).
+> **Validator 16:15:** progress — toolkit.py 0 undefined (134ccbb), brahmand 8→6
+> (leg_shifter, 3933ef1). Core set UNCHANGED: feed/enrichers/tools/config = 14 (incl. LIVE
+> multitf_enricher). Hooks still lint-free, ruff not installed. Accept open: wire gate +
+> zero counts + seeded-F821 block demo + sentinel demo, §5 paste.
 > **T21 (◐):** family guards in ✓ (query_trend live-verified pre-commit), `score_trend`
 > STILL unguarded (returns all-NEUTRAL from empty table), no test, no §5 paste.
+> **Validator 16:15 on 8f33393:** `score_trend` guard added — correct by read (returns
+> insufficient_history dict when query_trend flags it). Unprovable ad hoc now that
+> `_snapshot` feeds live data; Accept still needs the frozen-yesterday fixture test + §5.
 >
 > Per §0e: statuses stay unflipped. Fix-forward queue: blocker first, then B1-B3, then
 > T19/T20/T21 Accepts with §5 outputs.

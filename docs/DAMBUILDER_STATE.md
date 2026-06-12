@@ -615,6 +615,16 @@ Fix queue (a-first):
 and chain state agree (position tracked or rolled back atomically); post-close cycle places
 NO entry; SL qty == position qty from master lot size; closed trade writes trade_outcomes.
 Paste all outputs §5.
+> **Validator 17:00 on c850a52 — (a)+(b) ✅✅ code-validated, (c)(d) open:**
+> - (a) Recovery cache: in-process module global set by BuildAndExecuteTradeTool AFTER
+>   order placement (line 401 — no orders → no cache → no phantom recovery), read by
+>   run_full_chain on crew-output loss, 60s staleness cap. Validator re-ran semantics:
+>   empty→None, fresh→dict, stale→None ✓. Recovery re-attaches the trade dict → PM +
+>   trade_outcomes path restored, so (e) rides on (a).
+> - (b) Post-close gate ✅ at run_full_chain top (refuses ≥15:05, before LLM spend).
+>   ⚠ Board confirm needed: 15:05 cutoff chosen by DS; iron-fly calendar may want earlier.
+> - OPEN: (c) SL qty 50 vs lot 65; (d) conf-0.1 gate threshold (Board question);
+>   PORCUPINE scenario test; §5 paste; live proof = first GO Mon.
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —

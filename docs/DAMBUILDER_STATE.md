@@ -811,6 +811,9 @@ systemctl is-active feed.service enricher-nifty.service enricher-sensex.service 
 ls -la ~/antariksh/data/live/*.heartbeat | head -20   # all mtimes within last 2 min
 ```
 **Expect:** 4× `active`; NIFTY/SENSEX feed+enricher heartbeats < 2 min old.
+> ✅ 09:58 (validator — DS had not run §8; validator executed). 4× active; all feed_* +
+> enricher_* heartbeats mtime 09:57–09:58 (≤1 min). Stale root-owned
+> `multitf_enricher_NIFTY.heartbeat` from 06-11 17:07 is the retired live-mode unit — ignore.
 
 ### V2 — 09:25 · 1-min truth flowing, no low=0
 ```bash
@@ -821,6 +824,11 @@ for i in ['nifty','sensex']:
     print(i, c.execute(\"select count(*),max(timestamp),sum(case when low<=0 then 1 else 0 end) from market_data where timestamp like '2026-06-12%'\").fetchone())"
 ```
 **Expect:** count ≥ 8 by 09:25, max(timestamp) ≤ 1 min behind clock, low<=0 sum = 0.
+> ✅ 09:58 (validator):
+> ```
+> nifty (44, '2026-06-12T09:58:00', 0)
+> sensex (43, '2026-06-12T09:57:00', 0)
+> ```
 
 ### V3 — 09:40 · Entry families live on the new grid (T7+T8+T8b in production)
 ```bash
@@ -832,6 +840,19 @@ r=json.loads(query_all_families('NIFTY')); print(list(r.keys()))"
 ```
 **Expect:** score_trend returns dict (signal/score/confidence), NO AttributeError/NameError;
 higher TFs may be insufficient_history early — that is CORRECT (fail-closed), paste it.
+> ✅ 09:59 (validator) — dict returned, no crash:
+> ```
+> {'family': 'Trend', 'signal': 'NEUTRAL', 'score': 0.0, 'confidence': 15, 'reasoning':
+>  '5m:neutral(×0.1) | 15m:neutral(×0.15) | 30m:neutral(×0.15) | 60m:neutral(×0.2) |
+>   240m:neutral(×0.2) | 1440m:neutral(×0.2)', 'aligned_tfs': '0/8', '_method': 'deterministic'}
+> query_all_families keys: ['index', 'timestamp', 'families']
+> ```
+> ⚠️ FINDING (filed §7): `market_data_multitf` has 0 rows for today (EOD-backfill-only by
+> design, max ts = 06-11 15:25) yet every TF reports "neutral", not insufficient_history —
+> the sqlite reader has NO staleness/date guard, so it scores YESTERDAY's frozen rows.
+> Not the live entry path (kickoff uses `_snapshot()` in-memory — confirmed in kickoff log:
+> "Canonical entry: NO-GO | NEUTRAL→NONE 27%"), but any direct `query_*` consumer gets
+> stale-data-as-signal. Same disease class as T8.
 
 ### V4 — after first kickoff (~09:35–10:00) · decision_trace row lands in LIVE DB (T9 residual — the SHERPA-v2 first data point)
 ```bash
@@ -843,12 +864,44 @@ print(len(rows)); [print(r) for r in rows[:3]]"
 ```
 **Expect:** ≥ 1 row after the first kickoff, decision_source/gate populated, vix not null.
 ❌ here = T9 wiring broken in prod → root-cause same day.
+> ❌ 10:00 (validator): **0 rows** despite kickoffs running every 5 min since 09:31 and gate
+> decisions logged (NOT_UP/NOT_DOWN → NONE each cycle).
+> **Root cause:** `e2e_chain._dambuilder_trace` does
+> `from antariksh.research.outcome_tables import write_decision_trace` but `/home/trading_ceo`
+> is not on sys.path from brahmand → `ModuleNotFoundError` on EVERY gate decision, swallowed
+> by `except Exception: pass` (the exact fail-silent class of T2/T11/T14). Reproduced:
+> `cd brahmand && python3 -c "from antariksh.research...."` → `ModuleNotFoundError: No module named 'antariksh'`.
+> **Fixed forward (validator hotfix, brahmand 3fa9be0):** sys.path bootstrap before import +
+> `except` now logs `decision_trace write failed: <e>` instead of pass.
+> Verified via REAL `_dambuilder_trace` against initialized sandbox DB:
+> ```
+> [('2026-06-12T10:03:26+05:30','NIFTY','20260612T100326','NOT_UP','canonical_strategy','NONE',0,0.27,'sideways','enter',14.91,23355.65)]
+> ```
+> Organic live-row check after next kickoff: see below.
+> ✅ 13:10 — organic rows landing every gate cycle since 10:26 (64 rows, NOT_UP+NOT_DOWN
+> pairs, e.g. `('2026-06-12T10:26:11','NIFTY','20260612T102611','NOT_DOWN','canonical_strategy','NONE',0,0.0,...)`).
+> The import-path fix alone restored writes; a second validator fix (brahmand 3ec102e) also
+> populates `spot` from crew_result (was NULL on most rows) and logs audit failures.
+> ⚠️ Row-quality follow-ups filed in §7: NOT_UP rows carry decision_source='unknown' +
+> signal/confidence NULL (entry_decision dict arrives empty at the audit site — extraction
+> gap, DS task) and regime/vix NULL on all rows; 10:11 cycle wrote nothing (one-off —
+> `write_decision_trace` swallows OperationalError silently, same fail-silent class).
+> 🔴 BONUS CATCH at 11:42:45 — first real GO of the session (NOT_UP go=1 conf 0.7, spot
+> 23370.5): margin gate PASSED, then `BuildAndExecuteTradeTool` died on `name 'log' is not
+> defined` (chain_tools.py:347 imports no logger) → strategy crew None → provenance CLAMPED →
+> no trade. The ENTIRE GO path was dead — accidental fail-closed. FOURTH undefined-name bug
+> in 24h. Fixed (validator, brahmand 9ef9614): local get_logger import at call site; verified
+> via py_compile + smoke. T17's "gate verdict log line" residual lands at the next live GO.
+> Ledger/duckdb confirmed: zero orders placed today.
 
 ### V5 — ~11:00 · data_health silent while healthy (T11 negative case)
 ```bash
 cd ~/brahmand && python3 data_health.py
 ```
 **Expect:** no DATA stale/EMPTY warnings while feeds run. (Positive case already proven 06-11.)
+> ✅ 10:13 (validator, ran early): zero output — silent while healthy. Note: it was ALSO
+> silent at 10:00 while option_prices was dead (V12) — option-table freshness is outside
+> T11's checks; covered by the §7 callback-sentinel follow-up.
 
 ### V6 — ~12:00 · Option chain + enriched table populated
 ```bash
@@ -859,6 +912,20 @@ print('opts:', c.execute(\"select count(*) from option_prices where timestamp li
 print(c.execute(\"select max(timestamp), india_vix, atm_strike from market_data_enriched where timestamp like '2026-06-12%'\").fetchone())"
 ```
 **Expect:** option rows growing; india_vix + atm_strike non-null on latest enriched row.
+> ❌→✅ 10:00–10:10 (validator): **option_prices was 0 rows BOTH indices all morning** —
+> the T13 surface was dead on its first live day. Root cause + fix = V12 below
+> (feed `NameError: name 'r' is not defined`, antariksh 9bef28d). After fix + feed restart
+> 10:08:17, first bar close 10:09:00 →
+> ```
+> nifty opts: (22, '2026-06-12T10:09:00')   # 22 tokens = ATM±5 weekly
+> sensex opts: (44, '2026-06-12T10:09:00')  # 44 = weekly+monthly window
+> ```
+> Re-check at ~12:00 for growth + india_vix/atm_strike on latest enriched row.
+> ⚠️ ~55 min of option premiums (09:15–10:09) permanently lost — first-session cost of the
+> silent-callback class.
+> ✅ 13:07 re-check: NIFTY opts=3,208, SENSEX opts=5,128 (rows 10:09→13:07, growing every
+> bar); enriched current to 13:07 with india_vix=14.74 + atm_strike (23350 / 74550) non-null.
+> NIFTY on pace for ~5,8xx by close (≥5,000 Accept holds despite the 54-min outage).
 
 ### V7 — 15:35 · Clean close
 ```bash
@@ -897,6 +964,16 @@ for i in ['nifty','sensex']:
 **Expect:** pcr_total/oi_skew non-null counts > 0 for the FIRST TIME EVER (they are 0 for
 all history — the 22-call REST path never worked, see T13). If still 0 → d623438's chain
 parse is broken too; root-cause with the actual get_option_chain response pasted.
+> ✅ 13:07 (validator): **pcr_total + oi_skew non-null FIRST TIME EVER:**
+> ```
+> nifty pcr : (233 rows, 179 non-null, 179 non-null)   # 77%
+> sensex pcr: (233 rows, 179 non-null, 179 non-null)
+> ```
+> The 54 nulls = exactly the 09:15–10:09 V12 outage window; coverage is 100% since the fix,
+> so the >90% criterion is judged MET on the post-fix surface (whole-session % will end ~85%
+> due to the outage — cause recorded in V12, not a T13 defect).
+> REST budget ✓: `get_option_chain|get_quotes` count in both enricher logs = **0**.
+> `error from callback` in feed.log post-restart = **0** (106 total, all pre-10:08).
 
 ### V11 — ~10:00 + ~21:00 · MCX capture alive (T15 surface — NEW, was a blind spot)
 ```bash
@@ -907,11 +984,53 @@ print(c.execute(\"select instrument, count(*), max(timestamp) from market_data w
 ```
 **Expect:** all 6 commodities present, max(timestamp) ≤ 2 min behind clock while MCX open
 (09:00–23:30). Run twice — morning + evening (MCX evening session was where it died unseen).
+> ✅ 10:00 morning (validator): all 7 commodities live:
+> ```
+> [('ALUMINI', 27, '09:56'), ('CRUDEOILM', 44, '09:58'), ('GOLD', 44, '09:58'),
+>  ('LEADMINI', 8, '09:46'), ('NATGASMINI', 43, '09:57'), ('SILVERMIC', 44, '09:58'),
+>  ('ZINCMINI', 30, '09:54')]
+> ```
+> Low-count laggards (LEADMINI/ALUMINI/ZINCMINI) = thin tick flow, bars only on ticks — OK.
+> Evening run still owed.
+
+### V12 — 🔴 NEW (validator-found 10:05): option feed dead all session — Redis purge left undefined `r`
+`feed.log`: `ERROR error from callback ...: name 'r' is not defined` **2×/min since 09:14
+(104 occurrences)**. The Redis elimination (37b7e24) deleted local `r` from `main()` but the
+ATM block still passed it: `_init_option_feed(api, r, ...)` / `_rebalance_option_window(api, r, ...)`
+→ NameError at EVERY bar close, swallowed by the WS lib's callback handler (bars survive only
+because `_persist_bar_and_options` runs before the ATM block). Neither function ever used the
+param. **Same undefined-name-in-scope class as T16-B1 — second instance in 24h.**
+**Fixed (validator, antariksh 9bef28d):** param removed from both signatures + call sites;
+py_compile OK; test_t12 6/6 + test_t16 10/10 + t14 + test_multitf_live all PASS; feed.service
+restarted 10:08:17 (Board §0e velocity ruling authorizes live deploys; ~80s bar gap accepted).
+Live result: ATM resolved 10:09:00 both indices, option_prices rows landing (see V6).
+**Systemic note (planner altitude):** that callback-swallow has now eaten T16-B1, V12, and the
+06-01 crash-loop. Cure filed in §7: a `feed.log` ERROR-rate sentinel in data_health (any
+`error from callback` during market hours → WARN), not more per-bug patches.
 
 **Failure protocol:** any ❌ → paste output, root-cause, fix forward (§0e rules apply),
 re-run the item. Validator spot-audits V3/V4/V8 independently.
 
 ## 7. Open questions / follow-ups
+- **NEW 06-12 (validator, from V12):** data_health sentinel for feed callback errors — count
+  `error from callback` lines in feed.log during market hours, WARN if > 0. Three bugs in 24h
+  (T16-B1, V12, plus the 06-01 class) all hid behind that swallow; a rate check kills the class.
+- **NEW 06-12 (validator, from V3):** `entry_tools` sqlite `query_*` readers have NO
+  staleness/date guard — with `market_data_multitf` EOD-only they score yesterday's frozen
+  rows as live "neutral" signals. Add same 3-min/last-session guard as T14 item 3, or have
+  the families report insufficient_history when latest row < today. (Live kickoff path
+  unaffected — uses `_snapshot()`.)
+- **NEW 06-12 (validator, from V4 rows):** decision_trace row quality — (a) NOT_UP rows have
+  decision_source='unknown', signal/confidence NULL: `crew_result['entry_decision']` is empty
+  at the audit site while NOT_DOWN's dict is populated — extraction gap (CrewAI output-extraction
+  class, see [[crewai_output_extraction_bug]]); (b) regime/vix NULL on every row — `crew_result['regime']`
+  empty at audit time; (c) `write_decision_trace` swallows `sqlite3.OperationalError` silently
+  (10:11 cycle lost a row with zero trace). DS task: fix extraction + add WARN on swallow.
+- **NEW 06-12 (validator):** undefined-name bug class hit FOUR times in 24h (T16-B1 feed
+  `instrument`, V12 feed `r`, V4 `spot`, T17-call-site `log`) — all swallowed by bare
+  except/callback handlers. Systemic cure candidates: `python -m pyflakes` (catches all four
+  statically) as pre-commit in both repos + the feed.log callback-error sentinel above.
+  Board/DS: adopt pyflakes gate?
 - **T5 (77a6afb, a4a7255) built — validation pending** (outcome tables + parquet; Accept: sandbox kickoff inserts decision_trace row, seeded lifecycle close inserts trade_outcomes, parquet pandas-readable).
 - **T2 follow-up:** check_dambuilder skips silently when heartbeat key MISSING — right pre-T1, but post-T1 a never-started unit (timer-bug class, Penguin 06-02) is invisible. Post-T1: if multitf-enricher-nifty.timer installed AND market hours AND no heartbeat → WARN. Fold into T1 validation or T2b.
 - **Unattributed brahmand working-tree edits (entry_setup.py, margin_matrix.json) seen 06-11 08:45:** entry_setup drops in-python pgrep guard (wrapper guard + file lock remain; compiles; --dry-run intact) + SIM_NOW-aware now_dt(). Safe for today but UNCOMMITTED live-path edits violate protocol — Board: commit or revert deliberately.

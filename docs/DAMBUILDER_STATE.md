@@ -1278,6 +1278,13 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 > (leg_shifter, 3933ef1). Core set UNCHANGED: feed/enrichers/tools/config = 14 (incl. LIVE
 > multitf_enricher). Hooks still lint-free, ruff not installed. Accept open: wire gate +
 > zero counts + seeded-F821 block demo + sentinel demo, §5 paste.
+> **Validator 17:20 on d14148e — fix-half ✅ for core set:** multitf_enricher all 5 fixed
+> (re-ran pyflakes: file clean), entry_tools `sqlite3` fixed. Remaining 8 = `db` refs in
+> UNREACHABLE post-return duckdb bodies (verified line 395 return precedes), marked
+> `noqa: F821`. Production risk in core = zero. Two notes: (1) `noqa` silences ruff, NOT
+> pyflakes — if the hook wires pyflakes, these 8 still block; either delete the dead
+> bodies (T7 note already recommends) or wire ruff. (2) Wiring itself STILL missing —
+> the gate has caught zero of the five bugs it exists for.
 > **Validator 16:50 (round 3, 4c841b9 + b67c4d0): STILL UNENFORCED.**
 > `.pre-commit-config.yaml` added but the `pre-commit` binary is NOT installed and both
 > repos run raw `.git/hooks/pre-commit` scripts (plumbing only) — the framework config

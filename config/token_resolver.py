@@ -262,15 +262,23 @@ class TokenResolver:
 
     def resolve_weekly_nifty(self, atm_range: int = 5) -> list[dict]:
         expiry = _next_expiry(NIFTY_WEEKDAY)
-        spot = self.nifty_spot or 23900  # fallback
-        gap = 50
+        return self._weekly_for_expiry(
+            expiry, self.nifty_spot or 23900, 50, "NFO", _build_tsym_weekly_nifty, atm_range
+        )
+
+    def resolve_weekly_nifty_for_expiry(self, expiry_date: date, atm_range: int = 5) -> list[dict]:
+        return self._weekly_for_expiry(
+            expiry_date, self.nifty_spot or 23900, 50, "NFO", _build_tsym_weekly_nifty, atm_range
+        )
+
+    def _weekly_for_expiry(self, expiry, spot, gap, exchange, builder, atm_range):
         atm = self.atm_strike(spot, gap)
         tokens = []
         for offset in range(-atm_range, atm_range + 1):
             strike = atm + offset * gap
             for opt in ["CE", "PE"]:
-                tsym = _build_tsym_weekly_nifty(expiry, strike, opt)
-                row = self._lookup("NFO", tsym)
+                tsym = builder(expiry, strike, opt)
+                row = self._lookup(exchange, tsym)
                 if row:
                     row["strike"] = strike
                     row["expiry_date"] = expiry.isoformat()
@@ -279,20 +287,14 @@ class TokenResolver:
 
     def resolve_weekly_sensex(self, atm_range: int = 5) -> list[dict]:
         expiry = _next_expiry(SENSEX_WEEKDAY)
-        spot = self.sensex_spot or 75800
-        gap = 100
-        atm = self.atm_strike(spot, gap)
-        tokens = []
-        for offset in range(-atm_range, atm_range + 1):
-            strike = atm + offset * gap
-            for opt in ["CE", "PE"]:
-                tsym = _build_tsym_weekly_sensex(expiry, strike, opt)
-                row = self._lookup("BFO", tsym)
-                if row:
-                    row["strike"] = strike
-                    row["expiry_date"] = expiry.isoformat()
-                    tokens.append(row)
-        return tokens
+        return self._weekly_for_expiry(
+            expiry, self.sensex_spot or 75800, 100, "BFO", _build_tsym_weekly_sensex, atm_range
+        )
+
+    def resolve_weekly_sensex_for_expiry(self, expiry_date: date, atm_range: int = 5) -> list[dict]:
+        return self._weekly_for_expiry(
+            expiry_date, self.sensex_spot or 75800, 100, "BFO", _build_tsym_weekly_sensex, atm_range
+        )
 
     def resolve_monthly_sensex(self, atm_range: int = 5) -> list[dict]:
         """SENSEX monthly options — last Thursday of the month."""

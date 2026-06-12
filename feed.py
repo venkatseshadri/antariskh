@@ -147,9 +147,7 @@ def build_subscriptions(config: dict) -> list:
         for item in config.get(sect, []):
             item = dict(item)
             if "product_root" in item:
-                contract = resolver.resolve_nearest_future(
-                    item["product_root"], item["exchange"]
-                )
+                contract = resolver.resolve_nearest_future(item["product_root"], item["exchange"])
                 item["token"] = contract["token"]
                 item["tsym"] = contract["tsym"]
                 _INSTRUMENT_CONTRACT[item["name"]] = contract["tsym"]
@@ -165,28 +163,37 @@ def build_subscriptions(config: dict) -> list:
 
 def _write_resolved_contracts():
     import json
+    import tempfile
 
     data = {}
     for name, expiry in _INSTRUMENT_EXPIRIES.items():
         data[name] = {
             "tsym": _INSTRUMENT_CONTRACT.get(name, ""),
-            "expiry": expiry.isoformat()
-            if hasattr(expiry, "isoformat")
-            else str(expiry),
+            "expiry": expiry.isoformat() if hasattr(expiry, "isoformat") else str(expiry),
         }
     path = LIVE_DIR / "resolved_contracts.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", dir=str(path.parent), delete=False
+        )
+        try:
+            json.dump(data, tmp)
+            tmp.flush()
+            tmp.close()
+            Path(tmp.name).rename(path)
+        except Exception:
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+    except Exception as e:
+        log.warning(f"Failed to write resolved_contracts: {e}")
 
 
 def _write_feed_heartbeat(instrument: str, ts: str):
     """Write feed heartbeat to file every 60s (DataHealth reads this)."""
     path = LIVE_DIR / f"feed_{instrument}.heartbeat"
     now = time.time()
-    if (
-        hasattr(_write_feed_heartbeat, "_last")
-        and instrument in _write_feed_heartbeat._last
-    ):
+    if hasattr(_write_feed_heartbeat, "_last") and instrument in _write_feed_heartbeat._last:
         if now - _write_feed_heartbeat._last[instrument] < 60:
             return
     if not hasattr(_write_feed_heartbeat, "_last"):
@@ -387,6 +394,35 @@ def _init_option_feed(api, instrument: str, spot: float):
         "expiry": tokens[0].get("expiry_date", ""),
         "gap": gap,
     }
+    dual_count = 0
+
+    # Dual-chain capture: on 0-1DTE days, also subscribe next week's
+    # option chain so research sees the theta tail + new-week premiums.
+    from config.token_resolver import resolve_weekly_expiry
+
+    today = datetime.now().date()
+    weekly_expiry = resolve_weekly_expiry(instrument)
+    if (weekly_expiry - today).days <= 1:
+        _next_week = weekly_expiry + timedelta(days=7)
+        if instrument == "NIFTY":
+            next_tokens = resolver.resolve_weekly_nifty_for_expiry(_next_week, OPTION_ATM_RANGE)
+        else:
+            next_tokens = resolver.resolve_weekly_sensex_for_expiry(_next_week, OPTION_ATM_RANGE)
+        for opt in next_tokens:
+            tok_id = opt["token"]
+            if tok_id not in token_map:
+                token_map[tok_id] = opt
+                tsym_map[opt["tsym"]] = opt
+                subscribed.add(opt["tsym"])
+                api.subscribe(f"{opt['exchange']}|{tok_id}", feed_type="d")
+                dual_count += 1
+
+    if dual_count:
+        log.info(
+            f"  Dual-chain [{instrument}]: +{dual_count} next-week tokens "
+            f"(0-1DTE, next expiry={_next_week})"
+        )
+
     log.info(
         f"Option feed [{instrument}]: ATM={atm}, "
         f"subscribed={len(subscribed)} tokens, "
@@ -428,6 +464,21 @@ def _rebalance_option_window(api, instrument: str, new_atm: int):
 
     new_tokens_map = {t["tsym"]: t for t in tokens}
     new_window = set(new_tokens_map.keys())
+
+    # Dual-chain: on 0-1DTE days, keep next-week tokens in window too
+    from config.token_resolver import resolve_weekly_expiry
+
+    today = datetime.now().date()
+    weekly_expiry = resolve_weekly_expiry(instrument)
+    if (weekly_expiry - today).days <= 1:
+        _next_week = weekly_expiry + timedelta(days=7)
+        if instrument == "NIFTY":
+            next_tokens = resolver.resolve_weekly_nifty_for_expiry(_next_week, OPTION_ATM_RANGE)
+        else:
+            next_tokens = resolver.resolve_weekly_sensex_for_expiry(_next_week, OPTION_ATM_RANGE)
+        next_map = {t["tsym"]: t for t in next_tokens}
+        new_tokens_map.update(next_map)
+        new_window.update(next_map.keys())
 
     to_drop = state["subscribed"] - new_window
     to_add = new_window - state["subscribed"]
@@ -496,9 +547,7 @@ def main():
 
     # ── Shoonya session ───────────────────────────────────────────────────
     api = NorenApiPy()
-    ret = api.injectOAuthHeader(
-        creds["Access_token"], creds["UID"], creds["Account_ID"]
-    )
+    ret = api.injectOAuthHeader(creds["Access_token"], creds["UID"], creds["Account_ID"])
     api.set_credentials(creds["Access_token"], creds["UID"], creds["Account_ID"])
     log.info("Shoonya authenticated")
 

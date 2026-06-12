@@ -41,6 +41,10 @@ _PENGUIN_DATA = Path("/home/trading_ceo/python-trader/varaha/data")
 _SQLITE_NIFTY_DB = str(_PENGUIN_DATA / "capture_nifty.sqlite")
 _SQLITE_SENSEX_DB = str(_PENGUIN_DATA / "capture_sensex.sqlite")
 
+# Multi-TF minute buckets
+_TIMINGS = [5, 15, 30, 60, 240, 1440]
+_SQLITE_SENSEX_DB = str(_PENGUIN_DATA / "capture_sensex.sqlite")
+
 if CAPTURE_BACKEND == "sqlite":
     V4_DB_PATH = _SQLITE_NIFTY_DB
     V4_SENSEX_DB_PATH = _SQLITE_SENSEX_DB
@@ -137,10 +141,11 @@ def query_multi_tf_trend(
     if _USE_SQLITE_SCANNER:
         db_path = V4_DB_PATH if index.upper() == "NIFTY" else V4_SENSEX_DB_PATH
         # SQLite multitf doesn't have full indicators yet — OHLCV only
+        result = {}
         mtf_result = {}
         with _db_connect_sqlite(db_path, "market_data_multitf") as mtf_db:
             if mtf_db:
-                for minut in TIMINGS:
+                for minut in (5, 15, 30, 60, 240, 1440):
                     try:
                         row = mtf_db.execute(
                             "SELECT open, high, low, close, volume "
@@ -165,9 +170,7 @@ def query_multi_tf_trend(
                             entry["low"] = round(row[2], 2) if row[2] else None
                             entry["close"] = round(row[3], 2) if row[3] else None
                         mtf_result[f"{minut}m"] = (
-                            entry
-                            if entry
-                            else {"status": "no_data", "ema_position": "unknown"}
+                            entry if entry else {"status": "no_data", "ema_position": "unknown"}
                         )
                     except Exception:
                         mtf_result[f"{minut}m"] = {
@@ -201,11 +204,7 @@ def query_multi_tf_trend(
                             st_cons,
                             adx,
                         ) = row
-                        pos = (
-                            "bullish"
-                            if (ema20 and ema50 and ema20 > ema50)
-                            else "bearish"
-                        )
+                        pos = "bullish" if (ema20 and ema50 and ema20 > ema50) else "bearish"
                         result["timeframes"]["1m_v3.1"] = {
                             "status": "ok",
                             "ema_position": pos,
@@ -239,57 +238,60 @@ def query_multi_tf_trend(
             "index": index,
             "timestamp": datetime.now().isoformat(),
             "timeframes": {},
-            "data_sources": {"v4_ok": v4_db is not None, "v3.1_ok": v31_db is not None},
+            "data_sources": {"v4_ok": False, "v3.1_ok": False},
         }
 
         # --- v4: multi-TF SMA + ST consensus ---
-        if v4_db:
-            timings = [5, 15, 30, 60, 240, 1440]
-            for minut in timings:
-                query = """
-                    SELECT sma20, sma50, sma200, rsi, close, st_consensus, adx, di_plus, di_minus
-                    FROM market_data_multitf
-                    WHERE index_name = ? AND timeframe_min = ?
-                    ORDER BY timestamp DESC LIMIT 1
-                """
-                try:
-                    row = v4_db.execute(query, [index, minut]).fetchone()
-                    if row is None:
+        v4_db_path = _V4_NIFTY_DB if index.upper() == "NIFTY" else _V4_SENSEX_DB
+        with _db_connect(v4_db_path) as v4_db:
+            if v4_db:
+                result["data_sources"]["v4_ok"] = True
+                timings = [5, 15, 30, 60, 240, 1440]
+                for minut in timings:
+                    try:
+                        row = v4_db.execute(
+                            "SELECT sma20, sma50, sma200, rsi, close, st_consensus, adx, di_plus, di_minus "
+                            "FROM market_data_multitf "
+                            "WHERE index_name = ? AND timeframe_min = ? "
+                            "ORDER BY timestamp DESC LIMIT 1",
+                            [index, minut],
+                        ).fetchone()
+                        if row is None:
+                            result["timeframes"][f"{minut}m"] = {
+                                "status": "no_data",
+                                "ema_position": "unknown",
+                            }
+                            continue
+
+                        sma20, sma50, sma200, rsi, close, st, adx, di_p, di_m = row
+
+                        if sma20 and sma50:
+                            position = "bullish" if sma20 > sma50 else "bearish"
+                        else:
+                            position = "unknown"
+
+                        entry = {
+                            "status": "ok",
+                            "ema_position": position,
+                            "st_consensus": st or "NEUTRAL",
+                            "adx": round(adx, 1) if adx else None,
+                        }
+
+                        if include_raw:
+                            entry["sma20"] = round(sma20, 2) if sma20 else None
+                            entry["sma50"] = round(sma50, 2) if sma50 else None
+                            entry["sma200"] = round(sma200, 2) if sma200 else None
+                            entry["close"] = round(close, 2) if close else None
+                            entry["rsi"] = round(rsi, 1) if rsi else None
+                            entry["di_plus"] = round(di_p, 1) if di_p else None
+                            entry["di_minus"] = round(di_m, 1) if di_m else None
+
+                        result["timeframes"][f"{minut}m"] = entry
+                    except Exception:
                         result["timeframes"][f"{minut}m"] = {
-                            "status": "no_data",
+                            "status": "error",
                             "ema_position": "unknown",
                         }
-                        continue
-
-                    sma20, sma50, sma200, rsi, close, st, adx, di_p, di_m = row
-
-                    if sma20 and sma50:
-                        position = "bullish" if sma20 > sma50 else "bearish"
-                    else:
-                        position = "unknown"
-
-                    entry = {
-                        "status": "ok",
-                        "ema_position": position,
-                        "st_consensus": st or "NEUTRAL",
-                        "adx": round(adx, 1) if adx else None,
-                    }
-
-                    if include_raw:
-                        entry["sma20"] = round(sma20, 2) if sma20 else None
-                        entry["sma50"] = round(sma50, 2) if sma50 else None
-                        entry["sma200"] = round(sma200, 2) if sma200 else None
-                        entry["close"] = round(close, 2) if close else None
-                        entry["rsi"] = round(rsi, 1) if rsi else None
-                        entry["di_plus"] = round(di_p, 1) if di_p else None
-                        entry["di_minus"] = round(di_m, 1) if di_m else None
-
-                    result["timeframes"][f"{minut}m"] = entry
-                except Exception:
-                    result["timeframes"][f"{minut}m"] = {
-                        "status": "error",
-                        "ema_position": "unknown",
-                    }
 
         # --- v3.1: 1-min EMA + ST detail ---
         if v31_db:
@@ -315,9 +317,7 @@ def query_multi_tf_trend(
                         st_cons,
                         adx,
                     ) = row
-                    pos = (
-                        "bullish" if (ema20 and ema50 and ema20 > ema50) else "bearish"
-                    )
+                    pos = "bullish" if (ema20 and ema50 and ema20 > ema50) else "bearish"
 
                     result["timeframes"]["1m_v3.1"] = {
                         "status": "ok",
@@ -329,12 +329,8 @@ def query_multi_tf_trend(
                         "adx": round(adx, 1) if adx else None,
                     }
                     if include_raw:
-                        result["timeframes"]["1m_v3.1"]["spot"] = (
-                            round(spot, 2) if spot else None
-                        )
-                        result["timeframes"]["1m_v3.1"]["ema5"] = (
-                            round(ema5, 2) if ema5 else None
-                        )
+                        result["timeframes"]["1m_v3.1"]["spot"] = round(spot, 2) if spot else None
+                        result["timeframes"]["1m_v3.1"]["ema5"] = round(ema5, 2) if ema5 else None
                         result["timeframes"]["1m_v3.1"]["ema20"] = (
                             round(ema20, 2) if ema20 else None
                         )

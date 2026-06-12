@@ -298,6 +298,27 @@ def test_cron_paths():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def test_b3_chain_tools_equivalence():
+    """B3: brahmand/tools/chain_tools._weekly_expiry() == oracle.resolve_weekly_expiry('NIFTY')"""
+    print("\n  6.1  B3 chain_tools equivalence")
+    import sys
+    from pathlib import Path as _P
+
+    _brahmand = _P(__file__).resolve().parent.parent.parent.parent / "brahmand"
+    if str(_brahmand) not in sys.path:
+        sys.path.insert(0, str(_brahmand))
+    # Remove antariksh/tools from sys.modules to force brahmand resolution
+    for k in [k for k in sys.modules if k.startswith("tools")]:
+        del sys.modules[k]
+    from tools.chain_tools import _weekly_expiry
+    from config.token_resolver import resolve_weekly_expiry
+
+    ct_str = _weekly_expiry()
+    ct_date = datetime.strptime(ct_str, "%d-%b-%Y").date()
+    oracle_date = resolve_weekly_expiry("NIFTY")
+    (ok if ct_date == oracle_date else fail)(f"chain_tools={ct_date} != oracle={oracle_date}")
+
+
 def main():
     global exit_code
     print("=" * 56)
@@ -321,6 +342,8 @@ def main():
     test_expiry_wednesday_to_tuesday()
     test_expiry_tuesday_morning_today()
     test_expiry_tuesday_afternoon_rolls()
+
+    test_b3_chain_tools_equivalence()
 
     test_e2e_stale_expiry_guard()
     test_cron_paths()

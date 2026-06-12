@@ -90,10 +90,12 @@ def _broker_weekly_expiries(index: str) -> list[date]:
             if row.get("Instrument") != "OPTIDX":
                 continue
             tsym = row.get("TradingSymbol", "")
-            # NIFTY: NFO OPTIDX, tsym starts with "NIFTY"
+            # NIFTY: NFO OPTIDX, tsym starts with "NIFTY" (NOT "NIFTYNXT")
             # SENSEX: BFO OPTIDX, Symbol = "BSXOPT" (not SENSEX50 — different index)
             if index.upper() == "NIFTY":
                 if not tsym.upper().startswith("NIFTY"):
+                    continue
+                if tsym.upper().startswith("NIFTYNXT"):
                     continue
             elif row.get("Symbol", "") != "BSXOPT":
                 continue

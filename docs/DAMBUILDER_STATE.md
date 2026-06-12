@@ -654,6 +654,18 @@ Paste all outputs §5.
 >   ⚠ Board confirm needed: 15:05 cutoff chosen by DS; iron-fly calendar may want earlier.
 > - OPEN: (c) SL qty 50 vs lot 65; (d) conf-0.1 gate threshold (Board question);
 >   PORCUPINE scenario test; §5 paste; live proof = first GO Mon.
+> **Validator 17:40 on e65da81 — (c) ✅ code-validated, NEW (f) filed:**
+> - (c) SL/TP qty now copied from the ledger's actual ENTRY order — mismatch dead. Two
+>   minor notes: fallback `entry_quantity = 65` is still a hardcoded lot (master should
+>   own lot size — same disease T16 cured for symbols); first-ENTRY-order qty assumes all
+>   legs equal qty (true for iron fly, breaks on ratio spreads — document or per-leg).
+> - **(f) NEW — STALE FILL PRICES (pre-existing, exposed in this diff):**
+>   `order_routing.py:98` `SELECT ltp FROM option_prices WHERE tsym = ?` + fetchone, NO
+>   ORDER BY — since T12's composite PK each tsym has hundreds of rows/day (verified: 321
+>   today); SQLite returns the arbitrary first = earliest → paper fills price at the
+>   MORNING LTP all day. The 15:37 trade's fills (95.5/22.3) are suspect. Fix: `ORDER BY
+>   timestamp DESC LIMIT 1` + refuse fill if latest row > 3 min old (enricher's staleness
+>   rule). Affects every fill/P&L computed since T13 went live.
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —

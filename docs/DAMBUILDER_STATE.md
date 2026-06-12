@@ -1278,6 +1278,15 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 > (leg_shifter, 3933ef1). Core set UNCHANGED: feed/enrichers/tools/config = 14 (incl. LIVE
 > multitf_enricher). Hooks still lint-free, ruff not installed. Accept open: wire gate +
 > zero counts + seeded-F821 block demo + sentinel demo, §5 paste.
+> ✅✅ **T20 GATE VALIDATED 17:30 (4f4657c + d14148e).** Validator ran the Accept demo
+> himself: seeded `return undefined_thing_xyz` in tests/_f821_seed_demo.py, staged,
+> committed → `[pre-commit] BLOCKED — F821 undefined-name violations above`, commit
+> refused, HEAD unchanged. ruff 0.15.17 installed; staged-files-only design = legacy debt
+> doesn't block unrelated commits; BOTH repos' raw hooks wired. The bug class that produced
+> 5 production failures in 24h is now mechanically dead at commit time.
+> Residuals (non-blocking): sentinel `check_feed_callbacks` 4-case demo + §5 paste;
+> dead `db` bodies in entry_tools deletable in cleanup (noqa'd); demo placeholder
+> tests/_f821_seed_demo.py left inert (deletion restricted) — DS may remove.
 > **Validator 17:20 on d14148e — fix-half ✅ for core set:** multitf_enricher all 5 fixed
 > (re-ran pyflakes: file clean), entry_tools `sqlite3` fixed. Remaining 8 = `db` refs in
 > UNREACHABLE post-return duckdb bodies (verified line 395 return precedes), marked

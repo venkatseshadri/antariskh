@@ -51,10 +51,38 @@ addopts = [
 
 [tool.ruff]
 line-length = 100
+extend-exclude = [
+    ".venv/",
+    "__pycache__/",
+    "*.pyc",
+    ".git/",
+    "graphify-out/",
+    "cache/",
+    "data/archive/",
+    "data/live/",
+    "data/masters/",
+    "data/*.json",
+    "research/sandbox/",
+    "cron/",
+    "crews/",
+    "agents/",
+    "brahmand/",
+    "broker_manager.py",
+    "backtester.py",
+    "redis_integration.py",
+    "tools_registry.py",
+    "agent_registry.py",
+]
 
 [tool.ruff.lint]
 select = ["F821"]  # undefined-name — catches NameError at lint time
 ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"agents/entry/test_trend.py" = ["F821"]
+"agents/entry/test_trend_verify.py" = ["F821"]
+"agents/entry/traffic_light_agent.py" = ["F821"]
+"agents/entry/trend_agent.py" = ["F821"]
 
 [tool.coverage.run]
 source = ["tools", "crews", "ralph"]

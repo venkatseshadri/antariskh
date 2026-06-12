@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-f821
+        name: ruff F821 undefined-name
+        entry: ruff check --select F821 .
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+      - id: plumbing
+        name: plumbing checks
+        entry: python3 tests/plumbing/test_precommit.py
+        language: system
+        pass_filenames: false
+        always_run: true

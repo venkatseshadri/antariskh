@@ -77,6 +77,36 @@ def _download_master(exchange: str) -> Path:
     return path
 
 
+def _broker_weekly_expiries(index: str) -> list[date]:
+    """Extract distinct weekly expiry dates from broker master files (holiday-aware).
+    Broker master txts list ONLY actually-traded contracts — holiday-aware by construction."""
+    exchange = "NFO" if index.upper() == "NIFTY" else "BFO"
+    path = MASTER_DIR / f"{exchange}_symbols.txt"
+    if not path.exists():
+        return []
+    expiries = set()
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            if row.get("Instrument") != "OPTIDX":
+                continue
+            tsym = row.get("TradingSymbol", "")
+            # NIFTY: NFO OPTIDX, tsym starts with "NIFTY"
+            # SENSEX: BFO OPTIDX, Symbol = "BSXOPT" (not SENSEX50 — different index)
+            if index.upper() == "NIFTY":
+                if not tsym.upper().startswith("NIFTY"):
+                    continue
+            elif row.get("Symbol", "") != "BSXOPT":
+                continue
+            expiry_str = row.get("Expiry", "")
+            if not expiry_str:
+                continue
+            try:
+                expiries.add(datetime.strptime(expiry_str, "%d-%b-%Y").date())
+            except (ValueError, TypeError):
+                continue
+    return sorted(expiries)
+
+
 def resolve_weekly_expiry(index: str = "NIFTY", now: Optional[datetime] = None) -> date:
     """Single expiry oracle — authoritative + holiday-aware by construction.
 
@@ -93,39 +123,15 @@ def resolve_weekly_expiry(index: str = "NIFTY", now: Optional[datetime] = None) 
     weekday_map = {"NIFTY": 1, "SENSEX": 3}
     weekday = weekday_map.get(index.upper(), 1)
 
-    # Try scrip_master first (authoritative — broker contract list IS the truth).
-    # static_metadata.db is a DuckDB file, not SQLite.
-    try:
-        import duckdb as _duckdb
-        from pathlib import Path as _P
-
-        static_db = _P(__file__).resolve().parent.parent / "data" / "static_metadata.db"
-        if static_db.exists():
-            con = _duckdb.connect(str(static_db), read_only=True)
-            rows = con.execute(
-                "SELECT DISTINCT expiry FROM scrip_master "
-                "WHERE symbol = ? AND instrument = 'OPTIDX' "
-                "ORDER BY expiry ASC",
-                [index.upper()],
-            ).fetchall()
-            con.close()
-            if rows:
-                for (expiry_str,) in rows:
-                    expiry_str = str(expiry_str).strip()
-                    try:
-                        expiry = datetime.strptime(expiry_str, "%d-%b-%Y").date()
-                    except ValueError:
-                        expiry = datetime.strptime(expiry_str, "%Y-%m-%d").date()
-                    if expiry >= today:
-                        # Expiry day: hold until 15:25 IST
-                        if expiry == today and (now.hour, now.minute) >= (15, 25):
-                            continue
-                        return expiry
-    except Exception as e:
-        import logging
-
-        _log = logging.getLogger("token_resolver")
-        _log.warning("resolve_weekly_expiry: scrip_master lookup failed: %s", e)
+    # Try broker master files first (holiday-aware by construction —
+    # the master file lists only actually-traded contracts)
+    expiries = _broker_weekly_expiries(index)
+    if expiries:
+        for expiry in expiries:
+            if expiry >= today:
+                if expiry == today and (now.hour, now.minute) >= (15, 25):
+                    continue
+                return expiry
 
     # Fallback: simple weekday calculation (no <2 day guard — 0DTE IS valid)
     days_ahead = (weekday - today.weekday()) % 7

@@ -24,6 +24,7 @@ import os
 import sqlite3
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -31,9 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def _live_dir():
     return Path(
-        os.environ.get(
-            "LIVE_DIR", str(Path(__file__).resolve().parent.parent / "data" / "live")
-        )
+        os.environ.get("LIVE_DIR", str(Path(__file__).resolve().parent.parent / "data" / "live"))
     )
 
 
@@ -166,9 +165,7 @@ def enrich_tf(conn: sqlite3.Connection, instrument: str, tf: int, date: str) -> 
         return 0
     # Only enrich today's rows, but use full lookback for indicator context
     today_prefix = date
-    today_idxs = [
-        i for i, b in enumerate(tf_bars) if b["timestamp"].startswith(today_prefix)
-    ]
+    today_idxs = [i for i, b in enumerate(tf_bars) if b["timestamp"].startswith(today_prefix)]
     if not today_idxs:
         return 0
     rows = [
@@ -194,11 +191,11 @@ def enrich_day(db_path: str, instrument: str, date: str) -> dict:
             enriched += n
 
         # Heartbeat — file-based
-        heartbeat = LIVE_DIR / f"multitf_enricher_{instrument}.heartbeat"
+        heartbeat = _live_dir() / f"multitf_enricher_{instrument}.heartbeat"
         heartbeat.write_text(datetime.now().isoformat())
     finally:
         conn.close()
-    return written
+    return enriched
 
 
 def live(db_path: str, instrument: str):
@@ -262,7 +259,6 @@ def live(db_path: str, instrument: str):
                         f"[multitf_enricher] slow enrich {ts} ({elapsed:.1f}s, total {enriched})",
                         flush=True,
                     )
-                    enricher_flush()  # NEW — flush after slow bar writes
                 elif enriched % 100 == 0:
                     print(
                         f"[multitf_enricher] {ts} ({enriched} enriched)",
@@ -291,21 +287,15 @@ def _load_today_1m(conn, instrument, day):
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="SQLite multi-TF indicator enricher (no DuckDB)"
-    )
+    ap = argparse.ArgumentParser(description="SQLite multi-TF indicator enricher (no DuckDB)")
     ap.add_argument("--instrument", default="NIFTY", choices=["NIFTY", "SENSEX", "MCX"])
-    ap.add_argument(
-        "--backfill", help="YYYY-MM-DD: enrich a day's multitf rows in place"
-    )
+    ap.add_argument("--backfill", help="YYYY-MM-DD: enrich a day's multitf rows in place")
     ap.add_argument(
         "--live",
         action="store_true",
         help="subscribe bars:{inst}:{tf}, enrich on each closed TF bar",
     )
-    ap.add_argument(
-        "--db", help="capture sqlite path (default: prod capture for instrument)"
-    )
+    ap.add_argument("--db", help="capture sqlite path (default: prod capture for instrument)")
     a = ap.parse_args()
 
     if a.db:

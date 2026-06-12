@@ -44,6 +44,8 @@ try:
 except ImportError:
     load_dotenv = None
 
+import sqlite3  # for type annotations + live path reuse
+
 
 # DB paths — sourced from config (single source of truth).
 # Self-locate: this file is spec-loaded by brahmand (entry_gate_tools.py), where
@@ -393,7 +395,7 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
-            row = db.execute(
+            row = db.execute(  # noqa: F821
                 """SELECT open, high, low, close, ema5, ema20, ema50,
                           st_consensus, adx, di_plus, di_minus
                    FROM market_data_multitf
@@ -427,11 +429,11 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
                     "candle": "no_data",
                 }
     finally:
-        db.close()
+        db.close()  # noqa: F821
     return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
-            row = db.execute(
+            row = db.execute(  # noqa: F821
                 """SELECT open, high, low, close, sma20, sma50, sma200,
                           st_consensus, adx, di_plus, di_minus
                    FROM market_data_multitf
@@ -464,7 +466,7 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
                     "candle": "no_data",
                 }
     finally:
-        db.close()
+        db.close()  # noqa: F821
     return _json.dumps(result, indent=2)
 
 
@@ -590,7 +592,7 @@ def _query_momentum_sqlite(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
-            row = db.execute(
+            row = db.execute(  # noqa: F821
                 "SELECT close, rsi, macd, macd_signal, macd_histogram, cci FROM market_data_multitf "
                 "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
                 (index, minut),
@@ -606,7 +608,7 @@ def _query_momentum_sqlite(index: str = "NIFTY") -> str:
                     "cci": _r(cc, 1),
                 }
     finally:
-        db.close()
+        db.close()  # noqa: F821
     return _json.dumps(result, indent=2)
 
 
@@ -703,7 +705,7 @@ def _query_volatility_sqlite(index: str = "NIFTY") -> str:
     return _json.dumps(result, indent=2)
     try:
         for minut in TF_WINDOWS:
-            row = db.execute(
+            row = db.execute(  # noqa: F821
                 "SELECT atr, bb_upper, bb_middle, bb_lower FROM market_data_multitf "
                 "WHERE instrument=? AND timeframe_min=? ORDER BY timestamp DESC LIMIT 1",
                 (index, minut),
@@ -717,7 +719,7 @@ def _query_volatility_sqlite(index: str = "NIFTY") -> str:
                     "bb_lower": _r(bl, 2),
                 }
     finally:
-        db.close()
+        db.close()  # noqa: F821
     return _json.dumps(result, indent=2)
 
 

@@ -32,6 +32,9 @@ agent's context.
   Found bug → file it (§4c task or §7), notify DS, validate DS's fix. The 06-11/06-12
   validator hotfixes (T7, T8b, T14, T16-B3, V12, V4, T17-call-site) stand as shipped but do
   not extend the role. Only stated exception remains §0b's "blocked > 1 day" takeover.
+  **Board 06-12 follow-up:** the 06-12 hotfix commits are KEPT and PUSHED (technically sound
+  + validated; objection was role-process only). Also approved same session: T18 dual-chain,
+  T20 pyflakes gate both repos.
 - **No-wait rule: the implementer NEVER waits for validation.** Finish a task, mark
   `✅ BUILT`, start the next one immediately. Validation (`✅✅`) is async and only adds
   trust; an absent validator (token-out, offline) must not stall the queue. If a later
@@ -542,6 +545,7 @@ audit time despite regime agent running; (c) `outcome_tables.write_decision_trac
 non-null; swallow replaced with WARN log; paste rows + the failing-case WARN output into §5.
 
 ### T20 — Kill the undefined-name bug class (validator-filed 06-12 — DS implements; Board asked "everything fixed")
+> ✅ **BOARD APPROVED 2026-06-12: pyflakes/F821 pre-commit gate in BOTH repos.** Build both halves.
 FOUR instances in 24h (T16-B1 `instrument`, V12 `r`, V4 `spot`, T17-site `log`), all swallowed
 by bare except / WS callback handler. Build: (1) pyflakes (or ruff F821) pre-commit gate in
 BOTH repos — each of the four was statically catchable; (2) data_health sentinel: count
@@ -698,6 +702,8 @@ atomic-write `_write_resolved_contracts`; tests must not write prod LIVE_DIR).
 **Board question (answer before building capture half):** dual-chain capture on roll
 days, or dying chain only? Validator recommends dual — Mon's next-week premiums feed
 the following week's entry analysis.
+> ✅ **BOARD ANSWERED 2026-06-12 (recorded by validator): DUAL-CHAIN.** Subscribe both
+> dying + next weekly chains on 0-1DTE days. T18 fully unblocked — DS build top-down.
 **Accept:** (a) oracle unit tests vs master fixture: Mon→tomorrow, Tue 09:30→TODAY
 (0DTE), Tue 15:35→next week, holiday-shifted week resolves from master not calendar;
 (b) plumbing checks 3.3/3.4 rewritten to assert 0DTE behavior, pre-commit green;

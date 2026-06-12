@@ -1067,6 +1067,43 @@ Live result: ATM resolved 10:09:00 both indices, option_prices rows landing (see
 **Failure protocol:** any ❌ → paste output, root-cause, fix forward (§0e rules apply),
 re-run the item. Validator spot-audits V3/V4/V8 independently.
 
+## 7b-2. ❌ VALIDATOR VERDICT — DS commits 002c39d (antariksh) + d5e95eb (brahmand), 06-12 15:21 — NOT ACCEPTED, 1 LIVE BLOCKER
+
+> 🔴 **BLOCKER (fix before 06-13 09:15): ENTRY CHAIN DEAD SINCE 14:51.**
+> `antariksh/tools/entry_tools.py:49` `from config.db_paths import (...)` cannot resolve when
+> brahmand's `entry_gate_tools.py` spec-loads the file (antariksh root not on brahmand
+> sys.path). Every kickoff since 14:51: `Chain failed: No module named 'config.db_paths'` —
+> zero gates, zero decision_trace rows, ZERO ENTRIES POSSIBLE. Note: outage began from the
+> UNCOMMITTED working-tree edit (~14:51), 30 min before the commit — cron imports the live
+> tree; an uncommitted edit to a live-path file IS a deploy.
+> Fix: entry_tools must self-locate (`sys.path.insert(0, str(Path(__file__).resolve().parent.parent))`
+> before the config import) or db_paths import made lazy/fallback.
+>
+> **T18 oracle — logic right, plumbing broken (◐):**
+> 0DTE rule VERIFIED correct: NIFTY Tue 09:30→same-day, 15:35→next week; SENSEX Thu
+> 09:30→same-day, 15:35→next. Plumbing checks 3.3/3.4 correctly flipped to 0DTE ✓.
+> Enricher + margin_capture migrated to oracle ✓. Three defects:
+> - **B1:** hold-window `now.hour >= 15 and now.minute >= 25` is false at 16:00–16:24 →
+>   VERIFIED: Tue 16:10 returns the EXPIRED same-day contract. Use `(h,m) >= (15,25)`.
+> - **B2:** `data/static_metadata.db` is a STALE DUCKDB file (May 12) — sqlite3 read always
+>   throws → the "authoritative scrip_master" path is dead code, silently falling back to
+>   calendar math (NOT holiday-aware; Accept (a) holiday case unmeetable). The `except: pass`
+>   hides it — same fail-silent class again.
+> - **B3:** `brahmand/tools/chain_tools.py:_weekly_expiry` (trading fallback — call site #1,
+>   the one that blocks 0DTE entries) NOT migrated; commit touched 3 of 4 sites.
+>
+> **T19 (◐):** e2e_chain extraction rewritten but UNVERIFIABLE live (chain dead). Concern:
+> hardcoded `"signal": "NOT_UP"` / `"REGIME_SKIP"` on rejection rows fabricates signal
+> values — trace must record what the agent SAID, not the gate label. Justify or fix.
+> **T20 (◐):** F821 config in both pyprojects, BUT ruff not installed, neither pre-commit
+> hook invokes any linter, and the violations remain (antariksh 14, brahmand 8 — unchanged).
+> Gate is decorative. Sentinel `check_feed_callbacks` added ✓ (not yet demo'd).
+> **T21 (◐):** family guards in ✓ (query_trend live-verified pre-commit), `score_trend`
+> STILL unguarded (returns all-NEUTRAL from empty table), no test, no §5 paste.
+>
+> Per §0e: statuses stay unflipped. Fix-forward queue: blocker first, then B1-B3, then
+> T19/T20/T21 Accepts with §5 outputs.
+
 ## 7. Open questions / follow-ups
 - **NEW 06-12 (validator, from V12):** data_health sentinel for feed callback errors — count
   `error from callback` lines in feed.log during market hours, WARN if > 0. Three bugs in 24h

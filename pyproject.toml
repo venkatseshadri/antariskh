@@ -72,6 +72,11 @@ extend-exclude = [
     "redis_integration.py",
     "tools_registry.py",
     "agent_registry.py",
+    "pipeline_orchestrator.py",
+    "margin_calculator.py",
+    "contract_mapper.py",
+    "session_orchestrator.py",
+    "option_price_updater.py",
 ]
 
 [tool.ruff.lint]

@@ -346,7 +346,7 @@ INSTRUMENT_GAP = {"NIFTY": 50, "SENSEX": 100}
 _option_state = {}  # instrument → {token_map, tsym_map, subscribed, atm, expiry}
 
 
-def _init_option_feed(api, r, instrument: str, spot: float):
+def _init_option_feed(api, instrument: str, spot: float):
     """Resolve ATM ±5 strikes, subscribe all option tokens for one instrument."""
     from config.token_resolver import TokenResolver
 
@@ -399,7 +399,7 @@ def _option_unsubscribe(api, token: str):
     api.unsubscribe(token, feed_type="d")
 
 
-def _rebalance_option_window(api, r, instrument: str, new_atm: int):
+def _rebalance_option_window(api, instrument: str, new_atm: int):
     """When ATM shifts at bar close, drop furthest OTM strikes, add new ones.
     Called once per 1-min bar — no per-tick thrash, no hysteresis needed."""
     from config.token_resolver import TokenResolver
@@ -559,11 +559,11 @@ def main():
                 gap = INSTRUMENT_GAP[instrument]
                 new_atm = round(completed["close"] / gap) * gap
                 if instrument not in _option_state:
-                    _init_option_feed(api, r, instrument, completed["close"])
+                    _init_option_feed(api, instrument, completed["close"])
                 else:
                     old_atm = _option_state[instrument]["atm"]
                     if new_atm != old_atm:
-                        _rebalance_option_window(api, r, instrument, new_atm)
+                        _rebalance_option_window(api, instrument, new_atm)
 
         # per-instrument heartbeat — write to file every 60s (DataHealth reads files)
         _write_feed_heartbeat(instrument, bar["timestamp"])

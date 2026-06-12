@@ -671,6 +671,20 @@ Paste all outputs §5.
 >   MORNING LTP all day. The 15:37 trade's fills (95.5/22.3) are suspect. Fix: `ORDER BY
 >   timestamp DESC LIMIT 1` + refuse fill if latest row > 3 min old (enricher's staleness
 >   rule). Affects every fill/P&L computed since T13 went live.
+> **Validator 18:20 on 911f96b — ❌ (f) NOT FIXED, defect propagated:** the new
+> `position_manager._read_live_ltp` uses the SAME unordered
+> `SELECT ltp FROM option_prices WHERE tsym=?` + fetchone → its "live" LTP is the
+> EARLIEST row of the day (321 rows/tsym verified). The stale-fill guard reads a stale
+> price to detect stale prices. AND the entry-side read (`order_routing.py:98`) named in
+> (f) is untouched. Required fix in BOTH places:
+> `SELECT ltp FROM option_prices WHERE tsym=? ORDER BY timestamp DESC LIMIT 1` + refuse
+> when that row's timestamp > 3 min old. The phantom-₹0 / equals-entry detection logic
+> itself is sound — keep it, feed it real data.
+> **Validator 18:20 on fea547b — ✅ tests green (validator re-ran full plumbing):**
+> T21 subprocess ✓, B1 boundary values correct (print labels "rolled/kept" are SWAPPED —
+> cosmetic, fix at leisure), holiday fixture proves master-over-calendar precedence
+> (fixture jump Oct→Dec-29 is artificial; a realistic same-week-shift fixture would read
+> better — non-blocking).
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —

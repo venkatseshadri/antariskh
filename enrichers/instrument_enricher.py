@@ -17,7 +17,7 @@ import sys
 import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

@@ -581,6 +581,14 @@ resolves from master with the fixture; B3 `_weekly_expiry` == oracle on Mon/Tue/
 >   test. Natural live Accept: Mon 15-Jun (NIFTY 1DTE) — paste subscribed token list.
 > - **T16c ✓** — `_write_resolved_contracts` atomic tmp+rename + try/except + warning.
 > - No tests in any commit, §5 still empty — Accept (a)/(c) unmet. Statuses stay open.
+> **Validator 16:50 on 4c841b9 (round 3) — B2 ✅✅ FUNCTIONAL:** oracle now reads
+> `data/masters/*_symbols.txt` (daily-fresh). Re-ran: NIFTY chain = all Tuesdays
+> (06-02/09/16/23/30 + monthlies), SENSEX = all Thursdays (06-04/11/18/25…) — holiday-aware
+> by construction, all B1 edges still hold. Minor follow-up: `tsym.startswith("NIFTY")`
+> sweeps 2,207 NIFTYNXT50 contracts into the NIFTY expiry set — harmless while NXT50 also
+> expires Tuesdays, poisons the oracle if calendars diverge; exclude the NIFTYNXT prefix.
+> T22 residual: unit tests (B1 edges, holiday fixture, B3 equivalence) + dual-chain Mon
+> demo + §5 paste.
 
 ### T23 — 🔴 GO path: crew output loss = SPLIT-BRAIN ORDERS (validator-filed 06-12 15:50 — HIGHEST PRIORITY, blocks any paper-trade trust)
 Live evidence 15:36-15:37 cycle (TRD-20260612153711, paper): UNICORN gate GO → margin gate
@@ -1205,6 +1213,14 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 > (leg_shifter, 3933ef1). Core set UNCHANGED: feed/enrichers/tools/config = 14 (incl. LIVE
 > multitf_enricher). Hooks still lint-free, ruff not installed. Accept open: wire gate +
 > zero counts + seeded-F821 block demo + sentinel demo, §5 paste.
+> **Validator 16:50 (round 3, 4c841b9 + b67c4d0): STILL UNENFORCED.**
+> `.pre-commit-config.yaml` added but the `pre-commit` binary is NOT installed and both
+> repos run raw `.git/hooks/pre-commit` scripts (plumbing only) — the framework config
+> never executes. Third consecutive round of config-without-enforcement. Note: the
+> simplest wire is 3 lines of `pyflakes` (already installed at /root/.local/bin/pyflakes)
+> appended to the EXISTING raw hook — no new framework needed. Per-file-ignores
+> (backtest/*, pattern_analyzer) are acceptable documented debt; core-14 are NOT excluded,
+> so wiring the gate today would block commits until they're fixed — fix them first.
 > **T21 (◐):** family guards in ✓ (query_trend live-verified pre-commit), `score_trend`
 > STILL unguarded (returns all-NEUTRAL from empty table), no test, no §5 paste.
 > **Validator 16:15 on 8f33393:** `score_trend` guard added — correct by read (returns

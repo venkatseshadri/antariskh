@@ -133,6 +133,35 @@ reads the same SQLite via DuckDB ATTACH / nightly parquet; LLM indicator researc
 outcome tables + out-of-sample discipline (SHERPA method). Full rationale + Board Q&A:
 `DATA_CAPTURE_REFACTOR_PLAN.md` §1-7.
 
+## 2-PRE. ⭐ PENDING SNAPSHOT (validator, 2026-06-12 17:10 EOD — read this before §2's older table)
+
+**DS build queue (top-down priority):**
+1. **T20 WIRING — highest leverage.** FIVE undefined-name bugs in 24h (T16-B1 `instrument`,
+   V12 `r`, V4 `spot`, T17-site `log`, T24 `Tuple`); the configured F821 gate would have
+   caught every one statically and it STILL does not execute (`.pre-commit-config.yaml`
+   needs the absent `pre-commit` binary; raw hooks lint nothing). Cheapest wire: 3 lines of
+   `/root/.local/bin/pyflakes` in each repo's EXISTING `.git/hooks/pre-commit`. Then zero
+   the counts: antariksh core set (feed/enrichers/tools/config) = 14, brahmand = 6.
+2. **T23 (c)** SL qty 50 ≠ position qty 65 (lot size from master, never hardcode);
+   **(d)** awaits Board threshold answer below.
+3. **T22 tests** — B1 edge cases, holiday fixture, B3 equivalence; + exclude NIFTYNXT
+   prefix from `_broker_weekly_expiries`; dual-chain live demo Mon.
+4. **T21** — frozen-yesterday fixture test proving score_trend/families fail closed.
+5. **T19** — GO-path audit rows still 'unknown'/NULL; `write_decision_trace`
+   OperationalError swallow → WARN.
+6. **T24 residual** — recompute/flag poisoned MCX enriched rows 06-11 11:25 → 06-12 16:58
+   (rule 5: no deletes); 23:30 full-evening clean check.
+7. **§5 PASTES — DS skipped them ALL DAY.** Every Accept above stays open until outputs
+   land in §5. Claim without pasted output = rule 1 violation.
+
+**Board decisions open:**
+- Entry cutoff: DS picked 15:05 IST (T23-b). Confirm or set earlier.
+- Minimum gate confidence: today's GO passed at conf 0.1 — set a floor? (T23-d)
+
+**Validator queue (Mon 15-Jun, NIFTY 1DTE):** dual-chain subscribed-token list at open;
+T23 recovery + margin verdict on first real GO; T19 row quality at 09:31 kickoff;
+NIFTY option_prices ≥ 5,000 unaided; T4 full Accept re-run.
+
 ## 2. STATUS (2026-06-11 ~17:00 — post-session)
 
 **The spec was superseded mid-session. The de-facto architecture is now LIVE and simpler than the original plan. See §7c for the new spec conformance recertification.**

@@ -1159,6 +1159,24 @@ print(c.execute(\"select instrument, count(*), max(timestamp) from market_data w
 > ```
 > Low-count laggards (LEADMINI/ALUMINI/ZINCMINI) = thin tick flow, bars only on ticks — OK.
 > Evening run still owed.
+> ✅/❌ 16:45 evening (validator): CAPTURE ✅ — all 7 commodities ≤1 min behind clock
+> (LEADMINI 7 min = thin ticks, OK); raw `market_data` healthy per-instrument.
+> ENRICHMENT ❌ → **T24**: all 450 enriched rows labeled instrument='MCX' — 7 commodities
+> collapsed into ONE stream. Spot alternates 247,750 / 367.45 / 289.7 row-to-row
+> (SILVERMIC/CRUDEOILM/ZINC interleaved); ema_20 = 73,025→47,616 cross-commodity soup.
+> Every MCX enriched indicator since the 06-11 consumer-elimination is meaningless.
+
+### T24 — 🔴 enricher-mcx: per-commodity partitioning (validator-filed 06-12 16:50, from V11 evening — T15 residual confirmed as bug)
+enricher-mcx reads the mixed `MCX_1min.log` and enriches it as ONE instrument ('MCX'):
+indicator state (EMA/RSI/ATR…) is computed across interleaved GOLD/SILVERMIC/CRUDEOILM/…
+prices. Raw `market_data` is correct (per-instrument); `market_data_enriched` is poisoned —
+every row since 06-11. Any consumer of MCX enriched data reads noise.
+Fix (DS): partition by `bar["instrument"]` — per-commodity indicator state + write rows
+with the real instrument name; backfill/flag the poisoned 06-11→06-12 enriched rows
+(rule 5: don't delete — mark or recompute).
+**Accept:** per-commodity enriched row counts ≈ that commodity's bar count; spot/ema_20
+monotonic-sane per instrument (no cross-commodity jumps); one full MCX evening session
+clean. Paste per-commodity counts + 5-row sample for 2 commodities into §5.
 
 ### V12 — 🔴 NEW (validator-found 10:05): option feed dead all session — Redis purge left undefined `r`
 `feed.log`: `ERROR error from callback ...: name 'r' is not defined` **2×/min since 09:14

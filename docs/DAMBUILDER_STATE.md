@@ -27,6 +27,11 @@ agent's context.
   any reader flip) and updates memory/plan docs. Claude does NOT implement T2-T5 unless a
   task is blocked > 1 day (then takes it over and notes that here).
 - Conflict rule: the **Accept command output is the arbiter** — not either agent's claim.
+- **Board clarification 2026-06-12 (supersedes all prior "validator hotfix" precedent):**
+  validator RAISES and VALIDATES only — does NOT implement fixes, even live-critical ones.
+  Found bug → file it (§4c task or §7), notify DS, validate DS's fix. The 06-11/06-12
+  validator hotfixes (T7, T8b, T14, T16-B3, V12, V4, T17-call-site) stand as shipped but do
+  not extend the role. Only stated exception remains §0b's "blocked > 1 day" takeover.
 - **No-wait rule: the implementer NEVER waits for validation.** Finish a task, mark
   `✅ BUILT`, start the next one immediately. Validation (`✅✅`) is async and only adds
   trust; an absent validator (token-out, offline) must not stall the queue. If a later
@@ -526,6 +531,31 @@ rollover week).
 **Accept:** unit test — frozen master fixture + mocked dates: T-3 resolves current,
 T-2 resolves successor, expired-only root raises; live: feed boots with zero dated symbols
 in yaml, GOLD bars carry contract identity; data_health sentinel demo. Paste outputs.
+
+### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
+Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —
+`crew_result['entry_decision']` empty at the audit site while NOT_DOWN's dict is populated
+(CrewAI extraction class); (b) regime/vix NULL on ALL rows — `crew_result['regime']` empty at
+audit time despite regime agent running; (c) `outcome_tables.write_decision_trace` swallows
+`sqlite3.OperationalError` silently (10:11 cycle lost a row, zero trace).
+**Accept:** one live cycle where both gate rows carry real source/signal/conf + vix/regime
+non-null; swallow replaced with WARN log; paste rows + the failing-case WARN output into §5.
+
+### T20 — Kill the undefined-name bug class (validator-filed 06-12 — DS implements; Board asked "everything fixed")
+FOUR instances in 24h (T16-B1 `instrument`, V12 `r`, V4 `spot`, T17-site `log`), all swallowed
+by bare except / WS callback handler. Build: (1) pyflakes (or ruff F821) pre-commit gate in
+BOTH repos — each of the four was statically catchable; (2) data_health sentinel: count
+`error from callback` lines in feed.log during market hours, WARN if > 0.
+**Accept:** pre-commit demo blocking a seeded F821 commit in each repo; sentinel demo with a
+seeded error line (mocked hours). Paste outputs into §5.
+
+### T21 — entry_tools sqlite readers: staleness guard (validator-filed 06-12, from V3 — DS implements)
+`market_data_multitf` is EOD-backfill-only, but sqlite-mode `query_*` families score the
+latest (yesterday's) rows as live "neutral" signals — stale-data-as-signal, T8's disease.
+Guard: families report insufficient_history when latest row predates today/session.
+(Live kickoff path unaffected — uses `_snapshot()` — but any direct `query_*` consumer is exposed.)
+**Accept:** test on a fixture DB frozen at yesterday: every family returns
+insufficient_history, not NEUTRAL; paste output into §5.
 
 ### T8b — Canonical gate: prove None st_consensus is excluded, not coerced (NEW, validator-filed)
 brahmand `market_data.py:156` forwards `st_consensus=None`. Test that the deterministic

@@ -292,6 +292,12 @@ class Enricher:
         self._last_flush = time.time()
         self._flush_interval = 5.0
         self._flush_batch_size = 5
+        # MCX multi-commodity: per-instrument IndicatorBuffer (MCX_1min.log is interleaved)
+        self._mcx_mode = instrument.upper() == "MCX"
+        self._mcx_buffers: Dict[str, IndicatorBuffer] = {} if self._mcx_mode else None
+        self._mcx_open: Dict[str, float] = {} if self._mcx_mode else None
+        self._mcx_high: Dict[str, float] = {} if self._mcx_mode else None
+        self._mcx_low: Dict[str, float] = {} if self._mcx_mode else None
         self._warmup()
 
     def _warmup(self):
@@ -358,12 +364,26 @@ class Enricher:
                     "close": lc[0] if lc else None,
                 }
 
+    def _get_buffer_for(self, bar: Dict) -> Tuple[str, "IndicatorBuffer"]:
+        """Return (effective_instrument, buffer) — route MCX bars to correct commodity."""
+        if not self._mcx_mode:
+            return self.instrument, self.buf
+        inst = bar.get("instrument", "MCX").upper()
+        if inst == "MCX":
+            inst = "MCX"  # keep generic
+        if inst not in self._mcx_buffers:
+            self._mcx_buffers[inst] = IndicatorBuffer(maxlen=200)
+        return inst, self._mcx_buffers[inst]
+
     def enrich_bar(self, bar: Dict) -> Dict:
         spot = bar.get("close") or bar.get("ltp")
         if not spot:
             return {}
 
-        self.buf.append(
+        # MCX multi-commodity routing: use per-instrument indicator state
+        effective_inst, effective_buf = self._get_buffer_for(bar)
+
+        effective_buf.append(
             bar.get("open", spot),
             bar.get("high", spot),
             bar.get("low", spot),
@@ -406,7 +426,7 @@ class Enricher:
                         "close": lc[0] if lc else None,
                     }
 
-        indicators = self.buf.compute_indicators()
+        indicators = effective_buf.compute_indicators()
 
         prev_high = self.prev_day_data["high"] if self.prev_day_data else None
         prev_low = self.prev_day_data["low"] if self.prev_day_data else None
@@ -415,9 +435,9 @@ class Enricher:
 
         pivots = compute_pivots(prev_high, prev_low, prev_close)
         fibs = compute_fibs(prev_high, prev_low)
-        smc = compute_smc_indicators(self.buf)
-        st_multi = compute_multiframe_supertrend(self.buf)
-        hv = compute_historical_volatility(self.buf)
+        smc = compute_smc_indicators(effective_buf)
+        st_multi = compute_multiframe_supertrend(effective_buf)
+        hv = compute_historical_volatility(effective_buf)
         session = compute_session_metrics(
             spot,
             self.open_price,
@@ -501,7 +521,7 @@ class Enricher:
 
         row = {
             "timestamp": bar["timestamp"],
-            "instrument": self.instrument,
+            "instrument": effective_inst,
             "spot": spot,
             "futures": futures_ltp,
             "open_price": self.open_price,

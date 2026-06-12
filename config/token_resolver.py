@@ -93,35 +93,43 @@ def resolve_weekly_expiry(index: str = "NIFTY", now: Optional[datetime] = None) 
     weekday_map = {"NIFTY": 1, "SENSEX": 3}
     weekday = weekday_map.get(index.upper(), 1)
 
-    # Try scrip_master first (authoritative — broker contract list IS the truth)
+    # Try scrip_master first (authoritative — broker contract list IS the truth).
+    # static_metadata.db is a DuckDB file, not SQLite.
     try:
-        import sqlite3
+        import duckdb as _duckdb
         from pathlib import Path as _P
 
         static_db = _P(__file__).resolve().parent.parent / "data" / "static_metadata.db"
         if static_db.exists():
-            con = sqlite3.connect(f"file:{static_db}?mode=ro", uri=True)
+            con = _duckdb.connect(str(static_db), read_only=True)
             rows = con.execute(
                 "SELECT DISTINCT expiry FROM scrip_master "
                 "WHERE symbol = ? AND instrument = 'OPTIDX' "
                 "ORDER BY expiry ASC",
-                (index.upper(),),
+                [index.upper()],
             ).fetchall()
             con.close()
             if rows:
                 for (expiry_str,) in rows:
-                    expiry = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+                    expiry_str = str(expiry_str).strip()
+                    try:
+                        expiry = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+                    except ValueError:
+                        expiry = datetime.strptime(expiry_str, "%Y-%m-%d").date()
                     if expiry >= today:
                         # Expiry day: hold until 15:25 IST
-                        if expiry == today and now.hour >= 15 and now.minute >= 25:
+                        if expiry == today and (now.hour, now.minute) >= (15, 25):
                             continue
                         return expiry
-    except Exception:
-        pass  # fall through to calendar calc
+    except Exception as e:
+        import logging
+
+        _log = logging.getLogger("token_resolver")
+        _log.warning("resolve_weekly_expiry: scrip_master lookup failed: %s", e)
 
     # Fallback: simple weekday calculation (no <2 day guard — 0DTE IS valid)
     days_ahead = (weekday - today.weekday()) % 7
-    if days_ahead == 0 and now.hour >= 15 and now.minute >= 25:
+    if days_ahead == 0 and (now.hour, now.minute) >= (15, 25):
         days_ahead = 7
     return today + timedelta(days=days_ahead)
 

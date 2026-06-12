@@ -2159,6 +2159,14 @@ def score_trend(index: str = "NIFTY") -> dict:
     conf_cfg = cfg.get("confidence", {})
 
     raw = _json.loads(query_trend(index))
+    if raw.get("insufficient_history"):
+        return {
+            "family": "trend",
+            "signal": "insufficient_history",
+            "score": 0.0,
+            "confidence": 0.0,
+            "reasoning": "trend: insufficient_history",
+        }
     tfs = raw.get("timeframes", {})
 
     score = 0.0

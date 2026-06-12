@@ -1187,6 +1187,14 @@ with the real instrument name; backfill/flag the poisoned 06-11→06-12 enriched
 **Accept:** per-commodity enriched row counts ≈ that commodity's bar count; spot/ema_20
 monotonic-sane per instrument (no cross-commodity jumps); one full MCX evening session
 clean. Paste per-commodity counts + 5-row sample for 2 commodities into §5.
+> ✅✅ **LIVE-VALIDATED 17:05 (086150f + validator hotfix 8bb3b6c).** DS's partitioning is
+> correct but 086150f used `Tuple` without importing it → enricher-mcx CRASH-LOOPED on
+> restart (NameError #5 in 24h; shared file would have killed NIFTY/SENSEX enrichers at
+> 06-13 cold-start). Board-authorized one-token fix + restart 16:58. Live since:
+> per-commodity rows with sane prices — CRUDEOILM 8,016 / GOLD 14,960 / NATGASMINI 290.5,
+> distinct instrument names, zero cross-soup. RESIDUAL (DS): recompute/flag the poisoned
+> 06-11 11:25→06-12 16:58 enriched rows (rule 5 — no deletes); full-evening clean session
+> check at 23:30.
 
 ### V12 — 🔴 NEW (validator-found 10:05): option feed dead all session — Redis purge left undefined `r`
 `feed.log`: `ERROR error from callback ...: name 'r' is not defined` **2×/min since 09:14

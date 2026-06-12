@@ -618,6 +618,11 @@ resolves from master with the fixture; B3 `_weekly_expiry` == oracle on Mon/Tue/
 > expires Tuesdays, poisons the oracle if calendars diverge; exclude the NIFTYNXT prefix.
 > T22 residual: unit tests (B1 edges, holiday fixture, B3 equivalence) + dual-chain Mon
 > demo + §5 paste.
+> **Validator 17:50 on bbdbe76:** NIFTYNXT excluded ✅ — re-ran `_broker_weekly_expiries`:
+> 18 NIFTY expiries, all Tuesdays (sole exception 2029-12-24 LEAPS — never nearest,
+> harmless). B3 equivalence test added INTO the plumbing pre-commit ✅ (runs every commit;
+> suite green). pyflakes added to hook as non-blocking fallback alongside blocking ruff.
+> T22 remaining: B1-edge + holiday-fixture unit tests, dual-chain Mon live demo, §5 paste.
 
 ### T23 — 🔴 GO path: crew output loss = SPLIT-BRAIN ORDERS (validator-filed 06-12 15:50 — HIGHEST PRIORITY, blocks any paper-trade trust)
 Live evidence 15:36-15:37 cycle (TRD-20260612153711, paper): UNICORN gate GO → margin gate

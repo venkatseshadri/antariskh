@@ -1,20 +1,5 @@
-"""
-
-import sys
-import os
-import json
-import logging
-from pathlib import Path
-from datetime import datetime as _dt, time as dt_time
-from typing import Dict, Optional, Tuple, List
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import LLM
-from crewai.tools import tool
-        from trading_desk import engine_scout_regime
-    import argparse
-from dotenv import load_dotenv
-
 #!/usr/bin/env python3
+"""
 Antariksh Phase 2 — CrewAI Multi-Agent Trading System
 7 agents: Orchestrator, Scanner, Strategist, Executor, Sentinel, Risk Guard, Auditor
 Hierarchical crew with Orchestrator as manager, Risk Guard with veto power.
@@ -24,6 +9,18 @@ Usage:
     python crew_structure.py --mock --trace
 """
 
+import sys
+import os
+import json
+import logging
+import argparse
+from pathlib import Path
+from datetime import datetime as _dt, time as dt_time
+from typing import Dict, Optional, Tuple, List
+from crewai import Agent, Task, Crew, Process
+from crewai.llm import LLM
+from crewai.tools import tool
+from dotenv import load_dotenv
 
 # Alias for mock patching compatibility (ScenarioRunner patches 'datetime')
 datetime = _dt
@@ -124,6 +121,7 @@ def scan_market() -> str:
             os.environ.get("ANTARIKSH_MOCK_NIFTY", 24500.0)
         )
     else:
+        from trading_desk import engine_scout_regime
 
         regime = engine_scout_regime()
         vix = regime.vix
@@ -444,6 +442,9 @@ run_session_task = property(lambda _: _get_session_task())
 # ============================================================
 
 
+from risk_config import RISK
+
+
 class AuditorEngine:
     """
     Deterministic auditor — reads Phase 1 CFO JSONL logs,
@@ -453,11 +454,11 @@ class AuditorEngine:
 
     AUDIT_DIR = Path(__file__).parent / "logs"
 
-    # L1 invariants (mirrors RiskGuardEngine for validation cross-check)
-    DAILY_SL = 3500
-    PORTFOLIO_SL = 4500
-    MAX_30DAY_DD = 30000
-    MIN_FREE_CASH = 11000
+    # L1 invariants — sourced from risk_config (single source of truth)
+    DAILY_SL = RISK.daily_sl
+    PORTFOLIO_SL = RISK.portfolio_sl
+    MAX_30DAY_DD = RISK.max_30day_dd
+    MIN_FREE_CASH = RISK.session_buffer
 
     @staticmethod
     def read_phase1_logs(date_str: Optional[str] = None) -> List[Dict]:
@@ -612,10 +613,11 @@ class RiskGuardEngine:
     The Risk Guard AGENT only generates recommendation TEXT — this class enforces.
     """
 
-    DAILY_SL = 3500  # ₹3,500 per session
-    PORTFOLIO_SL = 4500  # ₹4,500 cumulative
-    MAX_30DAY_DD = 30000  # ₹30,000 max drawdown
-    MIN_FREE_CASH = 11000  # ₹11,000 floor
+    # L1 invariants — sourced from risk_config (single source of truth)
+    DAILY_SL = RISK.daily_sl
+    PORTFOLIO_SL = RISK.portfolio_sl
+    MAX_30DAY_DD = RISK.max_30day_dd
+    MIN_FREE_CASH = RISK.session_buffer
     BURN_DAYS = 10  # Lookback window for burn rate
     BURN_THRESHOLD = 0.30  # 30% of free cash
 
@@ -1037,7 +1039,6 @@ def run_risk_halt_test() -> Dict:
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description="Antariksh Phase 2 CrewAI")
     parser.add_argument("--mock", action="store_true", help="Enable mock mode")
     parser.add_argument(

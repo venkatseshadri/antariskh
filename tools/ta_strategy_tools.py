@@ -13,9 +13,10 @@ from typing import Type
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 
-DUCKDB_DATA_DIR = Path("/home/trading_ceo/python-trader/varaha/data")
-DUCKDB_NIFTY = DUCKDB_DATA_DIR / "varaha_data.duckdb"
-DUCKDB_SENSEX = DUCKDB_DATA_DIR / "varaha_data_sensex.duckdb"
+from config.db_paths import get_v31_db_path
+
+DUCKDB_NIFTY = get_v31_db_path("NIFTY")
+DUCKDB_SENSEX = get_v31_db_path("SENSEX")
 
 
 class MarketDataInput(BaseModel):

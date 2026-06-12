@@ -49,6 +49,13 @@ addopts = [
     "--no-header",
 ]
 
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F821"]  # undefined-name — catches NameError at lint time
+ignore = []
+
 [tool.coverage.run]
 source = ["tools", "crews", "ralph"]
 omit = ["tests/*", "*.pyc", "__pycache__/*"]

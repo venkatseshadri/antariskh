@@ -89,20 +89,12 @@ def _reconcile_enriched_schema(conn, expected_cols):
     """Forward schema evolution: ALTER TABLE ADD COLUMN for any expected col
     missing from the live market_data_enriched table. Per MIGRATION_PLAN.md
     Phase 1.4 spec — prevents schema-drift crashes when ENRICHED_COLUMNS grows."""
-    live = {
-        r[1] for r in conn.execute("PRAGMA table_info(market_data_enriched)").fetchall()
-    }
+    live = {r[1] for r in conn.execute("PRAGMA table_info(market_data_enriched)").fetchall()}
     added = []
     for col in expected_cols:
         if col in live:
             continue
-        sqltype = (
-            "TEXT"
-            if col in _TEXT_COLS
-            else "INTEGER"
-            if col in _INTEGER_COLS
-            else "REAL"
-        )
+        sqltype = "TEXT" if col in _TEXT_COLS else "INTEGER" if col in _INTEGER_COLS else "REAL"
         conn.execute(f"ALTER TABLE market_data_enriched ADD COLUMN {col} {sqltype}")
         added.append(f"{col} {sqltype}")
     if added:
@@ -309,9 +301,7 @@ class Enricher:
             (self.instrument,),
         ).fetchall()
         for row in reversed(rows):
-            self.buf.append(
-                row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0, row[4] or 0
-            )
+            self.buf.append(row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0, row[4] or 0)
         if rows:
             log.info(f"Warmup: {len(rows)} bars loaded into buffer")
 
@@ -697,16 +687,9 @@ class Enricher:
         return levels
 
     def _weekly_expiry_date(self):
-        # Weekly option expiry weekday: NIFTY=Tuesday(1), SENSEX=Thursday(3).
-        # NOTE: exchange expiry-day rules change periodically and holiday shifts
-        # are not handled here — this is a calendar approximation. The broker
-        # contract master (TokenResolver) is authoritative when available.
-        dow = {"NIFTY": 1, "SENSEX": 3}.get(self.instrument, 1)
-        today = date.today()
-        days_ahead = dow - today.weekday()
-        if days_ahead <= 0:
-            days_ahead += 7
-        return today + timedelta(days=days_ahead)
+        from config.token_resolver import resolve_weekly_expiry
+
+        return resolve_weekly_expiry(self.instrument)
 
     def _get_weekly_expiry(self) -> str:
         return self._weekly_expiry_date().strftime("%d-%b-%Y").upper()
@@ -801,8 +784,7 @@ def run_live(instrument: str):
 
                     if (
                         len(enricher._write_buffer) >= enricher._flush_batch_size
-                        or (time.time() - enricher._last_flush)
-                        >= enricher._flush_interval
+                        or (time.time() - enricher._last_flush) >= enricher._flush_interval
                     ):
                         enricher.flush_enriched_batch()
 
@@ -814,9 +796,7 @@ def run_live(instrument: str):
 
                     elapsed = time.time() - t0
                     if elapsed > 5:
-                        log.warning(
-                            f"Enrichment took {elapsed:.1f}s for {row['timestamp']}"
-                        )
+                        log.warning(f"Enrichment took {elapsed:.1f}s for {row['timestamp']}")
                     if bar_count % 30 == 0:
                         log.info(f"Enriched {bar_count} bars (last: {last_ts})")
 
@@ -870,9 +850,7 @@ def run_backfill(instrument: str, date_from: str, date_to: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Per-instrument enricher")
-    parser.add_argument(
-        "--instrument", required=True, choices=["NIFTY", "SENSEX", "MCX"]
-    )
+    parser.add_argument("--instrument", required=True, choices=["NIFTY", "SENSEX", "MCX"])
     parser.add_argument(
         "--backfill",
         type=str,

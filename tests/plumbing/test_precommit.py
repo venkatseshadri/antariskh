@@ -204,41 +204,36 @@ def test_expiry_not_in_past():
 
 
 def test_expiry_wednesday_to_tuesday():
-    """Mon Jun 1 → next Tue Jun 9 (1 day < 2 → push to next week)."""
-    print("\n  3.3  Mon → next+1 Tue")
+    """Mon Jun 1 10:00 → nearest Tue Jun 2 (0DTE allowed, no push-to-week guard)."""
+    print("\n  3.3  Mon → Tue (correct 0DTE policy)")
     mon = datetime(2026, 6, 1, 10, 0, 0)
-    for m in [k for k in sys.modules if k.startswith("tools")]:
-        del sys.modules[m]
-    with patch("tools.contract_tools.datetime") as mock:
-        mock.now.return_value = mon
-        mock.strptime = datetime.strptime
-        mock.weekday = datetime.weekday
-        from tools.contract_tools import get_weekly_expiry
+    from config.token_resolver import resolve_weekly_expiry
 
-        expiry = get_weekly_expiry()
-    expected = datetime(2026, 6, 9)  # Tue
-    (ok if datetime.strptime(expiry, "%d%b%Y") == expected else fail)(
-        f"{expiry} != {expected:%d%b%Y}"
-    )
+    expiry = resolve_weekly_expiry("NIFTY", now=mon)
+    expected = date(2026, 6, 2)  # Tue (NOT pushed to next week)
+    (ok if expiry == expected else fail)(f"{expiry} != {expected} (old bug pushed to Jun 9)")
 
 
 def test_expiry_tuesday_morning_today():
-    """Tue morning (< 15:00) → pushes to next Tue (gamma/theta risk)."""
-    print("\n  3.4  Tue morning → next week")
+    """Tue Jun 2 09:00 → TODAY (0DTE, held until 15:25, NOT rolled)."""
+    print("\n  3.4  Tue 09:00 → today (0DTE — correct)")
     tue = datetime(2026, 6, 2, 9, 0, 0)
-    for m in [k for k in sys.modules if k.startswith("tools")]:
-        del sys.modules[m]
-    with patch("tools.contract_tools.datetime") as mock:
-        mock.now.return_value = tue
-        mock.strptime = datetime.strptime
-        mock.weekday = datetime.weekday
-        from tools.contract_tools import get_weekly_expiry
+    from config.token_resolver import resolve_weekly_expiry
 
-        expiry = get_weekly_expiry()
-    expected = datetime(2026, 6, 9)  # next Tue (same-day skipped)
-    (ok if datetime.strptime(expiry, "%d%b%Y") == expected else fail)(
-        f"{expiry} != {expected:%d%b%Y}"
-    )
+    expiry = resolve_weekly_expiry("NIFTY", now=tue)
+    expected = date(2026, 6, 2)  # SAME day (old bug pushed to Jun 9)
+    (ok if expiry == expected else fail)(f"{expiry} != {expected} (old bug skipped 0DTE)")
+
+
+def test_expiry_tuesday_afternoon_rolls():
+    """Tue Jun 2 15:30 → next Tue (past 15:25 rollover)."""
+    print("\n  3.5  Tue 15:30 → next week (correct roll)")
+    tue_pm = datetime(2026, 6, 2, 15, 30, 0)
+    from config.token_resolver import resolve_weekly_expiry
+
+    expiry = resolve_weekly_expiry("NIFTY", now=tue_pm)
+    expected = date(2026, 6, 9)  # NEXT Tuesday
+    (ok if expiry == expected else fail)(f"{expiry} != {expected}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -278,16 +273,12 @@ def test_cron_paths():
     ok_count = 0
     fail_count = 0
 
-    for src_path in [ANTARIKSK_CRONTAB] + sorted(
-        Path("/etc/cron.d").glob("antariskh*")
-    ):
+    for src_path in [ANTARIKSK_CRONTAB] + sorted(Path("/etc/cron.d").glob("antariskh*")):
         if not src_path.exists():
             continue
         text = src_path.read_text() if src_path.is_file() else ""
         # skip commented-out crontab lines (retired entries stay as comments)
-        text = "\n".join(
-            ln for ln in text.splitlines() if not ln.lstrip().startswith("#")
-        )
+        text = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
         for m in re.finditer(r"(/home/\S+?/[\w\-_]+\.(?:py|sh))", text):
             p = m.group(1)
             if ".log" in p:
@@ -329,6 +320,7 @@ def main():
     test_expiry_not_in_past()
     test_expiry_wednesday_to_tuesday()
     test_expiry_tuesday_morning_today()
+    test_expiry_tuesday_afternoon_rolls()
 
     test_e2e_stale_expiry_guard()
     test_cron_paths()

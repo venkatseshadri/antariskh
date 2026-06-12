@@ -52,6 +52,18 @@ class RiskLimitsConfig:
     # Maximum cumulative loss per trading day
     max_loss_per_day: float = 100_000.00  # As per asset manager
 
+    # Stop-loss per session (hard daily guard — single source of truth)
+    daily_sl: float = 3_500.00
+
+    # Session-level cash buffer for P&L swing checks
+    session_buffer: float = 11_000.00
+
+    # Portfolio-level stop loss
+    portfolio_sl: float = 4_500.00
+
+    # Maximum 30-day drawdown
+    max_30day_dd: float = 30_000.00
+
     # Maximum concurrent active trades
     max_concurrent_trades: int = 4
 

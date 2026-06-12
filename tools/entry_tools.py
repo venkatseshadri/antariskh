@@ -45,14 +45,43 @@ except ImportError:
     load_dotenv = None
 
 
-# DB paths — project-normalized
-_PROJECT_ROOT = _Path("/home/trading_ceo/python-trader")
-_V31_NIFTY = _PROJECT_ROOT / "varaha" / "data" / "varaha_data.duckdb"
-_V31_SENSEX = _PROJECT_ROOT / "varaha" / "data" / "varaha_data_sensex.duckdb"
+# DB paths — sourced from config (single source of truth)
+from config.db_paths import (
+    get_v31_db_path as _v31_path,
+    get_multitf_db_path as _v4_path,
+)
+
+_DATA_ROOT = _Path("/home/trading_ceo/python-trader/varaha/data")
+
+_V31_NIFTY = _v31_path("NIFTY")
+_V31_SENSEX = _v31_path("SENSEX")
 
 _SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
 
 MULTITF_SOURCE = os.environ.get("MULTITF_SOURCE", "sqlite")  # "duckdb" | "sqlite"
+
+
+def _multitf_is_stale(index: str = "NIFTY") -> bool:
+    """Return True if market_data_multitf has no rows from today (EOD-backfill not yet run)."""
+    today = _dt.now(_tz(_td(hours=5, minutes=30))).strftime("%Y-%m-%d")
+    db = _open_sqlite(_capture_sqlite_path(index))
+    if not db:
+        return True
+    try:
+        row = db.execute(
+            "SELECT MAX(timestamp) FROM market_data_multitf WHERE instrument=?",
+            (index,),
+        ).fetchone()
+        if row and row[0]:
+            return not str(row[0]).startswith(today)
+    except Exception:
+        pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return True
 
 
 def _capture_sqlite_path(index: str = "NIFTY") -> str:
@@ -63,7 +92,7 @@ def _capture_sqlite_path(index: str = "NIFTY") -> str:
         )
     return os.environ.get(
         "CAPTURE_SQLITE",
-        str(_PROJECT_ROOT / "varaha" / "data" / f"capture_{index.lower()}.sqlite"),
+        str(_DATA_ROOT / f"capture_{index.lower()}.sqlite"),
     )
 
 
@@ -89,10 +118,7 @@ _SNAPSHOT_TTL = 5.0
 def _snapshot(index: str) -> dict:
     global _snapshot_cache, _snapshot_cache_ts
     now = _time.time()
-    if (
-        _snapshot_cache_ts.get(index, 0)
-        and now - _snapshot_cache_ts.get(index, 0) < _SNAPSHOT_TTL
-    ):
+    if _snapshot_cache_ts.get(index, 0) and now - _snapshot_cache_ts.get(index, 0) < _SNAPSHOT_TTL:
         return _snapshot_cache.get(index, {})
 
     import sqlite3
@@ -130,9 +156,7 @@ def _snapshot(index: str) -> dict:
         if not candles:
             result[f"{tf}m"] = {}
             continue
-        indicators = [
-            compute_row_indicators(candles, i, tf) for i in range(len(candles))
-        ]
+        indicators = [compute_row_indicators(candles, i, tf) for i in range(len(candles))]
         latest_candle = candles[-1]
         latest_ind = {
             "open": latest_candle.get("open"),
@@ -155,21 +179,14 @@ def _v4_db_path(index: str = "NIFTY"):
             "ENTRY_V4_DB",
             str(_Path(_SANDBOX) / f"market_data_multitf_{index.lower()}.duckdb"),
         )
-    path = (
-        _PROJECT_ROOT
-        / "varaha"
-        / "data"
-        / f"market_data_multitf_{index.lower()}.duckdb"
-    )
+    path = _DATA_ROOT / f"market_data_multitf_{index.lower()}.duckdb"
     return os.environ.get("ENTRY_V4_DB", str(path))
 
 
 def _v31_db_path(index: str = "NIFTY"):
     if _SANDBOX:
         suffix = "_sensex" if index.upper() == "SENSEX" else ""
-        return os.environ.get(
-            "ENTRY_V31_DB", str(_Path(_SANDBOX) / f"varaha_data{suffix}.duckdb")
-        )
+        return os.environ.get("ENTRY_V31_DB", str(_Path(_SANDBOX) / f"varaha_data{suffix}.duckdb"))
     if index.upper() == "SENSEX":
         return os.environ.get("ENTRY_V31_DB", str(_V31_SENSEX))
     return os.environ.get("ENTRY_V31_DB", str(_V31_NIFTY))
@@ -212,6 +229,18 @@ def _r(val, precision=2):
 def query_trend(index: str = "NIFTY") -> str:
     if MULTITF_SOURCE == "sqlite":
         return _query_trend_sqlite(index)
+
+    # Staleness guard: DuckDB market_data_multitf is EOD-backfill-only
+    if _multitf_is_stale(index):
+        return _json.dumps(
+            {
+                "family": "Trend",
+                "index": index,
+                "timestamp": _dt.now().isoformat(),
+                "insufficient_history": True,
+                "timeframes": {},
+            }
+        )
 
     """
     Query multi-TF trend indicators from v4 + v3.1 DuckDB.
@@ -349,9 +378,7 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
             "ema50": e50,
             "ema_position": pos,
             "candle": candle,
-            "st_consensus": tf_data.get(
-                "st_consensus"
-            ),  # None when insufficient history
+            "st_consensus": tf_data.get("st_consensus"),  # None when insufficient history
             "adx": tf_data.get("adx"),
             "di_plus": tf_data.get("di_plus"),
             "di_minus": tf_data.get("di_minus"),
@@ -375,13 +402,7 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
                     if (e20 and e50 and e20 > e50)
                     else ("bearish" if (e20 and e50) else "neutral")
                 )
-                candle = (
-                    "GREEN"
-                    if (o and c and c > o)
-                    else "RED"
-                    if (o and c)
-                    else "neutral"
-                )
+                candle = "GREEN" if (o and c and c > o) else "RED" if (o and c) else "neutral"
                 result["timeframes"][key] = {
                     "ema5": _r(e5, 2),
                     "ema20": _r(e20, 2),
@@ -419,13 +440,7 @@ def _query_trend_sqlite(index: str = "NIFTY") -> str:
                     if (s20 and s50 and s20 > s50)
                     else ("bearish" if (s20 and s50) else "neutral")
                 )
-                candle = (
-                    "GREEN"
-                    if (o and c and c > o)
-                    else "RED"
-                    if (o and c)
-                    else "neutral"
-                )
+                candle = "GREEN" if (o and c and c > o) else "RED" if (o and c) else "neutral"
                 result["timeframes"][key] = {
                     "sma20": _r(s20),
                     "sma50": _r(s50),
@@ -455,6 +470,16 @@ def query_momentum(index: str = "NIFTY") -> str:
     """Query RSI14 across all timeframes from v4 + v3.1."""
     if MULTITF_SOURCE == "sqlite":
         return _query_momentum_sqlite(index)
+    if _multitf_is_stale(index):
+        return _json.dumps(
+            {
+                "family": "Momentum",
+                "index": index,
+                "timestamp": _dt.now().isoformat(),
+                "insufficient_history": True,
+                "timeframes": {},
+            }
+        )
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -587,6 +612,16 @@ def query_volatility(index: str = "NIFTY") -> str:
     """Query ATR14, BB width, and volatility context across TFs."""
     if MULTITF_SOURCE == "sqlite":
         return _query_volatility_sqlite(index)
+    if _multitf_is_stale(index):
+        return _json.dumps(
+            {
+                "family": "Volatility",
+                "index": index,
+                "timestamp": _dt.now().isoformat(),
+                "insufficient_history": True,
+                "timeframes": {},
+            }
+        )
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -688,6 +723,16 @@ def query_volume(index: str = "NIFTY") -> str:
     """Query volume indicators from v4 (OBV/CMF) + v3.1 (VWAP/volume)."""
     if MULTITF_SOURCE == "sqlite":
         return _query_volume_sqlite(index)
+    if _multitf_is_stale(index):
+        return _json.dumps(
+            {
+                "family": "Volume",
+                "index": index,
+                "timestamp": _dt.now().isoformat(),
+                "insufficient_history": True,
+                "indicators": {},
+            }
+        )
     v4 = _open_db(_v4_db_path(index))
     v31 = _open_db(_v31_db_path(index))
 
@@ -919,9 +964,7 @@ def query_flow(index: str = "NIFTY") -> str:
 
     # FII data not captured yet — mark clearly
     result["indicators"]["fii_fut_5d_change"] = None
-    result["indicators"]["fii_data_note"] = (
-        "FII futures data not yet captured by v3.1 pipeline"
-    )
+    result["indicators"]["fii_data_note"] = "FII futures data not yet captured by v3.1 pipeline"
 
     v31.close()
     return _json.dumps(result, indent=2)
@@ -1017,9 +1060,7 @@ def query_macro(index: str = "NIFTY") -> str:
             ).fetchall()
             if len(rows) >= 2:
                 result["indicators"]["vix_change"] = (
-                    _r(rows[0][0] - rows[1][0], 2)
-                    if rows[0][0] and rows[1][0]
-                    else None
+                    _r(rows[0][0] - rows[1][0], 2) if rows[0][0] and rows[1][0] else None
                 )
     except Exception:
         pass
@@ -1028,9 +1069,7 @@ def query_macro(index: str = "NIFTY") -> str:
     result["indicators"]["gift_premium"] = None
     result["indicators"]["gift_premium_note"] = "GIFT NIFTY data not yet captured"
     result["indicators"]["banknifty_nifty_ratio"] = None
-    result["indicators"]["banknifty_nifty_ratio_note"] = (
-        "BANKNIFTY dual capture not yet active"
-    )
+    result["indicators"]["banknifty_nifty_ratio_note"] = "BANKNIFTY dual capture not yet active"
 
     v31.close()
     return _json.dumps(result, indent=2)
@@ -1174,13 +1213,9 @@ def _query_macro_sqlite(index: str = "NIFTY") -> str:
                 "distance_to_pivot_pct": _r(dst_pp, 2),
             }
         result["indicators"]["fii_fut_5d_change"] = None
-        result["indicators"]["fii_data_note"] = (
-            "FII futures data not yet captured by Penguin"
-        )
+        result["indicators"]["fii_data_note"] = "FII futures data not yet captured by Penguin"
         result["indicators"]["vix_change"] = None
-        result["indicators"]["vix_change_note"] = (
-            "sequential query not yet implemented for SQLite"
-        )
+        result["indicators"]["vix_change_note"] = "sequential query not yet implemented for SQLite"
     finally:
         db.close()
     return _json.dumps(result, indent=2)
@@ -1239,11 +1274,7 @@ def query_traffic_light(index: str = "NIFTY") -> str:
             ).fetchone()
             if row:
                 o, c, h, l = row
-                candle = (
-                    "GREEN"
-                    if (o and c and c > o)
-                    else ("RED" if (o and c) else "neutral")
-                )
+                candle = "GREEN" if (o and c and c > o) else ("RED" if (o and c) else "neutral")
                 body = abs(c - o) if (c and o) else 0
                 range_pct = ((h - l) / l * 100) if (h and l and l > 0) else 0
                 result["candles"][label] = {
@@ -1323,9 +1354,7 @@ def query_traffic_light(index: str = "NIFTY") -> str:
     if exhaustion:
         story_parts.append("⚠️ EXHAUSTION: momentum fading on lower TFs")
     if reversal_signal:
-        story_parts.append(
-            "🔄 POTENTIAL REVERSAL: lower TFs turning green against daily red"
-        )
+        story_parts.append("🔄 POTENTIAL REVERSAL: lower TFs turning green against daily red")
 
     result["pattern"] = pattern
     result["confidence"] = confidence
@@ -1355,9 +1384,7 @@ def _redis_connect():
     """Connect to local Redis. Returns client or None."""
     try:
         redis_db = int(os.environ.get("BRAHMAND_REPLAY_REDIS_DB", "0"))
-        r = _redis.Redis(
-            host="localhost", port=6379, db=redis_db, decode_responses=True
-        )
+        r = _redis.Redis(host="localhost", port=6379, db=redis_db, decode_responses=True)
         r.ping()
         return r
     except Exception:
@@ -1463,9 +1490,7 @@ def get_live_candles(index: str = "NIFTY", lookback_bars: int = 360) -> dict:
             agg = _aggregate_redis_bars(today_bars, n_bars)
 
             if agg:
-                candles_by_tf[tf_label] = (
-                    "GREEN" if agg["close"] > agg["open"] else "RED"
-                )
+                candles_by_tf[tf_label] = "GREEN" if agg["close"] > agg["open"] else "RED"
             else:
                 candles_by_tf[tf_label] = "no_data"
 
@@ -1758,12 +1783,8 @@ def score_trend_redis(index: str = "NIFTY", lookback: int = 500) -> dict:
 
         weighted_count = sum(1 for p in [5, 20, 50] if ema_weights.get(str(p), 0) > 0)
         ema_ready = sum(1 for p in [5, 20, 50] if p in ema_values)
-        confidence = (
-            min(90, int(ema_ready / weighted_count * 100)) if weighted_count > 0 else 40
-        )
-        reason_str = (
-            f"EMA alignment {int(ema_aligned)}/{available_count} score={score:.2f}"
-        )
+        confidence = min(90, int(ema_ready / weighted_count * 100)) if weighted_count > 0 else 40
+        reason_str = f"EMA alignment {int(ema_aligned)}/{available_count} score={score:.2f}"
 
     return {
         "family": "Trend",
@@ -1800,9 +1821,7 @@ def _compute_sma_from_bars(bars: list, tf_minutes: int, periods: list = None) ->
     if len(bucket_closes) < max(periods):
         return None, None
 
-    closes = np.array(
-        bucket_closes[: min(len(bucket_closes), max(periods))], dtype=float
-    )
+    closes = np.array(bucket_closes[: min(len(bucket_closes), max(periods))], dtype=float)
     results = []
     for p in periods:
         if len(closes) >= p:
@@ -1898,9 +1917,7 @@ def _compute_completion_by_tf() -> dict:
     else:
         now = _dt.now(_IST)
 
-    session_start = now.replace(
-        hour=_MARKET_OPEN_H, minute=_MARKET_OPEN_M, second=0, microsecond=0
-    )
+    session_start = now.replace(hour=_MARKET_OPEN_H, minute=_MARKET_OPEN_M, second=0, microsecond=0)
     seconds_into_session = (now - session_start).total_seconds()
 
     completion = {}
@@ -1978,14 +1995,10 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     }
     total_weight = sum(tf_weights.values())
     green_weight = sum(
-        tf_weights[tf] * completion_by_tf.get(tf, 0)
-        for tf, c in colors.items()
-        if c == "GREEN"
+        tf_weights[tf] * completion_by_tf.get(tf, 0) for tf, c in colors.items() if c == "GREEN"
     )
     red_weight = sum(
-        tf_weights[tf] * completion_by_tf.get(tf, 0)
-        for tf, c in colors.items()
-        if c == "RED"
+        tf_weights[tf] * completion_by_tf.get(tf, 0) for tf, c in colors.items() if c == "RED"
     )
 
     daily_c = colors.get("1440m", "neutral")
@@ -2022,9 +2035,7 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     elif 2.5 <= green_weight <= 5.0 and 2.5 <= red_weight <= 5.0:
         pattern = "CHOPPY_INDECISION"
 
-    pat_data = pattern_cfg.get(
-        pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 0})
-    )
+    pat_data = pattern_cfg.get(pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 0}))
     score = pat_data["score"]
     # All patterns start at same neutral baseline (40%).
     # Pattern-specific reliability to be learned from research/trade outcomes.
@@ -2068,8 +2079,7 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
     )
 
     story = " | ".join(
-        f"{tf}={colors.get(tf, '?')}"
-        for tf in ["1440m", "240m", "60m", "30m", "15m", "5m", "1m"]
+        f"{tf}={colors.get(tf, '?')}" for tf in ["1440m", "240m", "60m", "30m", "15m", "5m", "1m"]
     )
     story += f" | GW={green_weight:.1f}/{total_weight} RW={red_weight:.1f}/{total_weight} | GAP={gap_info.get('direction', '?')}"
 
@@ -2088,8 +2098,7 @@ def score_traffic_light_redis(index: str = "NIFTY") -> dict:
         }
         total_w = sum(tf_weights_w.values())
         weighted_comp = (
-            sum(completion.get(tf, 0) * tf_weights_w.get(tf, 0) for tf in tf_weights_w)
-            / total_w
+            sum(completion.get(tf, 0) * tf_weights_w.get(tf, 0) for tf in tf_weights_w) / total_w
         )
         confidence = int(confidence * weighted_comp)
         story += f" | WCOMP={weighted_comp:.0%}"
@@ -2171,9 +2180,7 @@ def score_trend(index: str = "NIFTY") -> dict:
             elif adx_val >= adx_cfg.get("strong_threshold", 35):
                 tf_score *= adx_cfg.get("strong_multiplier", 1.3)
                 aligned_count += 1
-                reasoning_parts.append(
-                    f"{tf_key}:{sma_pos}(×{weight},strong={adx_val})"
-                )
+                reasoning_parts.append(f"{tf_key}:{sma_pos}(×{weight},strong={adx_val})")
             else:
                 aligned_count += 1
                 reasoning_parts.append(f"{tf_key}:{sma_pos}(×{weight},adx={adx_val})")
@@ -2255,9 +2262,7 @@ def score_traffic_light(index: str = "NIFTY") -> dict:
 
     raw = _json.loads(query_traffic_light(index))
     pattern = raw.get("pattern", "mixed")
-    pat_data = pattern_cfg.get(
-        pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 30})
-    )
+    pat_data = pattern_cfg.get(pattern, pattern_cfg.get("mixed", {"score": 0, "confidence": 30}))
     raw_score = pat_data["score"]
     raw_conf = pat_data.get("confidence", 30)
 
@@ -2352,9 +2357,7 @@ def score_regime(market_ctx: dict = None) -> dict:
     }
 
 
-def combine_entry_scores(
-    trend_score: dict, tl_score: dict, market_ctx: dict = None
-) -> dict:
+def combine_entry_scores(trend_score: dict, tl_score: dict, market_ctx: dict = None) -> dict:
     """
     Merge deterministic Trend + Traffic Light + Market Context scores into GO/NO-GO.
     Pure Python — no LLM. Reads weights from config.
@@ -2418,9 +2421,7 @@ def combine_entry_scores(
         mult = (
             cfg.get("rules", {})
             .get(
-                "bearish_plus_neutral"
-                if signal == "BEARISH"
-                else "bullish_plus_neutral",
+                "bearish_plus_neutral" if signal == "BEARISH" else "bullish_plus_neutral",
                 {},
             )
             .get("confidence_mult", 0.75)
@@ -2479,7 +2480,9 @@ def combine_entry_scores(
             if signal == "BEARISH":
                 boost = 1.0 + 0.08 * min(pattern_count, 4)
                 market_adjust *= boost
-                market_reason += f" [FB confirm BEARISH +{int((boost - 1) * 100)}% ({pattern_count} patterns)]"
+                market_reason += (
+                    f" [FB confirm BEARISH +{int((boost - 1) * 100)}% ({pattern_count} patterns)]"
+                )
             elif signal == "BULLISH":
                 penalty = max(0.65, 1.0 - 0.12 * min(pattern_count, 4))
                 market_adjust *= penalty
@@ -2538,9 +2541,7 @@ def combine_entry_scores(
 
     # Include diagnostic fields for history log
     result["ema_source"] = trend_score.get("ema_source", "?")
-    result["traffic_light_pattern"] = tl_score.get("key_indicators", {}).get(
-        "pattern", "?"
-    )
+    result["traffic_light_pattern"] = tl_score.get("key_indicators", {}).get("pattern", "?")
     result["regime_signal"] = regime.get("signal", "?")
     result["regime_reason"] = regime.get("reason", "?")
 
@@ -2638,9 +2639,7 @@ def rl_update_weights(session_results: list[dict]) -> dict:
             agent=agent,
         )
 
-        crew = Crew(
-            agents=[agent], tasks=[task], process=Process.sequential, verbose=False
-        )
+        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
         result = crew.kickoff()
 
         # Parse LLM output
@@ -2670,9 +2669,7 @@ def rl_update_weights(session_results: list[dict]) -> dict:
                 "status": "updated",
                 "analysis": proposed.get("analysis", ""),
                 "weights_changed_at": _dt.now().isoformat(),
-                "previous": {
-                    k: current_weights.get(k, {}) for k in ["trend", "traffic_light"]
-                },
+                "previous": {k: current_weights.get(k, {}) for k in ["trend", "traffic_light"]},
                 "new": {k: proposed.get(k, {}) for k in ["trend", "traffic_light"]},
             }
         else:
@@ -2752,25 +2749,19 @@ def llm_entry_decision(trend_score: dict, tl_score: dict) -> dict:
             agent=agent,
         )
 
-        crew = Crew(
-            agents=[agent], tasks=[task], process=Process.sequential, verbose=False
-        )
+        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
         result = crew.kickoff()
 
         llm_parsed = _json.loads(str(result).strip().lstrip("```json").rstrip("```"))
         det = combine_entry_scores(trend_score, tl_score)
         det["_llm_override"] = llm_parsed.get("override", False)
-        det["_llm_reasoning"] = llm_parsed.get(
-            "override_reason", llm_parsed.get("note", "")
-        )
+        det["_llm_reasoning"] = llm_parsed.get("override_reason", llm_parsed.get("note", ""))
 
         if llm_parsed.get("override"):
             det["go"] = llm_parsed.get("go", det["go"])
             det["signal"] = llm_parsed.get("signal", det["signal"])
             det["confidence"] = llm_parsed.get("confidence", det["confidence"])
-            det["reasoning"] += (
-                f" | LLM OVERRIDE: {llm_parsed.get('override_reason', '')}"
-            )
+            det["reasoning"] += f" | LLM OVERRIDE: {llm_parsed.get('override_reason', '')}"
 
         return det
     except Exception as e:

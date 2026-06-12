@@ -20,11 +20,11 @@ from typing import Type, List, Optional, Any
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 
+from config.db_paths import get_v31_db_path
+
 LIVE_DB = {
-    "NIFTY": Path("/home/trading_ceo/python-trader/varaha/data/varaha_data.duckdb"),
-    "SENSEX": Path(
-        "/home/trading_ceo/python-trader/varaha/data/varaha_data_sensex.duckdb"
-    ),
+    "NIFTY": get_v31_db_path("NIFTY"),
+    "SENSEX": get_v31_db_path("SENSEX"),
 }
 
 

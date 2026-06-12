@@ -10,52 +10,22 @@ All tools are CrewAI @tool functions that return formatted text for LLM consumpt
 
 import json
 import os
+import sys
 from pathlib import Path
 from datetime import datetime
 
 from crewai.tools import tool
 
-# Project-relative DB paths
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-_SANDBOX = os.environ.get("BRAHMAND_SANDBOX", "")
-if _SANDBOX:
-    _V31_DB = Path(_SANDBOX) / "varaha_data.duckdb"
-    _V4_NIFTY_DB = Path(_SANDBOX) / "market_data_multitf_nifty.duckdb"
-    _V4_SENSEX_DB = Path(_SANDBOX) / "market_data_multitf_sensex.duckdb"
-    _V31_SENSEX_DB = Path(_SANDBOX) / "varaha_data_sensex.duckdb"
-else:
-    _V31_DB = _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "varaha_data.duckdb"
-    _V4_NIFTY_DB = (
-        _PROJECT_ROOT
-        / "python-trader"
-        / "varaha"
-        / "data"
-        / "market_data_multitf_nifty.duckdb"
-    )
-    _V4_SENSEX_DB = (
-        _PROJECT_ROOT
-        / "python-trader"
-        / "varaha"
-        / "data"
-        / "market_data_multitf_sensex.duckdb"
-    )
-    _V31_SENSEX_DB = (
-        _PROJECT_ROOT
-        / "python-trader"
-        / "varaha"
-        / "data"
-        / "varaha_data_sensex.duckdb"
-    )
-_V4_SENSEX_DB = (
-    _PROJECT_ROOT
-    / "python-trader"
-    / "varaha"
-    / "data"
-    / "market_data_multitf_sensex.duckdb"
-)
-_V31_SENSEX_DB = (
-    _PROJECT_ROOT / "python-trader" / "varaha" / "data" / "varaha_data_sensex.duckdb"
-)
+_antariksh_root = Path(__file__).parent.parent.parent
+if str(_antariksh_root) not in sys.path:
+    sys.path.insert(0, str(_antariksh_root))
+
+from config.db_paths import get_v31_db_path, get_multitf_db_path
+
+_V31_DB = get_v31_db_path("NIFTY")
+_V4_NIFTY_DB = get_multitf_db_path("NIFTY")
+_V4_SENSEX_DB = get_multitf_db_path("SENSEX")
+_V31_SENSEX_DB = get_v31_db_path("SENSEX")
 
 # Allow override via env for testing
 V31_DB_PATH = os.environ.get("ANTARIKSH_V31_DB", str(_V31_DB))
@@ -67,7 +37,7 @@ V4_SENSEX_DB_PATH = os.environ.get("ANTARIKSH_V4_SENSEX_DB", str(_V4_SENSEX_DB))
 # When ANTARIKSH_CAPTURE_BACKEND=sqlite, multi-TF reads come from capture_{index}.sqlite
 # instead of DuckDB. v3.1 enriched data (option_flow_macro) stays on DuckDB until enricher is built.
 CAPTURE_BACKEND = os.environ.get("ANTARIKSH_CAPTURE_BACKEND", "duckdb")
-_PENGUIN_DATA = _PROJECT_ROOT / "python-trader" / "varaha" / "data"
+_PENGUIN_DATA = Path("/home/trading_ceo/python-trader/varaha/data")
 _SQLITE_NIFTY_DB = str(_PENGUIN_DATA / "capture_nifty.sqlite")
 _SQLITE_SENSEX_DB = str(_PENGUIN_DATA / "capture_sensex.sqlite")
 

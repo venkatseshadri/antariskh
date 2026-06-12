@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 # ─────────────────────────────────────────────────────────────────
-# Constants from antariksh_rules.yaml (immutable — read-only reference)
+# Constants — sourced from risk_config (single source of truth)
 # ─────────────────────────────────────────────────────────────────
+
+from risk_config import RISK, EXECUTION
 
 DEFAULT_WING_WIDTH = 300
 HIGH_VIX_WING_WIDTH = 350
@@ -20,7 +22,7 @@ VIX_HIGH_THRESHOLD = 20.0
 STRIKE_GRID = 50
 MAX_LOTS = 2
 MAX_INDICATORS = 8
-SL_SESSION_INR = 3500
+SL_SESSION_INR = RISK.daily_sl
 TSL_POINTS = 250
 MARGIN_LIMIT = 85.0  # max margin utilization % before scaling down
 
@@ -312,7 +314,7 @@ def analyze_wing_margins(
     nifty_spot: float,
     lots: int = 1,
     expiry: Optional[str] = None,
-    lot_size: int = 75,
+    lot_size: int = None,
     symbol: str = "NIFTY",
     exchange: str = "NFO",
     dry_run: bool = False,
@@ -327,7 +329,7 @@ def analyze_wing_margins(
         nifty_spot: Current NIFTY spot price
         lots: Number of lots (default 1)
         expiry: Expiry date string (default: auto-detect current week)
-        lot_size: Lot size for the instrument (NIFTY=75)
+        lot_size: Lot size (default: EXECUTION.nifty_lot_size)
         symbol: Trading symbol
         exchange: Exchange code (NFO)
         dry_run: If True, use heuristics instead of live API call
@@ -335,6 +337,8 @@ def analyze_wing_margins(
     Returns:
         List of dicts: [{wing, span, expo, total_margin, margin_per_lot, breach_risk, status}]
     """
+    if lot_size is None:
+        lot_size = EXECUTION.nifty_lot_size
     results = []
     atm = round(nifty_spot / STRIKE_GRID) * STRIKE_GRID
     expiry_fmt = _get_expiry_fmt(expiry)

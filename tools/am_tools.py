@@ -9,6 +9,8 @@ import subprocess
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
+from risk_config import RISK
+
 
 # ============================================================
 # Broker Margin Query — connects to actual broker APIs
@@ -154,11 +156,11 @@ def query_broker_margin() -> Dict:
 
 
 # ============================================================
-# Constants from antariksh_rules.yaml (immutable)
+# Constants — sourced from risk_config (single source of truth)
 # ============================================================
-DAILY_SL = 3500
-PORTFOLIO_SL = 4500
-FREE_CASH_FLOOR = 11000
+DAILY_SL = RISK.daily_sl
+PORTFOLIO_SL = RISK.portfolio_sl
+FREE_CASH_FLOOR = RISK.session_buffer
 MARGIN_TARGET = 70.0  # max utilization %
 MARGIN_LIMIT = 85.0
 TOTAL_MARGIN_DEFAULT = 250000

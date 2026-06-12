@@ -14,10 +14,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
-DUCKDB_DATA_DIR = Path("/home/trading_ceo/python-trader/varaha/data")
-DUCKDB_NIFTY = DUCKDB_DATA_DIR / "varaha_data.duckdb"
+from config.db_paths import get_v31_db_path as _get_v31_db_path
+from risk_config import RISK, EXECUTION
 
-IST = timezone(timedelta(hours=5, minutes=30))
+DUCKDB_DATA_DIR = Path("/home/trading_ceo/python-trader/varaha/data")
+DUCKDB_NIFTY = _get_v31_db_path("NIFTY")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -794,10 +795,10 @@ def validate_sl_vs_volatility(
     """
     daily_range_pts = _expected_daily_range(nifty_spot, vix)
     lots = spec.get("lots", 1)
-    lot_size = 75  # NIFTY
+    lot_size = EXECUTION.nifty_lot_size
     strategy_type = spec.get("type", "")
     wing_width = spec.get("wings", 300)
-    sl_actual = spec.get("sl", 3500)
+    sl_actual = spec.get("sl", RISK.daily_sl)
 
     # Estimate gamma for the ATM short legs
     # ATM gamma ≈ 1 / (spot * sigma * sqrt(T))

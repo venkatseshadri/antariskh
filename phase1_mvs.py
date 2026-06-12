@@ -22,9 +22,12 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "python-trader"))
 sys.path.insert(0, str(PROJECT_ROOT / "antariksh"))
 
+from risk_config import RISK
+
 # Import broker manager (dual Shoonya + Flattrade)
 try:
     from broker_manager import get_broker_manager
+
     BROKER_AVAILABLE = True
 except ImportError:
     BROKER_AVAILABLE = False
@@ -33,12 +36,17 @@ except ImportError:
 try:
     from event_calendar import is_event_day, get_event_name
 except ImportError:
-    def is_event_day(): return False
-    def get_event_name(): return None
+
+    def is_event_day():
+        return False
+
+    def get_event_name():
+        return None
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
+
 
 class Phase1Config:
     # Times (IST)
@@ -48,10 +56,10 @@ class Phase1Config:
     ENTRY_WINDOW_END = dt_time(11, 30)
     HARD_EXIT_TIME = dt_time(14, 30)
 
-    # Capital (from rules.yaml)
+    # Capital — sourced from risk_config (single source of truth)
     TARGET_PROFIT_INR = 1000
-    MAX_LOSS_INIR = 3500
-    FREE_CASH_FLOOR = 11000
+    MAX_LOSS_INIR = RISK.daily_sl
+    FREE_CASH_FLOOR = RISK.session_buffer
 
     # Gate
     VIX_MAX = 20.0
@@ -71,11 +79,15 @@ class Phase1Config:
             level=logging.INFO,
             format="%(asctime)s | %(levelname)-8s | %(message)s",
             handlers=[
-                logging.FileHandler(Phase1Config.LOG_DIR / f"phase1_{datetime.now().strftime('%Y%m%d')}.log"),
-                logging.StreamHandler(sys.stdout)
-            ]
+                logging.FileHandler(
+                    Phase1Config.LOG_DIR
+                    / f"phase1_{datetime.now().strftime('%Y%m%d')}.log"
+                ),
+                logging.StreamHandler(sys.stdout),
+            ],
         )
         return logging.getLogger("Antariksh-MVS")
+
 
 # Initialize logger at module level
 Phase1Config.LOG_DIR.mkdir(exist_ok=True)
@@ -83,15 +95,18 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     handlers=[
-        logging.FileHandler(Phase1Config.LOG_DIR / f"phase1_{datetime.now().strftime('%Y%m%d')}.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
+        logging.FileHandler(
+            Phase1Config.LOG_DIR / f"phase1_{datetime.now().strftime('%Y%m%d')}.log"
+        ),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 logger = logging.getLogger("Antariksh-MVS")
 
 # ============================================================
 # MARKET DATA BRIDGE
 # ============================================================
+
 
 class MarketDataBridge:
     """
@@ -133,9 +148,12 @@ class MarketDataBridge:
         Mock override: ANTARIKSH_MOCK_EVENT_DAY=1 forces True for testing."""
         # Mock override for test scenarios
         if os.environ.get("ANTARIKSH_MOCK_EVENT_DAY") == "1":
-            logger.info(f"Mock event day active: {os.environ.get('ANTARIKSH_MOCK_EVENT_NAME', 'Unknown')}")
+            logger.info(
+                f"Mock event day active: {os.environ.get('ANTARIKSH_MOCK_EVENT_NAME', 'Unknown')}"
+            )
             return True
         import json as _json
+
         config_path = Path(__file__).parent / "config" / "event_calendar.json"
         try:
             with open(config_path) as f:
@@ -161,9 +179,11 @@ class MarketDataBridge:
         expiry = today + timedelta(days=days_until_tuesday)
         return expiry.strftime("%d-%b-%Y").upper()
 
+
 # ============================================================
 # GATE LOGIC (3-LAYER)
 # ============================================================
+
 
 class GateChecker:
     """Implements 3-layer gate from STRATEGY_DESIGN_QUESTIONS.md"""
@@ -185,8 +205,13 @@ class GateChecker:
             now = datetime.now().time()
 
         # Check entry window
-        if not (Phase1Config.ENTRY_WINDOW_START <= now <= Phase1Config.ENTRY_WINDOW_END):
-            return False, f"Outside entry window {Phase1Config.ENTRY_WINDOW_START}-{Phase1Config.ENTRY_WINDOW_END}"
+        if not (
+            Phase1Config.ENTRY_WINDOW_START <= now <= Phase1Config.ENTRY_WINDOW_END
+        ):
+            return (
+                False,
+                f"Outside entry window {Phase1Config.ENTRY_WINDOW_START}-{Phase1Config.ENTRY_WINDOW_END}",
+            )
 
         # Check event day
         if MarketDataBridge.is_event_day():
@@ -232,9 +257,11 @@ class GateChecker:
 
         return True, "All gates PASS"
 
+
 # ============================================================
 # TRADE DECISION ENGINE
 # ============================================================
+
 
 class TradeDecisionEngine:
     """Generates Iron Butterfly trade plan (dry-run, no execution)"""
@@ -263,22 +290,34 @@ class TradeDecisionEngine:
             "expiry": expiry,
             "lots": Phase1Config.LOTS,
             "legs": {
-                "put_buy": {"strike": atm - Phase1Config.WING_WIDTH, "type": "PE", "side": "BUY"},
+                "put_buy": {
+                    "strike": atm - Phase1Config.WING_WIDTH,
+                    "type": "PE",
+                    "side": "BUY",
+                },
                 "put_sell": {"strike": atm, "type": "PE", "side": "SELL"},
                 "call_sell": {"strike": atm, "type": "CE", "side": "SELL"},
-                "call_buy": {"strike": atm + Phase1Config.WING_WIDTH, "type": "CE", "side": "BUY"},
+                "call_buy": {
+                    "strike": atm + Phase1Config.WING_WIDTH,
+                    "type": "CE",
+                    "side": "BUY",
+                },
             },
             "target_profit": Phase1Config.TARGET_PROFIT_INR,
             "max_loss": Phase1Config.MAX_LOSS_INIR,
             "entry_time": datetime.now().isoformat(),
         }
 
-        logger.info(f"Trade plan generated: {Phase1Config.INSTRUMENT} {atm} Iron Fly, {Phase1Config.LOTS} lot(s)")
+        logger.info(
+            f"Trade plan generated: {Phase1Config.INSTRUMENT} {atm} Iron Fly, {Phase1Config.LOTS} lot(s)"
+        )
         return plan
+
 
 # ============================================================
 # TELEGRAM INTERFACE
 # ============================================================
+
 
 class TelegramBridge:
     """Sends Telegram messages (Two-Message Protocol)"""
@@ -291,7 +330,9 @@ class TelegramBridge:
         return True
 
     @staticmethod
-    def send_gate_message(gate_pass: bool, gate_reason: str, trade_plan: Optional[Dict] = None) -> bool:
+    def send_gate_message(
+        gate_pass: bool, gate_reason: str, trade_plan: Optional[Dict] = None
+    ) -> bool:
         """9:30 AM message: Gate decision + trade plan"""
         if gate_pass and trade_plan:
             msg = f"""
@@ -299,21 +340,21 @@ class TelegramBridge:
 
 **Gate: PASS** ({gate_reason})
 
-**Instrument:** {trade_plan['instrument']}
-**Spot:** ₹{trade_plan['spot']:.2f}
-**ATM Strike:** {trade_plan['atm_strike']:.0f}
-**Expiry:** {trade_plan['expiry']}
-**Lots:** {trade_plan['lots']}
+**Instrument:** {trade_plan["instrument"]}
+**Spot:** ₹{trade_plan["spot"]:.2f}
+**ATM Strike:** {trade_plan["atm_strike"]:.0f}
+**Expiry:** {trade_plan["expiry"]}
+**Lots:** {trade_plan["lots"]}
 
 **Legs (Iron Butterfly):**
-- Long PUT: {trade_plan['legs']['put_buy']['strike']:.0f} PE
-- Short PUT: {trade_plan['legs']['put_sell']['strike']:.0f} PE
-- Short CALL: {trade_plan['legs']['call_sell']['strike']:.0f} CE
-- Long CALL: {trade_plan['legs']['call_buy']['strike']:.0f} CE
+- Long PUT: {trade_plan["legs"]["put_buy"]["strike"]:.0f} PE
+- Short PUT: {trade_plan["legs"]["put_sell"]["strike"]:.0f} PE
+- Short CALL: {trade_plan["legs"]["call_sell"]["strike"]:.0f} CE
+- Long CALL: {trade_plan["legs"]["call_buy"]["strike"]:.0f} CE
 
 **Targets:**
-- Target Profit: ₹{trade_plan['target_profit']}
-- Max Loss: ₹{trade_plan['max_loss']}
+- Target Profit: ₹{trade_plan["target_profit"]}
+- Max Loss: ₹{trade_plan["max_loss"]}
 
 ⏱️ Hard exit: {Phase1Config.HARD_EXIT_TIME}
 
@@ -332,25 +373,27 @@ No trade today. System will check again tomorrow.
         return True
 
     @staticmethod
-    def send_exit_message(trade_plan: Optional[Dict], backtest_result: Optional[Dict]) -> bool:
+    def send_exit_message(
+        trade_plan: Optional[Dict], backtest_result: Optional[Dict]
+    ) -> bool:
         """2:35 PM message: Exit result + P&L + system status"""
         if trade_plan and backtest_result:
             msg = f"""
 🏁 **ANTARIKSH EXIT REPORT — 2:35 PM**
 
-**Trade:** {trade_plan['instrument']} Iron Fly (1 lot)
-**Entry Time:** {trade_plan['entry_time']}
+**Trade:** {trade_plan["instrument"]} Iron Fly (1 lot)
+**Entry Time:** {trade_plan["entry_time"]}
 **Exit Time:** {datetime.now().isoformat()}
 
 **Backtest Result (DRY-RUN):**
-- Entry Price: ₹{backtest_result.get('entry_price', 0):.2f}
-- Exit Price: ₹{backtest_result.get('exit_price', 0):.2f}
-- P&L: ₹{backtest_result.get('pnl', 0):.2f}
-- Return: {backtest_result.get('return_pct', 0):.2f}%
+- Entry Price: ₹{backtest_result.get("entry_price", 0):.2f}
+- Exit Price: ₹{backtest_result.get("exit_price", 0):.2f}
+- P&L: ₹{backtest_result.get("pnl", 0):.2f}
+- Return: {backtest_result.get("return_pct", 0):.2f}%
 
-**MTD P&L:** ₹{backtest_result.get('mtd_pnl', 0):.2f}
-**Win Rate:** {backtest_result.get('win_rate', 'N/A')}%
-**Max DD:** ₹{backtest_result.get('max_dd', 0):.2f}
+**MTD P&L:** ₹{backtest_result.get("mtd_pnl", 0):.2f}
+**Win Rate:** {backtest_result.get("win_rate", "N/A")}%
+**Max DD:** ₹{backtest_result.get("max_dd", 0):.2f}
 
 **System Status:** ✅ Operational
 
@@ -368,15 +411,19 @@ No trade executed today (gate skipped entry).
         TelegramBridge.send_message(msg, "EXIT_REPORT")
         return True
 
+
 # ============================================================
 # CFO AUDITOR
 # ============================================================
+
 
 class CFOAuditor:
     """Audits resources (tokens, time) and capital (P&L, preservation)"""
 
     @staticmethod
-    def log_session(gate_pass: bool, trade_plan: Optional[Dict], backtest_result: Optional[Dict]) -> Dict:
+    def log_session(
+        gate_pass: bool, trade_plan: Optional[Dict], backtest_result: Optional[Dict]
+    ) -> Dict:
         """Log session for CFO audit"""
         audit_log = {
             "timestamp": datetime.now().isoformat(),
@@ -391,22 +438,30 @@ class CFOAuditor:
             "capital_impact": {
                 "gross_pnl": backtest_result.get("pnl", 0) if backtest_result else 0,
                 "brokerage_est": 50,
-                "net_pnl": (backtest_result.get("pnl", 0) - 50) if backtest_result else 0,
-                "free_cash_after": Phase1Config.FREE_CASH_FLOOR + (backtest_result.get("pnl", 0) if backtest_result else 0),
-            }
+                "net_pnl": (backtest_result.get("pnl", 0) - 50)
+                if backtest_result
+                else 0,
+                "free_cash_after": Phase1Config.FREE_CASH_FLOOR
+                + (backtest_result.get("pnl", 0) if backtest_result else 0),
+            },
         }
 
         # Write to audit log
-        log_file = Phase1Config.LOG_DIR / f"cfo_audit_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        log_file = (
+            Phase1Config.LOG_DIR
+            / f"cfo_audit_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        )
         with open(log_file, "a") as f:
             f.write(json.dumps(audit_log) + "\n")
 
         logger.info(f"CFO audit logged: {gate_pass=}, {trade_plan is not None=}")
         return audit_log
 
+
 # ============================================================
 # BACKTESTER (DRY-RUN)
 # ============================================================
+
 
 class Backtester:
     """Simulates Iron Butterfly from entry to exit (no real broker execution)"""
@@ -418,7 +473,7 @@ class Backtester:
         # For Phase 1, return a mock result
 
         entry_price = 1000  # Mock
-        exit_price = 1200   # Mock profit
+        exit_price = 1200  # Mock profit
         pnl = exit_price - entry_price
 
         result = {
@@ -427,17 +482,21 @@ class Backtester:
             "pnl": pnl,
             "return_pct": (pnl / entry_price) * 100 if entry_price != 0 else 0,
             "mtd_pnl": pnl,  # TODO: track MTD
-            "win_rate": 50,   # TODO: track win rate
-            "max_dd": 500,    # TODO: track max DD
+            "win_rate": 50,  # TODO: track win rate
+            "max_dd": 500,  # TODO: track max DD
             "exit_reason": "Target hit",
         }
 
-        logger.info(f"Backtest complete: P&L ₹{pnl:.2f}, return {result['return_pct']:.2f}%")
+        logger.info(
+            f"Backtest complete: P&L ₹{pnl:.2f}, return {result['return_pct']:.2f}%"
+        )
         return result
+
 
 # ============================================================
 # MAIN ORCHESTRATOR
 # ============================================================
+
 
 class Phase1Orchestrator:
     """Main entry point for Phase 1 MVS"""
@@ -490,6 +549,7 @@ class Phase1Orchestrator:
         logger.info("=" * 60)
         logger.info("ANTARIKSH PHASE 1 MVS — SESSION COMPLETE")
         logger.info("=" * 60)
+
 
 # ============================================================
 # ENTRY POINT

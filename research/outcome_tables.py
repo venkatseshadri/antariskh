@@ -66,6 +66,9 @@ def init_outcome_tables(db_path: str):
 
 def write_decision_trace(db_path: str, row: dict):
     """INSERT OR IGNORE a decision_trace row."""
+    import logging
+
+    _log = logging.getLogger("outcome_tables")
     conn = sqlite3.connect(db_path, timeout=10)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -90,10 +93,29 @@ def write_decision_trace(db_path: str, row: dict):
             ),
         )
         conn.commit()
-    except sqlite3.OperationalError:
-        conn.rollback()
+    except sqlite3.OperationalError as e:
+        _log.warning(
+            "decision_trace write failed: %s gate=%s id=%s db=%s",
+            e,
+            row.get("gate_type"),
+            row.get("decision_id"),
+            db_path,
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    except Exception as e:
+        _log.warning("decision_trace write FAILED: %s row=%s", e, str(row)[:200])
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def write_trade_outcome(db_path: str, trade: dict):

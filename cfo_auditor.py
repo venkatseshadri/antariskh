@@ -10,7 +10,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 
+from risk_config import RISK
+
 logger = logging.getLogger("CFOAuditor")
+
 
 class CFOAuditor:
     """
@@ -18,12 +21,12 @@ class CFOAuditor:
     Logs every session decision for later review.
     """
 
-    # L1 INVARIANTS (from STRATEGY_DESIGN_QUESTIONS.md)
-    MAX_DAILY_SL = 3500  # ₹3,500 per session
-    MAX_PORTFOLIO_SL = 4500  # ₹4,500 cumulative
-    MAX_30_DAY_DD = 30000  # ₹30,000 max drawdown
+    # L1 INVARIANTS — sourced from risk_config (single source of truth)
+    MAX_DAILY_SL = RISK.daily_sl
+    MAX_PORTFOLIO_SL = RISK.portfolio_sl
+    MAX_30_DAY_DD = RISK.max_30day_dd
     DAILY_TARGET = 1000  # ₹1,000 target profit
-    MIN_FREE_CASH = 11000  # ₹11,000 floor
+    MIN_FREE_CASH = RISK.session_buffer
     MAX_DD_PERCENTAGE = 0.30  # 30% of free cash
 
     def __init__(self):
@@ -33,8 +36,12 @@ class CFOAuditor:
         self.session_count = 0
         self.cumulative_dd = 0.0
 
-    def log_session(self, gate_pass: bool, trade_plan: Optional[Dict],
-                   backtest_result: Optional[Dict]) -> Dict:
+    def log_session(
+        self,
+        gate_pass: bool,
+        trade_plan: Optional[Dict],
+        backtest_result: Optional[Dict],
+    ) -> Dict:
         """
         Log session: gate decision + trade plan + P&L + CFO audit.
         Returns audit verdict.
@@ -55,14 +62,17 @@ class CFOAuditor:
 
         # Append to JSONL log file (immutable audit trail)
         log_file = self.log_dir / f"cfo_audit_{session_date}.jsonl"
-        with open(log_file, 'a') as f:
+        with open(log_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
-        logger.info(f"Session logged: {session_id}, verdict={entry['cfo_verdict'].get('passed')}")
-        return entry['cfo_verdict']
+        logger.info(
+            f"Session logged: {session_id}, verdict={entry['cfo_verdict'].get('passed')}"
+        )
+        return entry["cfo_verdict"]
 
-    def _audit_session(self, trade_plan: Optional[Dict],
-                      backtest_result: Optional[Dict]) -> Dict:
+    def _audit_session(
+        self, trade_plan: Optional[Dict], backtest_result: Optional[Dict]
+    ) -> Dict:
         """
         Audit one session against L1 invariants.
         Returns verdict: passed/failed, reason, recommendations.
@@ -93,21 +103,29 @@ class CFOAuditor:
         # Check 2: Portfolio cumulative SL
         self.cumulative_dd += abs(min(pnl, 0))  # Only count losses
         if self.cumulative_dd > self.MAX_PORTFOLIO_SL:
-            verdict["violations"].append(f"Portfolio SL breached: cumulative {self.cumulative_dd} > {self.MAX_PORTFOLIO_SL}")
+            verdict["violations"].append(
+                f"Portfolio SL breached: cumulative {self.cumulative_dd} > {self.MAX_PORTFOLIO_SL}"
+            )
             verdict["checks"]["portfolio_sl"] = "FAIL"
             verdict["passed"] = False
         else:
-            verdict["checks"]["portfolio_sl"] = f"PASS (cumulative: {self.cumulative_dd})"
+            verdict["checks"]["portfolio_sl"] = (
+                f"PASS (cumulative: {self.cumulative_dd})"
+            )
 
         # Check 3: Capital preservation (30% of free cash)
         free_cash = 100000  # Mock: ₹1L free cash in Phase 1
         dd_ceiling = free_cash * self.MAX_DD_PERCENTAGE  # ₹30K
         if self.cumulative_dd > dd_ceiling:
-            verdict["violations"].append(f"Capital preservation breached: {self.cumulative_dd} > {dd_ceiling}")
+            verdict["violations"].append(
+                f"Capital preservation breached: {self.cumulative_dd} > {dd_ceiling}"
+            )
             verdict["checks"]["capital_preservation"] = "FAIL"
             verdict["passed"] = False
         else:
-            verdict["checks"]["capital_preservation"] = f"PASS ({self.cumulative_dd:.0f} < {dd_ceiling:.0f})"
+            verdict["checks"]["capital_preservation"] = (
+                f"PASS ({self.cumulative_dd:.0f} < {dd_ceiling:.0f})"
+            )
 
         # Check 4: Target tracking
         self.mtd_pnl += pnl
@@ -115,10 +133,14 @@ class CFOAuditor:
         avg_daily = self.mtd_pnl / self.session_count if self.session_count > 0 else 0
         verdict["mtd_pnl"] = self.mtd_pnl
         verdict["avg_daily"] = avg_daily
-        verdict["checks"]["target_tracking"] = f"MTD {self.mtd_pnl:.0f}, avg {avg_daily:.0f}/day"
+        verdict["checks"]["target_tracking"] = (
+            f"MTD {self.mtd_pnl:.0f}, avg {avg_daily:.0f}/day"
+        )
 
         if avg_daily < self.DAILY_TARGET * 0.5:
-            verdict["recommendations"].append(f"Average P&L below 50% of target ({avg_daily:.0f} < {self.DAILY_TARGET * 0.5:.0f})")
+            verdict["recommendations"].append(
+                f"Average P&L below 50% of target ({avg_daily:.0f} < {self.DAILY_TARGET * 0.5:.0f})"
+            )
 
         # Verdict summary
         if verdict["violations"]:
@@ -134,16 +156,20 @@ class CFOAuditor:
         return {
             "sessions": self.session_count,
             "mtd_pnl": self.mtd_pnl,
-            "avg_daily": self.mtd_pnl / self.session_count if self.session_count > 0 else 0,
+            "avg_daily": self.mtd_pnl / self.session_count
+            if self.session_count > 0
+            else 0,
             "cumulative_dd": self.cumulative_dd,
             "capital_remaining": 100000 - self.cumulative_dd,  # Mock free cash
         }
+
 
 # ============================================================
 # SINGLETON INSTANCE
 # ============================================================
 
 _cfo_auditor = None
+
 
 def get_cfo_auditor() -> CFOAuditor:
     """Get or create singleton CFO auditor"""
@@ -152,7 +178,9 @@ def get_cfo_auditor() -> CFOAuditor:
         _cfo_auditor = CFOAuditor()
     return _cfo_auditor
 
-def log_session(gate_pass: bool, trade_plan: Optional[Dict],
-               backtest_result: Optional[Dict]) -> Dict:
+
+def log_session(
+    gate_pass: bool, trade_plan: Optional[Dict], backtest_result: Optional[Dict]
+) -> Dict:
     """Log session verdict"""
     return get_cfo_auditor().log_session(gate_pass, trade_plan, backtest_result)

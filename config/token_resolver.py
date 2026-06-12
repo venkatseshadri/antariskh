@@ -77,16 +77,59 @@ def _download_master(exchange: str) -> Path:
     return path
 
 
-def _next_expiry(weekday: int) -> date:
-    """Return next expiry date on the given weekday."""
-    today = date.today()
+def resolve_weekly_expiry(index: str = "NIFTY", now: Optional[datetime] = None) -> date:
+    """Single expiry oracle — authoritative + holiday-aware by construction.
+
+    Reads scrip_master (broker contract list) to find the nearest unexpired weekly
+    expiry. Falls back to simple weekday calc if scrip_master is unavailable.
+
+    Rule: nearest unexpired weekly ≥ today, held until 15:25 IST on expiry day.
+    NO early roll for trading — 0DTE IS the trade day (Board directive 06-12).
+    Rollover: at/after 15:25 on expiry day → next week.
+    """
+    if now is None:
+        now = datetime.now()
+    today = now.date()
+    weekday_map = {"NIFTY": 1, "SENSEX": 3}
+    weekday = weekday_map.get(index.upper(), 1)
+
+    # Try scrip_master first (authoritative — broker contract list IS the truth)
+    try:
+        import sqlite3
+        from pathlib import Path as _P
+
+        static_db = _P(__file__).resolve().parent.parent / "data" / "static_metadata.db"
+        if static_db.exists():
+            con = sqlite3.connect(f"file:{static_db}?mode=ro", uri=True)
+            rows = con.execute(
+                "SELECT DISTINCT expiry FROM scrip_master "
+                "WHERE symbol = ? AND instrument = 'OPTIDX' "
+                "ORDER BY expiry ASC",
+                (index.upper(),),
+            ).fetchall()
+            con.close()
+            if rows:
+                for (expiry_str,) in rows:
+                    expiry = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+                    if expiry >= today:
+                        # Expiry day: hold until 15:25 IST
+                        if expiry == today and now.hour >= 15 and now.minute >= 25:
+                            continue
+                        return expiry
+    except Exception:
+        pass  # fall through to calendar calc
+
+    # Fallback: simple weekday calculation (no <2 day guard — 0DTE IS valid)
     days_ahead = (weekday - today.weekday()) % 7
-    if days_ahead == 0 and datetime.now().hour >= 15:
+    if days_ahead == 0 and now.hour >= 15 and now.minute >= 25:
         days_ahead = 7
-    expiry = today + timedelta(days=days_ahead)
-    if (expiry - today).days < 2:
-        expiry = expiry + timedelta(days=7)
-    return expiry
+    return today + timedelta(days=days_ahead)
+
+
+def _next_expiry(weekday: int) -> date:
+    """Thin adapter — delegates to resolve_weekly_expiry for NIFTY/SENSEX."""
+    index = "NIFTY" if weekday == NIFTY_WEEKDAY else "SENSEX"
+    return resolve_weekly_expiry(index)
 
 
 def _build_tsym_weekly_nifty(expiry: date, strike: int, opt: str) -> str:
@@ -115,21 +158,13 @@ def _build_tsym_weekly_sensex(expiry: date, strike: int, opt: str) -> str:
 
 def _build_tsym_monthly_sensex(expiry: date, strike: int, opt: str) -> str:
     """SENSEX{YY}{Mmm}{5-digit-strike}{CE/PE}  →  SENSEX26JUN75800PE"""
-    return (
-        f"SENSEX"
-        f"{str(expiry.year)[-2:]}"
-        f"{MONTH_NAMES[expiry.month]}"
-        f"{strike}"
-        f"{opt[:2].upper()}"
-    )
+    return f"SENSEX{str(expiry.year)[-2:]}{MONTH_NAMES[expiry.month]}{strike}{opt[:2].upper()}"
 
 
 class TokenResolver:
     """Loads master files and resolves rotating option + futures tokens."""
 
-    def __init__(
-        self, nifty_spot: Optional[float] = None, sensex_spot: Optional[float] = None
-    ):
+    def __init__(self, nifty_spot: Optional[float] = None, sensex_spot: Optional[float] = None):
         self.nifty_spot = nifty_spot
         self.sensex_spot = sensex_spot
         self._masters: dict[str, dict[(str, str), dict]] = {}
@@ -169,9 +204,7 @@ class TokenResolver:
                         if symbol not in fut:
                             fut[symbol] = []
                         try:
-                            expiry_date = datetime.strptime(
-                                row["Expiry"], "%d-%b-%Y"
-                            ).date()
+                            expiry_date = datetime.strptime(row["Expiry"], "%d-%b-%Y").date()
                         except (ValueError, KeyError):
                             continue
                         fut[symbol].append(

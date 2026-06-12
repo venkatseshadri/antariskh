@@ -1103,6 +1103,20 @@ re-run the item. Validator spot-audits V3/V4/V8 independently.
 >
 > Per §0e: statuses stay unflipped. Fix-forward queue: blocker first, then B1-B3, then
 > T19/T20/T21 Accepts with §5 outputs.
+>
+> ✅ **BLOCKER RESOLVED 15:31 (Board-authorized validator emergency fix, antariksh b1b973a
+> — explicit exception to the raise-don't-fix rule, granted in-session):** entry_tools now
+> self-locates the antariksh root before the config import. Live-verified: 15:31 kickoff
+> evaluated normally (Canonical NO-GO), and the cycle's trace rows show T19 extraction
+> WORKING — `decision_source='canonical_strategy'`, vix=14.76, spot=23631.75 (all formerly
+> NULL/'unknown'):
+> ```
+> ('2026-06-12T15:31:13','NOT_UP','canonical_strategy','NOT_UP',0,0.0,None,14.76,23631.75)
+> ('2026-06-12T15:31:13','NOT_DOWN','canonical_strategy','NONE',0,0.0,None,14.76,23631.75)
+> ```
+> T19 residuals: regime still NULL; NOT_UP rejection row records signal='NOT_UP' (gate
+> label) where the agent's actual signal was NONE — fix the fabrication. B1-B3 + T20
+> enforcement + T21 score_trend/test remain DS queue.
 
 ## 7. Open questions / follow-ups
 - **NEW 06-12 (validator, from V12):** data_health sentinel for feed callback errors — count

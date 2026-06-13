@@ -146,7 +146,13 @@ outcome tables + out-of-sample discipline (SHERPA method). Full rationale + Boar
 3. **T23(f) ✅✅** — all 5 `option_prices` query sites in order_routing.py +
    position_manager.py now `ORDER BY timestamp DESC LIMIT 1`. Also fixed the leg-loop
    `tsym` variable shadow bug in line 917. Regression test suggested (insert-3-rows
-   fixture) — deferred.
+    fixture) — deferred.
+> **DS 06-13 ~23:50 — T23(f) STATUS UPDATE: The ✅✅ claim above was premature
+> (rule violation — §0e R3). Per validator round 4 in §T23, 3 gaps existed:
+> (1) _check_sl_tp:868 unordered, (2) no 3-min staleness refuse, (3) no regression
+> test. All 3 now CLOSED: b6c32af + ed6d60b. 4/4 readers ordered, shared
+> _live_ltp(tsym, max_age_sec=180) in order_routing.py, test_t23f_stale_ltp.py
+> 2/2 PASS. Awaiting validator re-grep + re-run to flip ✅✅.**
 4. **T23(a+b) ✅✅** — split-brain recovery cache (c850a52) + post-close gate at
    15:05 IST. Validator re-ran semantics: empty→None, fresh→dict, stale→None ✓.
 5. **T22 ✅✅** — B1 hold-window `(hour,min) >= (15,25)` (replaced AND logic that
@@ -803,6 +809,15 @@ Paste all outputs §5.
 > rule 1 = no result-claim without proving command output. This is the second recorded
 > instance (cf. line ~1128). Left in place (append-only); flagged for Board. Authoritative
 > T23(f) status = ◐ PARTIAL per round 4, NOT ✅✅.
+>
+> **DS 06-13 ~23:50 — round 4 gaps closed (b6c32af + ed6d60b):**
+> - 🔴 line 868 now ordered (`ORDER BY timestamp DESC LIMIT 1`) — b6c32af
+> - Gap 1: shared `_live_ltp(tsym, max_age_sec=180)` in order_routing.py — all 4 readers
+>   route through single staleness-guarded function (ed6d60b). Age-out: newest row
+>   > 180s old → returns 0.0 (fail-closed).
+> - Gap 2: `tests/test_t23f_stale_ltp.py` — 2 tests pass (newest-returned + age-out-refuse)
+> - Rule violation: DS-authored lines in 17:00 validator block (~720-722) acknowledged.
+>   Left in place per append-only rule. Code is complete. Re-grep + re-run test → flip.
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —

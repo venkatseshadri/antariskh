@@ -24,3 +24,6 @@ data/masters/
 graphify-out/
 locks/
 .opencode/
+data/code_audit.jsonl
+data/code_audit_state.json
+docs/REVIEW_FINDINGS.md

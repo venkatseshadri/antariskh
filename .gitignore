@@ -28,3 +28,4 @@ data/code_audit.jsonl
 data/code_audit_state.json
 docs/REVIEW_FINDINGS.md
 ralph/progress/
+data/code_audit_manifest.json

@@ -41,17 +41,31 @@ Claude-via-bridge, or any client. Example:
 export CODE_AUDIT_LLM_CMD='python3 tools/ds_review_client.py'   # reads stdin, prints JSON
 ```
 
-## 3. Run modes
+## 3. Continuous loop — per-file review state (not a one-shot sweep)
+
+This is a **ralph loop**, not a single pass. A manifest `data/code_audit_manifest.json` tracks
+every file: `{hash, last_reviewed, verdict, severity}`. On each run the loop classifies files:
+
+- **new** — never reviewed → review now.
+- **changed** — content hash differs from the manifest → re-review.
+- **stale** — last reviewed > `STALE_DAYS` (14) ago → re-review.
+- **reviewed** — hash matches and fresh → **skip** (already covered).
+
+So once a file is reviewed it is *marked reviewed* and left alone until it changes or goes
+stale. You always know coverage: "N/Total files up-to-date reviewed", shown in
+`REVIEW_FINDINGS.md` and via `--status`.
 
 ```bash
-python -m ralph.code_audit_loop --mode incremental   # git-changed files + rolling 25 stale
-python -m ralph.code_audit_loop --mode full          # whole tree (nightly)
+python -m ralph.code_audit_loop --status              # coverage report, reviews nothing
+python -m ralph.code_audit_loop --mode incremental    # review up to REVIEW_BATCH (60) needing review
+python -m ralph.code_audit_loop --mode full           # review ALL that need it (new+changed+stale)
+python -m ralph.code_audit_loop --mode full --force    # re-review everything, ignore manifest
 python -m ralph.code_audit_loop --mode full --backend llm
 ```
 
-`incremental` covers changed files immediately and chips through the rest of the tree 25
-files at a time, so the full codebase is reviewed over a cycle without re-scanning everything
-each run.
+`incremental` clears 60 files per run, so a fresh tree (~1,600 files) reaches full coverage
+over ~27 runs, then steady-state only changed/stale files resurface — cheap and continuous.
+Tune `REVIEW_BATCH` / `STALE_DAYS` at the top of `code_audit_loop.py`.
 
 ## 4. Schedule (cron)
 
@@ -59,12 +73,13 @@ Reviewer runs only need to be frequent enough to catch changes — code doesn't 
 minute, so a tight loop wastes cycles. Recommended (`/etc/cron.d/antariksh-code-audit`):
 
 ```cron
-# Incremental sweep every 30 min during work hours (changed files + rolling window)
-*/30 9-22 * * 1-5  trading_ceo  cd /home/trading_ceo/antariksh && \
+# Incremental review every 20 min, every day — chips through the backlog 60 files/run,
+# re-reviews anything changed/stale. Manifest tracks per-file review state.
+*/20 * * * *  trading_ceo  cd /home/trading_ceo/antariksh && \
     /usr/bin/python3 -m ralph.code_audit_loop --mode incremental \
     >> logs/code_audit.log 2>&1
 
-# Full nightly sweep (semantic LLM backend when CODE_AUDIT_LLM_CMD is set)
+# Full nightly review of everything that needs it (semantic LLM backend if CODE_AUDIT_LLM_CMD set)
 30 1 * * *  trading_ceo  cd /home/trading_ceo/antariksh && \
     /usr/bin/python3 -m ralph.code_audit_loop --mode full \
     >> logs/code_audit.log 2>&1

@@ -60,7 +60,12 @@ SPEC_PATH = HOME / "TRADING_SYSTEM.md"
 FINDINGS_MD = HOME / "antariksh" / "docs" / "REVIEW_FINDINGS.md"
 LEDGER_JSONL = HOME / "antariksh" / "data" / "code_audit.jsonl"
 STATE_PATH = HOME / "antariksh" / "data" / "code_audit_state.json"
-ROLLING_WINDOW = 25  # stale files reviewed per incremental run so the tree gets covered
+# Per-file review manifest: path -> {hash, last_reviewed, verdict, severity}. This is what
+# makes the audit a continuous ralph loop — each file is tracked as reviewed, and only
+# re-reviewed when its content changes or its review goes stale.
+MANIFEST_PATH = HOME / "antariksh" / "data" / "code_audit_manifest.json"
+STALE_DAYS = 14       # re-review a file if last reviewed longer ago than this
+REVIEW_BATCH = 60     # files reviewed per incremental run (chips through the backlog)
 
 
 # The review rubric — every reviewed file is judged on these dimensions. The heuristic
@@ -108,6 +113,8 @@ def _is_cronish(p: Path) -> bool:
 def _is_target(p: Path) -> bool:
     if EXCLUDE_PARTS & set(p.parts):
         return False
+    if p.name.startswith("code_audit") or p.name == "REVIEW_FINDINGS.md":
+        return False  # never review the audit loop's own output artifacts
     return p.suffix.lower() in TARGET_EXTS or _is_cronish(p)
 
 
@@ -481,45 +488,86 @@ def review_llm(p: Path, imported: set[str], test_corpus: str = "") -> Finding:
 # --------------------------------------------------------------------------- #
 # Sweep
 # --------------------------------------------------------------------------- #
-def load_state() -> dict:
-    if STATE_PATH.exists():
+import hashlib
+
+
+def file_hash(p: Path) -> str:
+    try:
+        return hashlib.sha1(p.read_bytes()).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def load_manifest() -> dict:
+    if MANIFEST_PATH.exists():
         try:
-            return json.loads(STATE_PATH.read_text())
+            return json.loads(MANIFEST_PATH.read_text())
         except Exception:
             pass
     return {}
 
 
-def pick_targets(mode: str, all_files: list[Path], state: dict) -> list[Path]:
+def _age_days(iso_ts: str) -> float:
+    try:
+        then = datetime.fromisoformat(iso_ts)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - then).total_seconds() / 86400.0
+    except Exception:
+        return 1e9
+
+
+def review_status(all_files: list[Path], manifest: dict) -> dict:
+    """Classify every file as reviewed / changed / stale / new against the manifest."""
+    rel = lambda p: str(p.relative_to(HOME))  # noqa: E731
+    new, changed, stale, reviewed = [], [], [], []
+    for p in all_files:
+        key = rel(p)
+        rec = manifest.get(key)
+        if rec is None:
+            new.append(p)
+        elif rec.get("hash") != file_hash(p):
+            changed.append(p)
+        elif _age_days(rec.get("last_reviewed", "")) > STALE_DAYS:
+            stale.append(p)
+        else:
+            reviewed.append(p)
+    return {"new": new, "changed": changed, "stale": stale, "reviewed": reviewed}
+
+
+def pick_targets(mode: str, all_files: list[Path], manifest: dict) -> list[Path]:
+    """Files needing review: new + changed first, then stale, capped per run (incremental).
+    full mode reviews everything that needs it (new+changed+stale)."""
+    st = review_status(all_files, manifest)
+    needs = st["new"] + st["changed"] + st["stale"]
     if mode == "full":
-        return all_files
-    changed = git_changed_since(state)
-    seen = state.get("seen_order", [])
-    seen_set = set(seen)
-    stale = [f for f in all_files if str(f) not in seen_set]
-    if not stale:  # full cycle covered — reset rolling cursor
-        stale = all_files
-    targets = list(changed) + stale[:ROLLING_WINDOW]
-    # de-dup preserving order
-    out, s = [], set()
-    for f in targets:
-        if f not in s:
-            out.append(f); s.add(f)
-    return out
+        return needs
+    return needs[:REVIEW_BATCH]
 
 
-def render_markdown(findings: list[Finding], mode: str) -> str:
+def render_markdown(findings: list[Finding], mode: str, coverage: dict) -> str:
     ts = datetime.now(timezone.utc).isoformat()
     order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     findings = sorted(findings, key=lambda f: (order.get(f.severity, 9), f.path))
     removes = [f for f in findings if f.remove_candidate]
+    total = coverage["total"]
+    done = coverage["reviewed_up_to_date"]
+    pct = (100.0 * done / total) if total else 0.0
     lines = [
         "# Code Conformance Audit — Findings (PROPOSE ONLY)",
         "",
-        f"> Sweep: **{mode}** · {ts} · {len(findings)} files reviewed · "
-        f"**{len(removes)} removal candidates**. This reviewer never edits or deletes — "
-        "every action is human/Chairman-gated via `triage_findings.py` → E5 stories.",
+        f"> Sweep: **{mode}** · {ts} · {len(findings)} files reviewed this run · "
+        f"**{len(removes)} removal candidates**. Never edits or deletes — every action is "
+        "human/Chairman-gated via `triage_findings.py` → E5 stories.",
         "",
+        "## Review coverage (continuous loop state)",
+        f"- **{done}/{total} files up-to-date reviewed ({pct:.1f}%)**",
+        f"- pending new: {coverage['new']} · changed since review: {coverage['changed']} · "
+        f"stale (>{STALE_DAYS}d): {coverage['stale']}",
+        f"- backlog needing review: **{coverage['new'] + coverage['changed'] + coverage['stale']}** "
+        f"(loop clears {REVIEW_BATCH}/run incremental)",
+        "",
+        "## Findings this run",
         "| Severity | File | Verdict | Conformance | Reasons |",
         "|---|---|---|---|---|",
     ]
@@ -530,50 +578,74 @@ def render_markdown(findings: list[Finding], mode: str) -> str:
         lines.append(
             f"| {f.severity} | `{f.path}` | {f.verdict} | {f.conformance} | {reasons} |"
         )
-    lines += ["", f"_KEEP (no flags): {sum(1 for f in findings if f.verdict=='KEEP')} files not listed._", ""]
+    lines += ["", f"_KEEP (no flags) this run: {sum(1 for f in findings if f.verdict=='KEEP')}._", ""]
     return "\n".join(lines)
+
+
+def _coverage_counts(all_files, manifest) -> dict:
+    st = review_status(all_files, manifest)
+    return {"total": len(all_files), "reviewed_up_to_date": len(st["reviewed"]),
+            "new": len(st["new"]), "changed": len(st["changed"]), "stale": len(st["stale"])}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["incremental", "full"], default="incremental")
     ap.add_argument("--backend", choices=["heuristic", "llm"], default="heuristic")
+    ap.add_argument("--status", action="store_true",
+                    help="print review coverage and exit (no review)")
+    ap.add_argument("--force", action="store_true",
+                    help="re-review every file, ignoring the manifest")
     args = ap.parse_args()
 
-    state = load_state()
     all_files = iter_target_files()
     if not all_files:
         print("No files found to audit.", file=sys.stderr)
         return 1
+    manifest = {} if args.force else load_manifest()
+
+    if args.status:
+        c = _coverage_counts(all_files, manifest)
+        backlog = c["new"] + c["changed"] + c["stale"]
+        print(f"Review coverage: {c['reviewed_up_to_date']}/{c['total']} up-to-date "
+              f"({100.0*c['reviewed_up_to_date']/c['total']:.1f}%). "
+              f"Backlog {backlog} (new {c['new']}, changed {c['changed']}, stale {c['stale']}).")
+        return 0
+
     imported = build_imported_stems(all_files)
     test_corpus = build_test_corpus(all_files)
-    targets = pick_targets(args.mode, all_files, state)
+    targets = pick_targets(args.mode, all_files, manifest)
     reviewer = review_llm if args.backend == "llm" else review_heuristic
 
+    now = datetime.now(timezone.utc).isoformat()
     findings = [reviewer(p, imported, test_corpus) for p in targets]
 
+    # append to ledger
     LEDGER_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER_JSONL.open("a") as fh:
         for f in findings:
             fh.write(json.dumps(asdict(f)) + "\n")
-    FINDINGS_MD.parent.mkdir(parents=True, exist_ok=True)
-    FINDINGS_MD.write_text(render_markdown(findings, args.mode))
 
-    seen = state.get("seen_order", [])
-    seen = (seen + [str(p) for p in targets]) if args.mode == "incremental" else []
-    # keep cursor bounded
-    if len(seen) > len(all_files):
-        seen = seen[-len(all_files):]
-    state.update({
-        "last_run": datetime.now(timezone.utc).isoformat(),
-        "last_commit": current_commits(),
-        "seen_order": seen,
-    })
-    STATE_PATH.write_text(json.dumps(state, indent=2))
+    # mark each reviewed file in the manifest (hash + ts + verdict)
+    for p, f in zip(targets, findings):
+        manifest[str(p.relative_to(HOME))] = {
+            "hash": file_hash(p), "last_reviewed": now,
+            "verdict": f.verdict, "severity": f.severity,
+        }
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=0, sort_keys=True))
+
+    coverage = _coverage_counts(all_files, manifest)
+    FINDINGS_MD.parent.mkdir(parents=True, exist_ok=True)
+    FINDINGS_MD.write_text(render_markdown(findings, args.mode, coverage))
+    STATE_PATH.write_text(json.dumps(
+        {"last_run": now, "last_commit": current_commits()}, indent=2))
 
     removes = sum(1 for f in findings if f.remove_candidate)
-    print(f"Audit {args.mode}/{args.backend}: {len(findings)} reviewed, "
-          f"{removes} removal candidates. → {FINDINGS_MD}")
+    backlog = coverage["new"] + coverage["changed"] + coverage["stale"]
+    print(f"Audit {args.mode}/{args.backend}: reviewed {len(findings)} this run, "
+          f"{removes} removal candidates. Coverage "
+          f"{coverage['reviewed_up_to_date']}/{coverage['total']} up-to-date; "
+          f"backlog {backlog}. → {FINDINGS_MD}")
     return 0
 
 

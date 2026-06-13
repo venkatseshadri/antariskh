@@ -188,16 +188,29 @@ ISSUE=$(gh issue list -R "$REPO" --label ds:ready --state open \
 gh issue edit -R "$REPO" "$ISSUE" --add-assignee @me     # the lock
 
 mkdir -p ralph/progress
+
+# --- TOKEN-BURN BRAKE 1: per-day issue cap ---
+DAY=$(date +%Y%m%d); CAP=8
+DONE_TODAY=$(ls ralph/progress/ 2>/dev/null | grep -c "\.${DAY}\." || true)
+[ "${DONE_TODAY:-0}" -ge "$CAP" ] && { echo "daily cap $CAP reached"; exit 0; }
+
 # Build loop runs on DeepSeek (NOT Claude — openclaw/validator rule). --thinking/output → file.
-opencode run "Implement ONLY GitHub issue #$ISSUE. Read its body (self-contained) and its \
-docs/stories/ brief. Follow DEEPSEEK_RALPH_LOOP.md §3 rubric (all file types incl cron/shell). \
-Branch ds/issue-$ISSUE, make tests green (story + integration 39/39 + PORCUPINE), push, then \
-set ds:done and comment the §6 summary. Do NOT close or self-approve." \
+# --- TOKEN-BURN BRAKE 2: per-run step + wall-clock cap (no infinite agent loop) ---
+timeout 1800 opencode run "Implement ONLY GitHub issue #$ISSUE. Read its body (self-contained) \
+and its docs/stories/ brief. Follow DEEPSEEK_RALPH_LOOP.md §3 rubric (all file types incl \
+cron/shell). Branch ds/issue-$ISSUE, make tests green (story + integration 39/39 + PORCUPINE), \
+push, then set ds:done and comment the §6 summary. Do NOT close or self-approve." \
   --model deepseek \
-  > "ralph/progress/${ISSUE}-$(date +%s).md" 2>&1
+  --max-steps 40 \
+  > "ralph/progress/${ISSUE}.${DAY}.$(date +%H%M%S).md" 2>&1
 ```
-- **One issue per run.** Do not pass "issue #x and #y" — the cadence (every 15 min) handles
-  the next one. Two issues in one prompt overloads context (§1).
+- **One issue per run.** Do not pass "issue #x and #y" — the cadence handles the next one. Two
+  issues in one prompt overloads context (§1).
+- **Three token-burn brakes:** (1) `CAP=8` issues/day via the progress-file count; (2)
+  `timeout 1800` + `--max-steps 40` bound a single run (tune to your model/issue size); (3)
+  `flock -n` singleton = never two runs at once. If an issue can't finish inside the step
+  budget, the agent leaves it `ds:ready` (assigned) with a progress file — it does **not**
+  thrash; a human/next-tick picks it up.
 - **Model = DeepSeek (or MiniMax), never Claude.** Claude is prohibited inside opencode/openclaw
   and is validator-only (`feedback_validator_no_fixing`). The review loop below uses `claude -p`
   **directly**, not through opencode.
@@ -205,14 +218,18 @@ set ds:done and comment the §6 summary. Do NOT close or self-approve." \
   trail + input for Claude's review); the issue comment is the structured handback (§6).
 
 ```cron
-# DeepSeek build loop — every 15 min, work hours, Mon–Fri. Singleton via flock.
-*/15 9-22 * * 1-5  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/ds_ralph.lock \
+# DeepSeek build loop — every 15 min, every day (sim/recorded data, not live ticks → 7 days OK).
+# Per-day cap + per-run timeout live inside the wrapper; flock = singleton.
+*/15 9-22 * * *  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/ds_ralph.lock \
     /home/trading_ceo/antariksh/cron/ds_ralph_loop.sh >> logs/ds_ralph.log 2>&1
 
-# Claude review loop — every 20 min. Picks up ds:done, reviews, labels. Never closes.
-*/20 9-22 * * 1-5  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/claude_review.lock \
+# Claude review loop — every 20 min, every day. Picks up ds:done, reviews, labels. Never closes.
+*/20 9-22 * * *  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/claude_review.lock \
     /home/trading_ceo/antariksh/cron/claude_review_loop.sh >> logs/claude_review.log 2>&1
 ```
+- **Every day** (not M–F): the loop builds + tests against PORCUPINE sim/recorded data, so it
+  doesn't need live market hours. E1/E5 especially are weekend-friendly.
+- Hour window `9-22` is just to avoid overnight runaway; widen to `* * * *` if you want 24/7.
 
 **Two kinds of "approval" — only one is removed by headless cron:**
 - *Per-action tool prompts* (edit/bash/push) → **removed** by headless + pre-granted sandbox
@@ -227,8 +244,6 @@ set ds:done and comment the §6 summary. Do NOT close or self-approve." \
 - **Push to a branch; never auto-merge to master.** Even unattended, the loop cannot deploy.
 - `flock -n` = one iteration at a time (`feedback_cron_shell_wrappers`). Paper-only; the
   constitution resource limits still apply.
-- Off-hours/weekends optional — strategy/cleanup stories (E1/E5) can run any time; session
-  stories (E2/E3) are best validated against fresh market data on weekdays.
 
 ---
 

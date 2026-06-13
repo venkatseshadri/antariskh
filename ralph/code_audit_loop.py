@@ -50,7 +50,12 @@ REPOS = ["antariksh", "brahmand", "python-trader"]
 EXCLUDE_PARTS = {
     ".git", "__pycache__", "site-packages", "venv", ".venv",
     "node_modules", "archives", "graphify-out", ".opencode",
+    # runtime output, not source — never review these
+    "logs", "recordings", "exec_reports", "harvested", "locks", "backups",
 }
+# Review EVERY project file, not just Python: code, config, and docs.
+TARGET_EXTS = {".py", ".md", ".json", ".yaml", ".yml", ".sh",
+               ".toml", ".cfg", ".ini", ".sql"}
 SPEC_PATH = HOME / "TRADING_SYSTEM.md"
 FINDINGS_MD = HOME / "antariksh" / "docs" / "REVIEW_FINDINGS.md"
 LEDGER_JSONL = HOME / "antariksh" / "data" / "code_audit.jsonl"
@@ -92,17 +97,31 @@ class Finding:
 # --------------------------------------------------------------------------- #
 # File enumeration
 # --------------------------------------------------------------------------- #
-def iter_py_files() -> list[Path]:
+def _is_cronish(p: Path) -> bool:
+    """Cron tables have no standard extension — match by name/parent."""
+    n = p.name.lower()
+    return ("crontab" in n or n.endswith(".cron")
+            or (p.parent.name == "cron.d") or n.startswith("antariksh-")
+            or n.startswith("penguin-"))
+
+
+def _is_target(p: Path) -> bool:
+    if EXCLUDE_PARTS & set(p.parts):
+        return False
+    return p.suffix.lower() in TARGET_EXTS or _is_cronish(p)
+
+
+def iter_target_files() -> list[Path]:
+    """Every reviewable project file: code, config, docs, shell, and cron tables."""
     files: list[Path] = []
     for repo in REPOS:
         root = HOME / repo
         if not root.exists():
             continue
-        for p in root.rglob("*.py"):
-            if EXCLUDE_PARTS & set(p.parts):
-                continue
-            files.append(p)
-    return sorted(files)
+        for p in root.rglob("*"):
+            if p.is_file() and _is_target(p):
+                files.append(p)
+    return sorted(set(files))
 
 
 def git_changed_since(state: dict) -> set[Path]:
@@ -130,10 +149,11 @@ def git_changed_since(state: dict) -> set[Path]:
         for line in (out + "\n" + dirty).splitlines():
             name = line[3:].strip() if line[:3] in (" M ", "?? ", " A ", "MM ") else line.strip()
             name = name.split(" -> ")[-1].strip()
-            if name.endswith(".py"):
-                fp = root / name
-                if fp.exists() and not (EXCLUDE_PARTS & set(fp.parts)):
-                    changed.add(fp)
+            if not name:
+                continue
+            fp = root / name
+            if fp.exists() and _is_target(fp):
+                changed.add(fp)
     return changed
 
 
@@ -160,6 +180,8 @@ def build_imported_stems(files: list[Path]) -> set[str]:
     """Set of module stems referenced by an import anywhere in the tree."""
     imported: set[str] = set()
     for p in files:
+        if p.suffix != ".py":
+            continue
         try:
             tree = ast.parse(p.read_text(errors="ignore"))
         except Exception:
@@ -239,6 +261,110 @@ def analyze_ast(text: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Backends
 # --------------------------------------------------------------------------- #
+import re
+
+_REF_RE = re.compile(r'(/home/trading_ceo/[\w./-]+|(?<![\w/])[\w][\w./-]*\.(?:sh|py|service|timer|json|yaml|yml|md))')
+
+
+def find_dead_refs(text: str, p: Path) -> list[str]:
+    """File paths referenced by this file that do not exist on disk (stale/dead links)."""
+    dead: list[str] = []
+    for raw in {m.rstrip('.:,)') for m in _REF_RE.findall(text)}:
+        if '$' in raw or '*' in raw or raw.startswith('http') or '{' in raw:
+            continue
+        cand = Path(raw) if raw.startswith('/') else (p.parent / raw)
+        if cand.suffix and not cand.exists():
+            dead.append(raw)
+    return sorted(dead)[:8]
+
+
+def _review_python(p, text, loc, imported, test_corpus, dims, reasons, bump) -> bool:
+    """Python-specific rubric. Returns remove_candidate."""
+    stem = p.stem
+    is_test = "/tests/" in str(p) or stem.startswith("test_")
+    remove = False
+    meta = analyze_ast(text)
+    if not (stem in imported) and not is_entrypoint(p, text) and not is_test and stem != "__init__":
+        reasons.append("orphan: stem never imported and no __main__/cron reference")
+        dims["purpose"] = "flag: orphan, no caller/entrypoint"; remove = True; bump("medium")
+    if not is_test and stem != "__init__" and test_corpus and stem not in test_corpus:
+        reasons.append("no test references this module")
+        dims["test_coverage"] = "flag: no test_*.py mentions this module"; bump("low")
+    if meta["ok"]:
+        dp = []
+        if not meta["module_doc"]:
+            dp.append("no module docstring")
+        if meta["undocumented_pub"]:
+            dp.append(f"{meta['undocumented_pub']} public defs lack docstrings")
+        if dp:
+            dims["documentation"] = "warn: " + "; ".join(dp)
+            if meta["undocumented_pub"] >= 5:
+                reasons.append(dp[-1]); bump("low")
+    if meta["max_func_loc"] > 60:
+        reasons.append(f"long function: {meta['max_func_loc']} LOC (>60) — hard to follow")
+        dims["complexity"] = f"flag: function spans {meta['max_func_loc']} lines"; bump("medium")
+    if loc > 500:
+        reasons.append(f"god-file: {loc} LOC (>500) — split candidate")
+        dims["srp_modularity"] = f"flag: {loc} LOC"; bump("medium")
+    elif meta["n_classes"] >= 3:
+        dims["srp_modularity"] = f"warn: {meta['n_classes']} classes in one module — SRP smell"
+    if meta["weak_names"]:
+        reasons.append("weak identifiers: " + ", ".join(meta["weak_names"][:6]))
+        dims["naming"] = "warn: " + ", ".join(meta["weak_names"][:6]); bump("low")
+    dims["performance"] = "n/a (heuristic)"
+    return remove
+
+
+def _review_shell_cron(p, text, dims, reasons, bump) -> None:
+    """Shell scripts + cron tables: shebang, dead path refs, stale jobs, disabled units."""
+    for d in ("test_coverage", "complexity", "performance", "naming"):
+        dims[d] = "n/a (shell/cron)"
+    if p.suffix.lower() == ".sh" and not text.lstrip().startswith("#!"):
+        reasons.append("shell script missing shebang")
+        dims["design"] = "warn: no shebang"; bump("low")
+    dead = find_dead_refs(text, p)
+    if dead:
+        reasons.append("dead path refs (stale job?): " + ", ".join(dead[:5]))
+        dims["purpose"] = "flag: references files that don't exist"; bump("medium")
+    if _is_cronish(p):
+        if ".disabled" in text:
+            reasons.append("cron references a .disabled unit — stale job")
+            dims["simplification"] = "warn: disabled-unit reference"; bump("low")
+        # cron line sanity: each non-comment line should have >=6 fields (5 time + cmd)
+        for ln in text.splitlines():
+            s = ln.strip()
+            if s and not s.startswith("#") and "=" not in s.split()[0] and len(s.split()) < 6:
+                reasons.append(f"cron line looks malformed: '{s[:40]}'")
+                dims["design"] = "flag: malformed cron line"; bump("medium"); break
+
+
+def _review_config_doc(p, text, dims, reasons, bump) -> None:
+    """JSON/YAML validity + markdown dead links."""
+    for d in ("test_coverage", "complexity", "performance", "naming", "srp_modularity"):
+        dims[d] = "n/a (non-code)"
+    suf = p.suffix.lower()
+    if suf == ".json":
+        try:
+            json.loads(text)
+        except Exception as e:
+            reasons.append(f"invalid JSON: {str(e)[:60]}")
+            dims["design"] = "flag: does not parse"; bump("high")
+    elif suf in (".yaml", ".yml"):
+        try:
+            import yaml
+            yaml.safe_load(text)
+        except ImportError:
+            pass
+        except Exception as e:
+            reasons.append(f"invalid YAML: {str(e)[:60]}")
+            dims["design"] = "flag: does not parse"; bump("high")
+    elif suf == ".md":
+        dead = find_dead_refs(text, p)
+        if dead:
+            reasons.append("dead doc links: " + ", ".join(dead[:5]))
+            dims["purpose"] = "flag: links to missing files"; bump("low")
+
+
 def review_heuristic(p: Path, imported: set[str], test_corpus: str = "") -> Finding:
     ts = datetime.now(timezone.utc).isoformat()
     text = p.read_text(errors="ignore")
@@ -248,6 +374,7 @@ def review_heuristic(p: Path, imported: set[str], test_corpus: str = "") -> Find
     remove = False
     conformance = "unclear"
     severity = "info"
+    is_test = "/tests/" in str(p) or p.stem.startswith("test_")
 
     def bump(level: str) -> None:
         nonlocal severity
@@ -255,77 +382,31 @@ def review_heuristic(p: Path, imported: set[str], test_corpus: str = "") -> Find
         if rank[level] > rank[severity]:
             severity = level
 
-    stem = p.stem
-    entry = is_entrypoint(p, text)
-    is_test = "/tests/" in str(p) or stem.startswith("test_")
-    referenced = stem in imported
-    meta = analyze_ast(text)
+    # type-specific review
+    if p.suffix.lower() == ".py":
+        remove = _review_python(p, text, loc, imported, test_corpus, dims, reasons, bump)
+    elif p.suffix.lower() == ".sh" or _is_cronish(p):
+        _review_shell_cron(p, text, dims, reasons, bump)
+    else:
+        _review_config_doc(p, text, dims, reasons, bump)
 
-    # purpose / orphan
-    if not referenced and not entry and not is_test and stem != "__init__":
-        reasons.append("orphan: stem never imported and no __main__/cron reference")
-        dims["purpose"] = "flag: orphan, no caller/entrypoint"
-        remove = True
-        bump("medium")
-
-    # test_coverage
-    if not is_test and stem != "__init__" and test_corpus and stem not in test_corpus:
-        reasons.append("no test references this module")
-        dims["test_coverage"] = "flag: no test_*.py mentions this module"
-        bump("low")
-
-    # documentation
-    if meta["ok"]:
-        doc_problems = []
-        if not meta["module_doc"]:
-            doc_problems.append("no module docstring")
-        if meta["undocumented_pub"]:
-            doc_problems.append(f"{meta['undocumented_pub']} public defs lack docstrings")
-        if doc_problems:
-            dims["documentation"] = "warn: " + "; ".join(doc_problems)
-            if meta["undocumented_pub"] >= 5:
-                reasons.append(doc_problems[-1]); bump("low")
-
-    # complexity
-    if meta["max_func_loc"] > 60:
-        reasons.append(f"long function: {meta['max_func_loc']} LOC (>60) — hard to follow")
-        dims["complexity"] = f"flag: function spans {meta['max_func_loc']} lines"
-        bump("medium")
-
-    # srp_modularity / god-file
-    if loc > 500:
-        reasons.append(f"god-file: {loc} LOC (>500) — split candidate")
-        dims["srp_modularity"] = f"flag: {loc} LOC"
-        bump("medium")
-    if meta["n_classes"] + (meta["n_defs"] > 15) and meta["n_classes"] >= 3:
-        dims["srp_modularity"] = f"warn: {meta['n_classes']} classes in one module — SRP smell"
-
-    # naming
-    if meta["weak_names"]:
-        reasons.append("weak identifiers: " + ", ".join(meta["weak_names"][:6]))
-        dims["naming"] = "warn: " + ", ".join(meta["weak_names"][:6])
-        bump("low")
-
-    # simplification (TODO/FIXME density is the cheap proxy)
+    # common: TODO/FIXME density → simplification
     todos = text.count("TODO") + text.count("FIXME") + text.count("XXX")
     if todos >= 5:
         reasons.append(f"{todos} TODO/FIXME/XXX markers — unfinished/refactor pending")
-        dims["simplification"] = f"warn: {todos} TODO/FIXME markers"
-        bump("low")
+        dims["simplification"] = f"warn: {todos} TODO/FIXME markers"; bump("low")
 
-    # design / conformance: dir-in-spec check
+    # common: dir-in-spec (design/conformance)
     try:
         rel = p.relative_to(HOME)
         top = rel.parts[1] if len(rel.parts) > 2 else rel.parts[-1]
         spec = SPEC_PATH.read_text(errors="ignore")
         if top not in spec and not is_test and top not in ("config", "data", "logs"):
             reasons.append(f"dir '{top}' not in TRADING_SYSTEM.md repo map")
-            dims["design"] = f"warn: dir '{top}' not in spec map"
+            if dims["design"] == "ok":
+                dims["design"] = f"warn: dir '{top}' not in spec map"
     except Exception:
         pass
-
-    # performance is left to the llm backend (no cheap reliable structural proxy)
-    dims["performance"] = "n/a (heuristic)"
 
     verdict = "REMOVE_CANDIDATE" if remove else ("REVIEW" if reasons else "KEEP")
     if not reasons:
@@ -339,8 +420,9 @@ def review_heuristic(p: Path, imported: set[str], test_corpus: str = "") -> Find
 
 
 _LLM_RUBRIC_PROMPT = (
-    "You are a PROPOSE-ONLY senior code reviewer. You never edit; you only judge. Review the "
-    "Python file against the trading-system spec AND these rubric dimensions, scoring each "
+    "You are a PROPOSE-ONLY senior reviewer. You never edit; you only judge. Review this file "
+    "(Python, shell, cron, JSON/YAML config, or markdown doc) against the trading-system spec "
+    "AND these rubric dimensions (mark n/a where a dimension doesn't apply), scoring each "
     "ok|warn|flag with a one-line note:\n"
     "  purpose         — clear single reason to exist? redundant/dead?\n"
     "  test_coverage   — exercised by a test? critical paths covered?\n"
@@ -459,9 +541,9 @@ def main() -> int:
     args = ap.parse_args()
 
     state = load_state()
-    all_files = iter_py_files()
+    all_files = iter_target_files()
     if not all_files:
-        print("No Python files found to audit.", file=sys.stderr)
+        print("No files found to audit.", file=sys.stderr)
         return 1
     imported = build_imported_stems(all_files)
     test_corpus = build_test_corpus(all_files)

@@ -7,13 +7,19 @@
 
 ## 1. What it does
 
-`ralph/code_audit_loop.py` walks every project Python file (antariksh, brahmand,
-python-trader; venv/site-packages/archives excluded) and judges each against the spec:
+`ralph/code_audit_loop.py` walks **every project file** — not just Python: `.py`, `.md`,
+`.json`, `.yaml/.yml`, `.sh`, `.toml/.cfg/.ini`, `.sql`, **and cron tables** (antariksh,
+brahmand, python-trader; venv/site-packages/archives/logs/recordings excluded) — and judges
+each against the spec + the 9-dimension rubric, per file type:
 
-- **Purpose / orphan** — is the file imported anywhere, or referenced by a cron wrapper, or
-  an entrypoint? If not → `REMOVE_CANDIDATE`.
-- **Conformance** — does its directory/role appear in `TRADING_SYSTEM.md`'s repo map?
-- **Health** — god-file (>500 LOC), TODO/FIXME density, staleness.
+- **Python** — orphan (imported anywhere / entrypoint / cron-referenced? else
+  `REMOVE_CANDIDATE`), test coverage, docstrings, long functions (>60 LOC), god-files
+  (>500 LOC), SRP smell, weak identifiers.
+- **Shell + cron** — valid shebang, **dead path references / stale jobs** (a job pointing at
+  a script that no longer exists), references to `.disabled` units, malformed cron lines.
+- **JSON / YAML** — parse validity (a config that doesn't parse is `high` severity).
+- **Markdown** — dead local links (points to a missing file).
+- **All types** — conformance (dir appears in `TRADING_SYSTEM.md` repo map?), TODO/FIXME density.
 
 Output (the only things it writes):
 - `docs/REVIEW_FINDINGS.md` — human-readable latest sweep, sorted by severity.

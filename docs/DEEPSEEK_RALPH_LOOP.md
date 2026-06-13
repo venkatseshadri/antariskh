@@ -27,8 +27,13 @@ loop:
   8. STOP on that issue. Sleep X min. Repeat from 1.
 ```
 
-**One issue at a time.** Never hold two. Never skip ahead to a dependent story — dependent
-stories do not carry `ds:ready` until their predecessor is `chairman:approve`d.
+**ONE issue at a time — this is mandatory, not a style preference.** Pick exactly one
+`ds:ready` issue per loop iteration, finish it to `ds:done`, then stop. Never hold two.
+The reason is **context overload**: an LLM that loads three stories' files at once degrades —
+it confuses requirements, edits the wrong file, and produces shallow work. A single story
+keeps the working set small enough to reason about precisely. Never skip ahead to a dependent
+story either — dependent stories do not carry `ds:ready` until their predecessor is
+`chairman:approve`d.
 
 ### Pick + claim (exact commands)
 ```bash
@@ -68,6 +73,13 @@ system can understand with little effort.** Before you set `ds:done`, self-check
 | **srp_modularity** | Single responsibility per module/class/function. No god-files (<500 LOC). |
 | **naming** | Intention-revealing names for modules/classes/methods/vars. No `tmp`, `data2`, `x1`. |
 | **design** | Follows system philosophy: **code enforces risk, LLMs only explain. Fail-closed. Deterministic over LLM for risk/execution.** Never move a risk gate into LLM judgment. |
+
+**Review applies to ALL file types, not just `.py`.** Every file your change touches —
+Python, markdown docs, JSON/YAML config, shell scripts, **and cron tables** — must pass the
+rubric. For shell/cron specifically: valid shebang, no dead path references (a job pointing at
+a script that no longer exists = a stale job — fix or remove it), no references to `.disabled`
+units, well-formed cron lines. The audit loop (`ralph/code_audit_loop.py`) now sweeps all of
+these and will flag them; don't ship a change that leaves a dead link or a stale job behind.
 
 Non-negotiables from the constitution:
 - **Surgical changes.** Touch only what the story needs. Don't reformat or "improve" adjacent code. Every changed line traces to the story.
@@ -149,17 +161,50 @@ ds:done  ── Claude picks it up ──►  claude:review
 
 ---
 
-## 8. Scheduling the loop
+## 8. Scheduling the loop (headless, no interactive approval)
 
-A reference loop wrapper lives at `cron/ds_ralph_loop.sh` (create it from §1's commands). Run
-it via cron with a singleton guard so two loops never run at once:
+The loop runs **unattended on cron** — no human at a prompt. That means the agent runs in
+**headless / print mode** with permissions **pre-granted in a sandbox** (there's nobody to
+click "allow"). Two separate runners:
+
+| Loop | Runner | What it may do |
+|---|---|---|
+| **Build** (this doc) | `deepseek` headless (its `-p`/print mode or API) | implement, test, commit to a **branch**, push, set `ds:done`. **Never** `claude -p` — Board rule: Claude validates only, DeepSeek implements (`feedback_validator_no_fixing`). |
+| **Review** | `claude -p` headless | review `ds:done` → set `claude:review` then `chairman:approve` or `changes:requested`. Never closes. |
+
+Reference wrapper `cron/ds_ralph_loop.sh` (create from §1's commands). The headless agent
+invocation inside it looks like:
+```bash
+# inside cron/ds_ralph_loop.sh, after PICK+CLAIM resolves $ISSUE:
+deepseek -p "Implement GitHub issue #$ISSUE per antariksh/docs/DEEPSEEK_RALPH_LOOP.md. \
+Read the issue body (self-contained) and its docs/stories/ brief. Follow the §3 rubric. \
+Branch ds/issue-$ISSUE, tests green, push, then set ds:done. Do NOT close or self-approve." \
+  --permission-mode sandbox-allow   # pre-granted tools; no interactive prompts
+```
 
 ```cron
 # DeepSeek build loop — every 15 min, work hours, Mon–Fri. Singleton via flock.
 */15 9-22 * * 1-5  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/ds_ralph.lock \
     /home/trading_ceo/antariksh/cron/ds_ralph_loop.sh >> logs/ds_ralph.log 2>&1
+
+# Claude review loop — every 20 min. Picks up ds:done, reviews, labels. Never closes.
+*/20 9-22 * * 1-5  trading_ceo  /usr/bin/flock -n /home/trading_ceo/antariksh/locks/claude_review.lock \
+    /home/trading_ceo/antariksh/cron/claude_review_loop.sh >> logs/claude_review.log 2>&1
 ```
-- `flock -n` ensures one iteration at a time (`feedback_cron_shell_wrappers`).
+
+**Two kinds of "approval" — only one is removed by headless cron:**
+- *Per-action tool prompts* (edit/bash/push) → **removed** by headless + pre-granted sandbox
+  permissions. This is the autonomy you want.
+- *The workflow close gate* (`chairman:approve` → closed) → **kept, by design.** Cron does the
+  labor; the label state machine controls promotion. The loop can build + review fully
+  hands-off, but a human still makes the final merge.
+
+**Hard guardrails (because no human is watching a headless run):**
+- Pre-authorize permissions **inside a sandbox** — never `--dangerously-skip-permissions` on
+  an unconstrained shell.
+- **Push to a branch; never auto-merge to master.** Even unattended, the loop cannot deploy.
+- `flock -n` = one iteration at a time (`feedback_cron_shell_wrappers`). Paper-only; the
+  constitution resource limits still apply.
 - Off-hours/weekends optional — strategy/cleanup stories (E1/E5) can run any time; session
   stories (E2/E3) are best validated against fresh market data on weekdays.
 

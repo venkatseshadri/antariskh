@@ -135,8 +135,12 @@ gh issue comment -R venkatseshadri/antariskh <N> --body "$(cat <<'EOF'
 EOF
 )"
 gh issue edit -R venkatseshadri/antariskh <N> --remove-label ds:ready --add-label ds:done
+git checkout master   # CRITICAL: return to master so the next pickup starts on a clean tree
 # leave yourself assigned; STOP. Do not close. Do not add claude:review / chairman:approve.
 ```
+> **Always `git checkout master` after handback.** If you stay on the feature branch, the next
+> loop iteration (or any other process) commits to the wrong branch. (Learned from the live
+> loop test, 2026-06-13.)
 
 After this you are **done with that issue.** Sleep X minutes, loop again.
 

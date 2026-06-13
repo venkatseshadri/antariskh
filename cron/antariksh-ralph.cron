@@ -1,0 +1,19 @@
+# Antariksh ralph loops — build (DeepSeek) + review (Claude).
+# SCAFFOLD — staged for Board review. NOT active until copied to /etc/cron.d/.
+# Install:  sudo cp /home/trading_ceo/antariksh/cron/antariksh-ralph.cron /etc/cron.d/antariksh-ralph
+# Disable:  sudo rm /etc/cron.d/antariksh-ralph
+#
+# Enabling runs DeepSeek unattended (incl. market hours, per DAMBUILDER §0e ruling 3).
+# Token brakes live in the wrappers: build cap 8/day + flock + 1800s timeout;
+# review cap 12/day + flock + 1500s timeout. Both no-op when there's nothing to do.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Build loop — one ds:ready issue per run, every 15 min, 09:00–21:45 IST Mon–Sat.
+*/15 9-21 * * 1-6 root /home/trading_ceo/antariksh/cron/ds_ralph_loop.sh
+
+# Review loop — validate ds:done + [deepseek] commits, every 30 min, 09:00–21:30 IST Mon–Sat.
+*/30 9-21 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh
+# Final review tick at 22:00 to catch the day's last build.
+0 22 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh

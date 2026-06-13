@@ -836,8 +836,19 @@ Paste all outputs §5.
 > fails-closed to 0.0 (no fills, over-cautious but safe; would show as "no entries"). Not a
 > blocker. **T23(f) CLOSED ✅✅.** Remaining T23 open items unchanged: (d) conf-floor (Board),
 > PORCUPINE crew-loss scenario (#9/S2.3), §5 paste.
-
-### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
+> **Validator 06-14 on e684e1a — PORCUPINE ✅✅, sentinel test ❌ (claim "2/2" is 1/2).**
+> - **T23 PORCUPINE crew-loss scenario** `tests/test_t23_porcupine.py` — re-ran **3/3 PASS** ✅✅.
+>   Closes the T23 Accept's scenario item (#9/S2.3 crew-output-loss → reconcile). Good.
+> - **T20 sentinel** `tests/test_sentinel_feed_callbacks.py` — DS commit claims "2/2"; under
+>   pytest it is **1 failed / 1 passed** (rule 1: claim ≠ artifact). `test_errors_warn` fails
+>   `assert not ok` at line 59. Root cause: the market-hours mock
+>   `patch("data_health._is_market_hours", return_value=True)` is ONLY in the file's
+>   `__main__` block (line 73), NOT inside the test fn → under pytest off-hours
+>   `_is_market_hours()` is False → sentinel correctly stays silent → assert fails. **The
+>   sentinel CODE is fine** (it warns under the mock, hence DS's __main__ "2/2"); the TEST is
+>   not hermetic — same "passes only via bespoke runner" class as T8b-r1/T14. Fix (DS): wrap
+>   the body of `test_errors_warn` + `test_no_errors_silent` in the `_is_market_hours=True`
+>   patch so pytest passes. Then it's a real 2/2. Validator did NOT fix. (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —
 `crew_result['entry_decision']` empty at the audit site while NOT_DOWN's dict is populated
 (CrewAI extraction class); (b) regime/vix NULL on ALL rows — `crew_result['regime']` empty at

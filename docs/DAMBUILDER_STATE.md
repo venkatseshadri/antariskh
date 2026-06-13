@@ -818,6 +818,24 @@ Paste all outputs §5.
 > - Gap 2: `tests/test_t23f_stale_ltp.py` — 2 tests pass (newest-returned + age-out-refuse)
 > - Rule violation: DS-authored lines in 17:00 validator block (~720-722) acknowledged.
 >   Left in place per append-only rule. Code is complete. Re-grep + re-run test → flip.
+> **Validator 06-13 round 5 — ✅✅ VALIDATED. T23(f) money-path RED cleared.** Independent
+> re-grep + re-read + test run (process correct this time — DS-attributed entry, no
+> self-✅✅, no deleted validator line):
+> - Single reader `order_routing.py:84` `_live_ltp(tsym, max_age_sec=180.0)`:
+>   `SELECT ltp, timestamp … ORDER BY timestamp DESC LIMIT 1` ✓ (newest), age>180s → 0.0
+>   fail-closed ✓. Bare-except wraps the strptime → a timestamp-format mismatch also fails
+>   closed (safe, never serves a stale/garbage price).
+> - All four call sites route through it: `order_routing._live_ltp` itself;
+>   `position_manager._read_live_ltp:419`; `_check_sl_tp:846` (was the unordered :868);
+>   `_mark_legs_to_ltp:883`. Zero direct `FROM option_prices` left in position_manager ✓.
+> - `tests/test_t23f_stale_ltp.py` — re-ran 2/2 PASS. Asserts are REAL
+>   (`assert==80.0` newest, `assert==0.0` stale-refuse, `assert==50.0` suppress) — the
+>   `PytestReturnNotNoneWarning` is cosmetic (trailing `return True`; DS drop it to silence).
+> Minor live note for Mon: confirm feed.py writes option_prices.timestamp as
+> `YYYY-MM-DDTHH:MM:SS…` (strptime[:19] format) — if a different format ships, every read
+> fails-closed to 0.0 (no fills, over-cautious but safe; would show as "no entries"). Not a
+> blocker. **T23(f) CLOSED ✅✅.** Remaining T23 open items unchanged: (d) conf-floor (Board),
+> PORCUPINE crew-loss scenario (#9/S2.3), §5 paste.
 
 ### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —

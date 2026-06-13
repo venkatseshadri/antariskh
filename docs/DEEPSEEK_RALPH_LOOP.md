@@ -172,15 +172,37 @@ click "allow"). Two separate runners:
 | **Build** (this doc) | `deepseek` headless (its `-p`/print mode or API) | implement, test, commit to a **branch**, push, set `ds:done`. **Never** `claude -p` — Board rule: Claude validates only, DeepSeek implements (`feedback_validator_no_fixing`). |
 | **Review** | `claude -p` headless | review `ds:done` → set `claude:review` then `chairman:approve` or `changes:requested`. Never closes. |
 
-Reference wrapper `cron/ds_ralph_loop.sh` (create from §1's commands). The headless agent
-invocation inside it looks like:
+Reference wrapper `cron/ds_ralph_loop.sh` (create from §1's commands). It picks **exactly one**
+issue, runs the agent headless via **`opencode run`**, and captures the reasoning/output to a
+per-issue progress file:
 ```bash
-# inside cron/ds_ralph_loop.sh, after PICK+CLAIM resolves $ISSUE:
-deepseek -p "Implement GitHub issue #$ISSUE per antariksh/docs/DEEPSEEK_RALPH_LOOP.md. \
-Read the issue body (self-contained) and its docs/stories/ brief. Follow the §3 rubric. \
-Branch ds/issue-$ISSUE, tests green, push, then set ds:done. Do NOT close or self-approve." \
-  --permission-mode sandbox-allow   # pre-granted tools; no interactive prompts
+#!/usr/bin/env bash
+set -euo pipefail
+cd /home/trading_ceo/antariksh
+REPO=venkatseshadri/antariskh
+
+# PICK + CLAIM exactly ONE issue (never two — context overload, see §1)
+ISSUE=$(gh issue list -R "$REPO" --label ds:ready --state open \
+  --json number,assignees -q 'map(select(.assignees|length==0))|sort_by(.number)|.[0].number')
+[ -z "$ISSUE" ] && { echo "nothing ready"; exit 0; }
+gh issue edit -R "$REPO" "$ISSUE" --add-assignee @me     # the lock
+
+mkdir -p ralph/progress
+# Build loop runs on DeepSeek (NOT Claude — openclaw/validator rule). --thinking/output → file.
+opencode run "Implement ONLY GitHub issue #$ISSUE. Read its body (self-contained) and its \
+docs/stories/ brief. Follow DEEPSEEK_RALPH_LOOP.md §3 rubric (all file types incl cron/shell). \
+Branch ds/issue-$ISSUE, make tests green (story + integration 39/39 + PORCUPINE), push, then \
+set ds:done and comment the §6 summary. Do NOT close or self-approve." \
+  --model deepseek \
+  > "ralph/progress/${ISSUE}-$(date +%s).md" 2>&1
 ```
+- **One issue per run.** Do not pass "issue #x and #y" — the cadence (every 15 min) handles
+  the next one. Two issues in one prompt overloads context (§1).
+- **Model = DeepSeek (or MiniMax), never Claude.** Claude is prohibited inside opencode/openclaw
+  and is validator-only (`feedback_validator_no_fixing`). The review loop below uses `claude -p`
+  **directly**, not through opencode.
+- The progress file `ralph/progress/<issue>-<ts>.md` is the verbose thinking/action log (audit
+  trail + input for Claude's review); the issue comment is the structured handback (§6).
 
 ```cron
 # DeepSeek build loop — every 15 min, work hours, Mon–Fri. Singleton via flock.

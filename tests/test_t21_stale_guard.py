@@ -100,6 +100,59 @@ def test_staleness_guard_present():
     assert callable(_multitf_is_stale)
 
 
+def test_db_seam_stale_multitf_table_end_to_end():
+    """End-to-end DB-side seam: temp SQLite with yesterday-only multil TF rows
+    → _multitf_is_stale returns True → query_trend emits insufficient_history."""
+    import sqlite3
+    import tempfile
+    import os
+    from datetime import datetime, timedelta, date
+
+    tmpdir = tempfile.mkdtemp()
+    db_path = os.path.join(tmpdir, "capture_nifty.sqlite")
+    conn = sqlite3.connect(db_path)
+    yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Create market_data_multitf with yesterday-only rows (no today rows)
+    conn.execute("""CREATE TABLE IF NOT EXISTS market_data_multitf (
+        timestamp TEXT, instrument TEXT, timeframe_min INTEGER,
+        open REAL, high REAL, low REAL, close REAL, volume REAL
+    )""")
+    conn.execute(
+        "INSERT INTO market_data_multitf VALUES(?,?,?,?,?,?,?,?)",
+        (f"{yesterday}T10:00:00", "NIFTY", 5, 100.0, 101.0, 99.0, 100.5, 1000.0),
+    )
+    conn.commit()
+    conn.close()
+
+    try:
+        from tools.entry_tools import _multitf_is_stale
+        import tools.entry_tools as et
+
+        orig_path = et._capture_sqlite_path
+        et._capture_sqlite_path = lambda index="NIFTY": db_path
+
+        stale = _multitf_is_stale("NIFTY")
+        assert stale, "Yesterday-only DB must be stale"
+
+        with (
+            patch("tools.entry_tools.MULTITF_SOURCE", "duckdb"),
+            patch("tools.entry_tools._multitf_is_stale", return_value=True),
+        ):
+            import json
+
+            result = json.loads(et.query_trend("NIFTY"))
+            assert result.get("insufficient_history"), (
+                f"query_trend must emit insufficient_history: {result}"
+            )
+
+        et._capture_sqlite_path = orig_path
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for name in sorted(globals()):
         if name.startswith("test_"):

@@ -1,9 +1,10 @@
 #!/bin/bash
-# Claude review loop — Option A (READ-ONLY + NOTIFY) of S4.1.
-# Validates DS deliverables, but has NO write authority: claude runs read-only
-# Accept commands under a least-privilege allowlist (cron/review_settings.json),
-# prints verdicts to stdout (captured to log); the WRAPPER alerts via Telegram.
-# It NEVER edits labels/docs or pushes — a human applies verdicts. (§0b validator.)
+# Claude review loop — Option A+ (READ-ONLY validate + GH COMMENTS + NOTIFY) of S4.1.
+# Validates DS deliverables under a least-privilege allowlist (review_settings.json):
+# runs read-only Accept commands, POSTS its verdict as a GitHub issue/PR comment
+# (additive, reversible), prints the report to stdout (captured to log), and the
+# WRAPPER alerts via Telegram. It NEVER changes labels, closes, merges, edits files,
+# or pushes — only the Chairman flips labels (§0b validator; PRD §5 state machine).
 #
 # Cron-safe: flock single-instance + per-day cap + timeout + per-day log.
 # RALPH_DRYRUN=1 → exercise every guardrail but skip the claude -p call.
@@ -69,7 +70,9 @@ PROMPT="You are Claude, the VALIDATOR (role §0b, docs/DAMBUILDER_STATE.md): rai
 ONLY. You have NO write tools — do not attempt to edit files, labels, or push; just analyse \
 and PRINT a report. Do all read-only: \
 (1) For each GitHub issue labelled ds:done in $REPO_URL, re-run its story's Accept/Verify \
-commands and state PASS/FAIL with the command output. \
+commands, state PASS/FAIL with the command output, and POST that verdict as a comment on \
+the issue via 'gh issue comment <N>' prefixed '🤖 ralph-review (read-only — no label change)'. \
+Do NOT change labels, close, or merge — a human/the Chairman flips labels. \
 (2) For each [deepseek] commit in brahmand + antariksh since SHA '$LAST_SHA', re-run the \
 relevant task's Accept and give a verdict (PASS=✅✅ / FAIL=❌ / PARTIAL=◐) with evidence. \
 (3) INTEGRITY SWEEP: scan docs/DAMBUILDER_STATE.md for ✅✅ or '✅ FIXED' lines added since \

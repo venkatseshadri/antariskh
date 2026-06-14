@@ -33,6 +33,18 @@ log() { echo "[$(date -Is)] $*" >> "$LOG"; }
 # --- sudo-free kill switch ---
 if [ -e "$PAUSE" ]; then log "paused ($PAUSE present) — skip"; exit 0; fi
 
+# --- MAINTENANCE ONLY WHEN MARKETS CLOSED (fail-closed via prod-tested gate) ---
+# Never edit code / restart services / build while equity OR commodity session is
+# live — protects capture + order path. check_market_hours.sh exits 0 if the
+# session is OPEN (then we skip). Holiday/weekend aware via check_market_open.sh.
+GATE="$REPO/cron/check_market_hours.sh"
+if [ -x "$GATE" ]; then
+    if "$GATE" NSE >/dev/null 2>&1; then log "NSE session live — maintenance skipped"; exit 0; fi
+    if "$GATE" MCX >/dev/null 2>&1; then log "MCX session live — maintenance skipped"; exit 0; fi
+else
+    log "market gate missing ($GATE) — fail-closed, skip"; exit 0
+fi
+
 # --- single instance (flock, non-blocking) ---
 exec 9>"$LOCK"
 if ! /usr/bin/flock -n 9; then

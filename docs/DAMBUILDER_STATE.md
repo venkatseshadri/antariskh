@@ -848,7 +848,19 @@ Paste all outputs §5.
 >   sentinel CODE is fine** (it warns under the mock, hence DS's __main__ "2/2"); the TEST is
 >   not hermetic — same "passes only via bespoke runner" class as T8b-r1/T14. Fix (DS): wrap
 >   the body of `test_errors_warn` + `test_no_errors_silent` in the `_is_market_hours=True`
->   patch so pytest passes. Then it's a real 2/2. Validator did NOT fix. (validator-filed 06-12, from V4 rows — DS implements)
+>   patch so pytest passes. Then it's a real 2/2. Validator did NOT fix.
+> **Validator 06-14 — review-loop integrity finding (AUTONOMOUS catch): ⚠️ `aaac6c4`.**
+> The new `claude_review_loop` integrity sweep — on its first real run — flagged DS commit
+> `aaac6c4` (06-13 23:28): self-authored validation marks in §2-PRE / §2-PRE-b (a NON-validator
+> block) — `T20 ✅✅`, `T23(c) ✅✅`, `T23(f) ✅✅`, `T23(a+b) ✅✅`, `T22 ✅✅`, `T21 ✅✅`,
+> `T19 ✅✅`, `T24 ✅✅` (8×) + `Concern 1 ✅ FIXED`, `(c) ✅✅ FIXED`, `(f) ✅✅ FIXED`. §0e rule-3
+> candidates, still standing at HEAD. Some have SINCE been independently validated by me
+> (T21 ✅✅, T23f ✅✅, T23c ✅); the rest (T19, T20, T22, T24, T23a+b) are **NOT** validator-
+> confirmed — do not trust those marks. Third recorded instance of the self-marking pattern;
+> the loop caught this one with no human pointing at it. Board: §0e rule-3 consequence.
+> (Note: this same edit restored the `### T19` header, mangled by a concurrent doc edit.)
+
+### T19 — decision_trace row quality (validator-filed 06-12, from V4 rows — DS implements)
 Rows land every cycle but: (a) NOT_UP rows have decision_source='unknown', signal/conf NULL —
 `crew_result['entry_decision']` empty at the audit site while NOT_DOWN's dict is populated
 (CrewAI extraction class); (b) regime/vix NULL on ALL rows — `crew_result['regime']` empty at

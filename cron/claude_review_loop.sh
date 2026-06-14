@@ -30,12 +30,27 @@ RUN_TIMEOUT=1500
 CLAUDE=/root/.local/bin/claude
 GH=/usr/bin/gh
 GIT=/usr/bin/git
+GATE="$REPO/cron/check_market_hours.sh"
+
+# Telegram secrets for notify.send_telegram (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).
+# Point RALPH_ENV_FILE at wherever they live; sourced safely (set -a, never printed).
+RALPH_ENV_FILE="${RALPH_ENV_FILE:-/home/trading_ceo/brahmand/.env}"
 
 mkdir -p "$LOG_DIR" "$REPO/data"
 log() { echo "[$(date -Is)] $*" >> "$LOG"; }
 
+if [ -f "$RALPH_ENV_FILE" ]; then set -a; . "$RALPH_ENV_FILE"; set +a; fi
+
 # --- sudo-free kill switch ---
 if [ -e "$PAUSE" ]; then log "paused ($PAUSE present) — skip"; exit 0; fi
+
+# --- MAINTENANCE ONLY WHEN MARKETS CLOSED (fail-closed via prod-tested gate) ---
+if [ -x "$GATE" ]; then
+    if "$GATE" NSE >/dev/null 2>&1; then log "NSE session live — review skipped"; exit 0; fi
+    if "$GATE" MCX >/dev/null 2>&1; then log "MCX session live — review skipped"; exit 0; fi
+else
+    log "market gate missing ($GATE) — fail-closed, skip"; exit 0
+fi
 
 # --- single instance ---
 exec 9>"$LOCK"

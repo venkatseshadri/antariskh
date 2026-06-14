@@ -302,6 +302,8 @@ Known items already on record:
 
 ## E6 — Dev/Prod Isolation  `P0` (unlocks 24/7 autonomous build)
 
+> Umbrella system doc: **`docs/OUROBOROUS.md`** (the build/review/deploy loop + isolation model).
+
 Goal of epic: the ralph loops do **maintenance** (edit code, run tests) — that must never run
 against the live tree/services/data. Isolate DS into a dev clone owned by an unprivileged user
 (`dsdev`); production changes ONLY via a gated, market-closed deploy. Then *when* the loop runs

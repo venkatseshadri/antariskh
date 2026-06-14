@@ -11,9 +11,11 @@ SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
 # Build loop — one ds:ready issue per run, every 15 min, 09:00–21:45 IST Mon–Sat.
+# Fires at :00 :15 :30 :45.
 */15 9-21 * * 1-6 root /home/trading_ceo/antariksh/cron/ds_ralph_loop.sh
 
-# Review loop — validate ds:done + [deepseek] commits, every 30 min, 09:00–21:30 IST Mon–Sat.
-*/30 9-21 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh
-# Final review tick at 22:00 to catch the day's last build.
-0 22 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh
+# Review loop — STAGGERED to :07 and :37, i.e. 7 min AFTER the :00/:30 build ticks,
+# so it reviews freshly-built/handed-back work and never shares a minute with a build run.
+7,37 9-21 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh
+# Final review tick at 22:07 to catch the day's last build (21:45).
+7 22 * * 1-6 root /home/trading_ceo/antariksh/cron/claude_review_loop.sh

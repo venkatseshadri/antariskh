@@ -25,8 +25,13 @@ OPENCODE=/root/.opencode/bin/opencode
 GH=/usr/bin/gh
 GIT=/usr/bin/git
 
+PAUSE="$LOG_DIR/.ralph_paused"
+
 mkdir -p "$LOG_DIR"
 log() { echo "[$(date -Is)] $*" >> "$LOG"; }
+
+# --- sudo-free kill switch ---
+if [ -e "$PAUSE" ]; then log "paused ($PAUSE present) — skip"; exit 0; fi
 
 # --- single instance (flock, non-blocking) ---
 exec 9>"$LOCK"
@@ -50,6 +55,13 @@ ISSUE=$("$GH" issue list -R "$REPO_URL" --label ds:ready --state open \
     -q 'map(select(.assignees|length==0)) | sort_by(.number) | .[0].number' 2>>"$LOG")
 if [ -z "$ISSUE" ] || [ "$ISSUE" = "null" ]; then
     log "nothing ds:ready — skip"
+    exit 0
+fi
+
+# --- DRY RUN: prove guardrails + env, skip claim + opencode (no side effects) ---
+if [ "${RALPH_DRYRUN:-0}" = "1" ]; then
+    log "DRYRUN: would build #$ISSUE — NO claim, NO opencode"
+    log "DRYRUN: opencode=$([ -x "$OPENCODE" ] && echo ok || echo MISSING) flock=held cap=$count/$PER_DAY_CAP"
     exit 0
 fi
 

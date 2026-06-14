@@ -1,11 +1,12 @@
 #!/bin/bash
-# Claude review loop — validate DS deliverables (S4.1 spec).
-# Cron-safe: flock single-instance + per-day cap + timeout + per-day log.
-# Reviews ds:done issues AND [deepseek] commits since last_reviewed_sha, runs
-# an integrity sweep for self-marked validator lines, and writes verdicts.
-# VALIDATION-ONLY: raises + validates, never edits pipeline/order code (§0b).
+# Claude review loop — Option A (READ-ONLY + NOTIFY) of S4.1.
+# Validates DS deliverables, but has NO write authority: claude runs read-only
+# Accept commands under a least-privilege allowlist (cron/review_settings.json),
+# prints verdicts to stdout (captured to log); the WRAPPER alerts via Telegram.
+# It NEVER edits labels/docs or pushes — a human applies verdicts. (§0b validator.)
 #
-# SCAFFOLD — staged for Board review. Not auto-enabled.
+# Cron-safe: flock single-instance + per-day cap + timeout + per-day log.
+# RALPH_DRYRUN=1 → exercise every guardrail but skip the claude -p call.
 
 set -u
 
@@ -19,6 +20,8 @@ LOG="$LOG_DIR/claude_review_loop_$DAY.log"
 LOCK=/tmp/claude_review_loop.lock
 CAP_FILE="$LOG_DIR/.claude_review_count_$DAY"
 SHA_FILE="$REPO/data/last_reviewed_sha"
+SETTINGS="$REPO/cron/review_settings.json"
+PAUSE="$LOG_DIR/.ralph_paused"
 
 PER_DAY_CAP=12
 RUN_TIMEOUT=1500
@@ -30,23 +33,19 @@ GIT=/usr/bin/git
 mkdir -p "$LOG_DIR" "$REPO/data"
 log() { echo "[$(date -Is)] $*" >> "$LOG"; }
 
+# --- sudo-free kill switch ---
+if [ -e "$PAUSE" ]; then log "paused ($PAUSE present) — skip"; exit 0; fi
+
 # --- single instance ---
 exec 9>"$LOCK"
-if ! /usr/bin/flock -n 9; then
-    log "already running — skip"
-    exit 0
-fi
+if ! /usr/bin/flock -n 9; then log "already running — skip"; exit 0; fi
 
 # --- per-day token brake ---
 count=$(cat "$CAP_FILE" 2>/dev/null || echo 0)
-if [ "$count" -ge "$PER_DAY_CAP" ]; then
-    log "per-day cap $PER_DAY_CAP reached — skip"
-    exit 0
-fi
+if [ "$count" -ge "$PER_DAY_CAP" ]; then log "per-day cap $PER_DAY_CAP reached — skip"; exit 0; fi
 
 # --- is there anything to review? (ds:done issues OR new [deepseek] commits) ---
-DS_DONE=$("$GH" issue list -R "$REPO_URL" --label ds:done --state open \
-    --json number -q 'length' 2>>"$LOG")
+DS_DONE=$("$GH" issue list -R "$REPO_URL" --label ds:done --state open --json number -q 'length' 2>>"$LOG")
 LAST_SHA=$(cat "$SHA_FILE" 2>/dev/null || echo "")
 NEW_COMMITS=$(cd "$BRAHMAND" && "$GIT" log --grep='\[deepseek\]' --oneline \
     ${LAST_SHA:+"$LAST_SHA"..HEAD} 2>/dev/null | wc -l)
@@ -56,28 +55,40 @@ if [ "${DS_DONE:-0}" -eq 0 ] && [ "${NEW_COMMITS:-0}" -eq 0 ]; then
     exit 0
 fi
 
-echo $((count + 1)) > "$CAP_FILE"
-log "REVIEW start (ds:done=$DS_DONE, new commits=$NEW_COMMITS, run $((count + 1))/$PER_DAY_CAP)"
+# --- DRY RUN: prove guardrails + env, skip the LLM ---
+if [ "${RALPH_DRYRUN:-0}" = "1" ]; then
+    log "DRYRUN: would review (ds:done=$DS_DONE, new_commits=$NEW_COMMITS)"
+    log "DRYRUN: settings=$([ -f "$SETTINGS" ] && echo present || echo MISSING) claude=$([ -x "$CLAUDE" ] && echo ok || echo MISSING) flock=held cap=$count/$PER_DAY_CAP"
+    exit 0
+fi
 
-PROMPT="You are Claude, the VALIDATOR (role §0b in docs/DAMBUILDER_STATE.md): you raise and \
-validate ONLY — never edit pipeline/order/feed code, never implement fixes. Do all of: \
-(1) For each GitHub issue labelled ds:done in $REPO_URL, re-run that story's Accept/Verify \
-commands; on pass set label chairman:approve, on fail set changes:requested with a comment \
-listing exactly what failed. Never self-approve, never close. \
-(2) For each [deepseek] commit in brahmand and antariksh since SHA '$LAST_SHA', re-run the \
-relevant task's Accept and append a validator verdict (✅✅/❌/◐) to its task block in \
-docs/DAMBUILDER_STATE.md (append-only, validator-owned). \
-(3) INTEGRITY SWEEP: grep docs/DAMBUILDER_STATE.md for ✅✅ or '✅ FIXED' lines added since \
-'$LAST_SHA' that are NOT in a validator-authored block; flag each as a §0e rule-3 candidate \
-violation and revert the task to its honest status. A self-marked ✅✅ is an automatic ❌. \
-(4) Commit doc/label changes; notify via picoclaw on any ❌ or violation, silent if all green."
+echo $((count + 1)) > "$CAP_FILE"
+log "REVIEW start (ds:done=$DS_DONE, new=$NEW_COMMITS, run $((count + 1))/$PER_DAY_CAP)"
+
+PROMPT="You are Claude, the VALIDATOR (role §0b, docs/DAMBUILDER_STATE.md): raise + validate \
+ONLY. You have NO write tools — do not attempt to edit files, labels, or push; just analyse \
+and PRINT a report. Do all read-only: \
+(1) For each GitHub issue labelled ds:done in $REPO_URL, re-run its story's Accept/Verify \
+commands and state PASS/FAIL with the command output. \
+(2) For each [deepseek] commit in brahmand + antariksh since SHA '$LAST_SHA', re-run the \
+relevant task's Accept and give a verdict (PASS=✅✅ / FAIL=❌ / PARTIAL=◐) with evidence. \
+(3) INTEGRITY SWEEP: scan docs/DAMBUILDER_STATE.md for ✅✅ or '✅ FIXED' lines added since \
+'$LAST_SHA' that are NOT in a validator-authored block — flag each as a §0e rule-3 candidate. \
+Accept-command output is the arbiter. End your report with EXACTLY one line: \
+'REVIEW_RESULT: GREEN' if everything passed and no integrity flags, else 'REVIEW_RESULT: ISSUES'."
 
 /usr/bin/timeout "$RUN_TIMEOUT" "$CLAUDE" -p "$PROMPT" \
-    --permission-mode acceptEdits >>"$LOG" 2>&1
+    --settings "$SETTINGS" --add-dir "$BRAHMAND" >>"$LOG" 2>&1
 rc=$?
 log "REVIEW end rc=$rc"
 
-# --- advance the watermark (brahmand HEAD; antariksh tracked separately by the doc) ---
+# --- alert on issues (wrapper notifies; claude has no write tools) ---
+if grep -q "REVIEW_RESULT: ISSUES" "$LOG" 2>/dev/null || grep -q "❌" "$LOG" 2>/dev/null; then
+    MSG="🔴 Ralph review found issues $(date -Is). See logs/claude_review_loop_$DAY.log (apply verdicts manually)."
+    /usr/bin/python3 -c "import sys; sys.path.insert(0,'$BRAHMAND'); from notify import send_telegram; send_telegram('''$MSG''', dedupe_key='ralph_review', throttle_min=30)" >>"$LOG" 2>&1 || log "notify failed"
+fi
+
+# --- advance watermark only on a clean run ---
 if [ "$rc" -eq 0 ]; then
     (cd "$BRAHMAND" && "$GIT" rev-parse HEAD) > "$SHA_FILE" 2>>"$LOG"
     log "last_reviewed_sha -> $(cat "$SHA_FILE")"

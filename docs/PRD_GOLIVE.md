@@ -300,6 +300,36 @@ Known items already on record:
 
 ---
 
+## E6 — Dev/Prod Isolation  `P0` (unlocks 24/7 autonomous build)
+
+Goal of epic: the ralph loops do **maintenance** (edit code, run tests) — that must never run
+against the live tree/services/data. Isolate DS into a dev clone owned by an unprivileged user
+(`dsdev`); production changes ONLY via a gated, market-closed deploy. Then *when* the loop runs
+stops mattering and it can run **24/7** (the off-hours guard becomes obsolete). Audit 2026-06-14
+found the test harness itself is **prod-coupled**: `position_manager` reaches prod DuckDB and can
+write prod `capture_nifty.sqlite` — so isolated *validation* is a prerequisite, not polish.
+
+### S6.1 — dsdev user + dev clone + deploy gate  `P0`  (#21)
+- **Built 2026-06-14 (Director):** dev clones `/home/trading_ceo/dev/{antariksh,brahmand}`, `dsdev`
+  (no sudo, prod-data write denied), `cron/deploy_gate.sh` (markets-closed + no-open-position +
+  merge + PORCUPINE smoke + rollback). **Remaining (operator):** dsdev auth (gh/opencode/claude).
+
+### S6.2 — Sandbox-aware data paths  `P0`  (#22, `ds:ready`) — THE validation unblocker
+- **Goal:** every data path honors `BRAHMAND_SANDBOX`; no test reaches prod. Core first:
+  `position_manager:509` (prod write) + `:145` (research DuckDB) → makes PORCUPINE lifecycle sims
+  green under a fresh sandbox. Then the other ~13 absolute-path files (also advances S0.3).
+  **Depends-on:** none. **Blocks:** S6.3.
+
+### S6.3 — Run the loops 24/7 in the isolated clone  `P1`  (#23)
+- Point build+review loops at the dev clone as `dsdev` with sandbox; drop the build market-guard;
+  24/7 cadence. **Depends-on:** S6.1 + S6.2.
+
+### S6.4 — Deploy-gate hardening + first gated deploy  `P1`  (#24)
+- Service-restart matrix, post-deploy health check, Telegram, runbook; prove one real deploy.
+  **Depends-on:** S6.1.
+
+---
+
 ## 3. The Two Ralph Loops (how this backlog gets executed)
 
 ```

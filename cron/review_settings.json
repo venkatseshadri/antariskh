@@ -37,7 +37,6 @@
       "Bash(wget:*)",
       "Write",
       "Edit",
-      "MultiEdit",
       "NotebookEdit"
     ]
   }

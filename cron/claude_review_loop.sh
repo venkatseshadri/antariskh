@@ -78,7 +78,7 @@ Accept-command output is the arbiter. End your report with EXACTLY one line: \
 'REVIEW_RESULT: GREEN' if everything passed and no integrity flags, else 'REVIEW_RESULT: ISSUES'."
 
 /usr/bin/timeout "$RUN_TIMEOUT" "$CLAUDE" -p "$PROMPT" \
-    --settings "$SETTINGS" --add-dir "$BRAHMAND" >>"$LOG" 2>&1
+    --settings "$SETTINGS" --add-dir "$BRAHMAND" --strict-mcp-config >>"$LOG" 2>&1
 rc=$?
 log "REVIEW end rc=$rc"
 

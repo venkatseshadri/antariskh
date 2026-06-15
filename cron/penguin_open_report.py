@@ -98,6 +98,18 @@ def _send(message: str) -> bool:
         return False
 
 
+def _kalki_block() -> str:
+    """Tag kalki dev-loop + claude rate/quota status into the health publish."""
+    try:
+        r = subprocess.run(
+            ["python3", "/home/trading_ceo/kalki/scripts/kalki_oneline.py"],
+            capture_output=True, text=True, timeout=8,
+        )
+        return r.stdout.strip() or "🛠️ KALKI: no status"
+    except Exception:
+        return "🛠️ KALKI: status unavailable"
+
+
 def main():
     svcs = {n: _svc(n) for n in (
         "feed", "consumer-nifty", "consumer-sensex",
@@ -132,7 +144,8 @@ def main():
         f"Queue: NIFTY={qn} SENSEX={qs}\n"
         f"Capture today: N {cn} bars (last {cn_ts or '-'}) | S {cs} (last {cs_ts or '-'})\n"
         f"{_enriched_quality()}\n"
-        f"Paper-entry: {_last_kickoff()}"
+        f"Paper-entry: {_last_kickoff()}\n"
+        f"{_kalki_block()}"
     )
     print(msg)
     _send(msg)

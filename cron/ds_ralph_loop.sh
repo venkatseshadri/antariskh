@@ -11,13 +11,22 @@
 
 set -u
 
+# If OUROBOROS_PROJECT is set, source the project config (G1: generic config system).
+# Defaults below are used when running without a config (backward compatibility).
+PROJECT_NAME="${OUROBOROS_PROJECT:-antariksh}"
+_CONF="/home/trading_ceo/ouroboros/projects/${PROJECT_NAME}.conf"
+if [ -f "$_CONF" ]; then
+    # shellcheck source=/dev/null
+    . "$_CONF"
+fi
+
 REPO=/home/trading_ceo/antariksh
-CLONE=/home/trading_ceo/dev/antariksh
-BCLONE=/home/trading_ceo/dev/brahmand
+CLONE="${DEV_DIR:-/home/trading_ceo/dev/antariksh}"
+BCLONE="${BDEV_DIR:-/home/trading_ceo/dev/brahmand}"
 SANDBOX=/home/trading_ceo/dev/sandbox
-REPO_URL=venkatseshadri/antariskh
-BREPO_URL=venkatseshadri/brahmand
-PROJECT_NAME=antariksh
+REPO_URL="${REPO:-venkatseshadri/antariskh}"
+BREPO_URL="${BREPO:-venkatseshadri/brahmand}"
+PROJECT_NAME="${PROJECT_NAME:-antariksh}"
 # SKIP_TAG: issues whose body contains this tag are loop-unbuildable (ROOT_REPO_ONLY etc.)
 SKIP_TAG="${SKIP_TAG:-ROOT_REPO_ONLY}"
 LOG_DIR="$REPO/logs"

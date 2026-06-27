@@ -1,100 +1,143 @@
 #!/bin/bash
-# DeepSeek build loop — ONE ds:ready issue per run (DEEPSEEK_RALPH_LOOP.md).
-# Cron-safe: flock single-instance + per-day cap + timeout + per-day log.
-# Picks the lowest unassigned ds:ready issue, hands it to opencode/DeepSeek to
-# implement to spec, then stops. Never closes (ds:ready -> ds:done only).
+# DeepSeek build loop — CREDENTIAL-LESS SPLIT (E6 isolation).
+# Cron runs as ROOT (orchestrator + the only one with GitHub creds). The untrusted
+# build runs as dsdev inside the dev CLONE with BRAHMAND_SANDBOX and NO creds/network.
+# Root does all git (sync/branch/push) + the label op; dsdev only edits files, runs
+# tests, and commits locally (clone is chowned to it for the build).
 #
-# SCAFFOLD — staged for Board review. Installing /etc/cron.d/antariksh-ralph
-# enables autonomous DS (incl. market hours, per §0e ruling 3). Not auto-enabled.
+# Safe 24/7: dsdev can't write prod data (perms), restart services (no sudo), or
+# reach the prod tree. flock + per-day cap + pause retained.
+# RALPH_DRYRUN=1 → sync+pick+branch, skip the opencode build + push.
 
 set -u
 
-export HOME=/root
 REPO=/home/trading_ceo/antariksh
+CLONE=/home/trading_ceo/dev/antariksh
+BCLONE=/home/trading_ceo/dev/brahmand
+SANDBOX=/home/trading_ceo/dev/sandbox
 REPO_URL=venkatseshadri/antariskh
+BREPO_URL=venkatseshadri/brahmand
+PROJECT_NAME=antariksh
+# SKIP_TAG: issues whose body contains this tag are loop-unbuildable (ROOT_REPO_ONLY etc.)
+SKIP_TAG="${SKIP_TAG:-ROOT_REPO_ONLY}"
 LOG_DIR="$REPO/logs"
 DAY=$(TZ=Asia/Kolkata date +%Y%m%d)
 LOG="$LOG_DIR/ds_ralph_loop_$DAY.log"
-LOCK=/tmp/ds_ralph_loop.lock
+# Per-project lock (G14): allows future parallel builds for different projects.
+LOCK="/tmp/ouroboros_build_${PROJECT_NAME}.lock"
 CAP_FILE="$LOG_DIR/.ds_build_count_$DAY"
-
+# Pause file mirrors LLD canonical location; also checks legacy path.
+PAUSE_CANONICAL="/home/trading_ceo/ouroboros/logs/.ralph_paused"
+PAUSE_LEGACY="$LOG_DIR/.ralph_paused"
 PER_DAY_CAP=8
 RUN_TIMEOUT=1800
-
-OPENCODE=/root/.opencode/bin/opencode
 GH=/usr/bin/gh
 GIT=/usr/bin/git
-
-PAUSE="$LOG_DIR/.ralph_paused"
+DSDEV=dsdev
 
 mkdir -p "$LOG_DIR"
 log() { echo "[$(date -Is)] $*" >> "$LOG"; }
 
-# --- sudo-free kill switch ---
-if [ -e "$PAUSE" ]; then log "paused ($PAUSE present) — skip"; exit 0; fi
-
-# --- MAINTENANCE ONLY WHEN MARKETS CLOSED (fail-closed via prod-tested gate) ---
-# Never edit code / restart services / build while equity OR commodity session is
-# live — protects capture + order path. check_market_hours.sh exits 0 if the
-# session is OPEN (then we skip). Holiday/weekend aware via check_market_open.sh.
-GATE="$REPO/cron/check_market_hours.sh"
-if [ -x "$GATE" ]; then
-    if "$GATE" NSE >/dev/null 2>&1; then log "NSE session live — maintenance skipped"; exit 0; fi
-    if "$GATE" MCX >/dev/null 2>&1; then log "MCX session live — maintenance skipped"; exit 0; fi
-else
-    log "market gate missing ($GATE) — fail-closed, skip"; exit 0
-fi
-
-# --- single instance (flock, non-blocking) ---
-exec 9>"$LOCK"
-if ! /usr/bin/flock -n 9; then
-    log "already running — skip"
-    exit 0
-fi
-
-# --- per-day token brake ---
+if [ -e "$PAUSE_CANONICAL" ] || [ -e "$PAUSE_LEGACY" ]; then log "paused — skip"; exit 0; fi
+exec 9>"$LOCK"; if ! /usr/bin/flock -n 9; then log "already running — skip"; exit 0; fi
 count=$(cat "$CAP_FILE" 2>/dev/null || echo 0)
-if [ "$count" -ge "$PER_DAY_CAP" ]; then
-    log "per-day cap $PER_DAY_CAP reached — skip"
-    exit 0
+if [ "$count" -ge "$PER_DAY_CAP" ]; then log "per-day cap — skip"; exit 0; fi
+
+$GIT config --global --add safe.directory "$CLONE" 2>/dev/null || true
+$GIT config --global --add safe.directory "$BCLONE" 2>/dev/null || true
+
+# 1) sync clones to origin/master (root creds)
+for c in "$CLONE" "$BCLONE"; do
+    $GIT -C "$c" fetch --quiet origin master 2>>"$LOG" || { log "fetch failed $c"; exit 0; }
+    $GIT -C "$c" reset --hard --quiet origin/master 2>>"$LOG"
+    $GIT -C "$c" clean -fdq 2>>"$LOG"
+done
+
+# 2) pick lowest unassigned ds:ready; skip SKIP_TAG issues (G12)
+ISSUE_JSON=$("$GH" issue list -R "$REPO_URL" --label ds:ready --state open --json number,assignees,body \
+    -q 'map(select(.assignees|length==0)) | sort_by(.number) | .[0]' 2>>"$LOG")
+ISSUE=$(echo "$ISSUE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin) or {}; print(d.get('number',''))" 2>/dev/null)
+if [ -z "$ISSUE" ] || [ "$ISSUE" = "null" ]; then log "nothing ds:ready — skip"; exit 0; fi
+
+ISSUE_BODY=$(echo "$ISSUE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin) or {}; print(d.get('body',''))" 2>/dev/null)
+if echo "$ISSUE_BODY" | grep -qF "$SKIP_TAG"; then
+    log "skip #$ISSUE — contains $SKIP_TAG (loop-unbuildable)"; exit 0
 fi
 
-cd "$REPO" || { log "cd failed"; exit 1; }
+ISSUE_TITLE=$("$GH" issue view -R "$REPO_URL" "$ISSUE" --json title -q '.title' 2>>"$LOG")
+# Branch naming: ralph/{project}/issue-{N} (G13)
+BR="ralph/${PROJECT_NAME}/issue-${ISSUE}"
 
-# --- pick next ready, unassigned, lowest number ---
-ISSUE=$("$GH" issue list -R "$REPO_URL" --label ds:ready --state open \
-    --json number,assignees \
-    -q 'map(select(.assignees|length==0)) | sort_by(.number) | .[0].number' 2>>"$LOG")
-if [ -z "$ISSUE" ] || [ "$ISSUE" = "null" ]; then
-    log "nothing ds:ready — skip"
-    exit 0
-fi
+# 3) branch (root) in both clones
+$GIT -C "$CLONE" checkout -B "$BR" --quiet 2>>"$LOG"
+$GIT -C "$BCLONE" checkout -B "$BR" --quiet 2>>"$LOG"
 
-# --- DRY RUN: prove guardrails + env, skip claim + opencode (no side effects) ---
 if [ "${RALPH_DRYRUN:-0}" = "1" ]; then
-    log "DRYRUN: would build #$ISSUE — NO claim, NO opencode"
-    log "DRYRUN: opencode=$([ -x "$OPENCODE" ] && echo ok || echo MISSING) flock=held cap=$count/$PER_DAY_CAP"
+    log "DRYRUN: synced+picked #$ISSUE ($ISSUE_TITLE), branch $BR — NO build/push. cap=$count/$PER_DAY_CAP"
     exit 0
 fi
 
-# --- claim (the lock) ---
+# 4) claim + stage the task, hand the clones to dsdev for the build
 "$GH" issue edit -R "$REPO_URL" "$ISSUE" --add-assignee @me >>"$LOG" 2>&1
+"$GH" issue view -R "$REPO_URL" "$ISSUE" --json title,body -q '.title + "\n\n" + .body' \
+    > "$CLONE/.ralph_task.md" 2>>"$LOG"
+chown -R "$DSDEV":"$DSDEV" "$CLONE" "$BCLONE"
 echo $((count + 1)) > "$CAP_FILE"
-log "BUILD start issue #$ISSUE (run $((count + 1))/$PER_DAY_CAP)"
+log "BUILD #$ISSUE start (dsdev, sandbox, no creds) run $((count+1))/$PER_DAY_CAP"
 
-# --- implement ONE issue via opencode/DeepSeek, time-boxed ---
-PROMPT="You are DeepSeek, the implementer. Read docs/DEEPSEEK_RALPH_LOOP.md (your \
-operating contract) and execute exactly ONE loop iteration for GitHub issue #$ISSUE in \
-repo $REPO_URL. Implement the issue's PRD story to its Acceptance/Test AND the 9-dim \
-rubric, write/run tests + integration + PORCUPINE, commit referencing #$ISSUE, then set \
-the label ds:ready -> ds:done with a handback comment. Do NOT close. ONE issue only."
+# 5) BUILD as dsdev — opencode implements, runs tests, commits LOCALLY (no push/gh/network)
+PROMPT="You are DeepSeek implementing ONE story. The spec is ./.ralph_task.md (read it first). \
+Work ONLY in this repo clone (and ../brahmand if the story spans both). Implement to its \
+Acceptance/Test + the 9-dim rubric. Run its tests + relevant PORCUPINE scenarios \
+(python3 -m sim.run_scenario ...). When green, \`git add\` + \`git commit\` with a conventional \
+message referencing #$ISSUE and [deepseek]. Do NOT push, do NOT use gh, do NOT touch any path \
+outside these clones."
+sudo -u "$DSDEV" env HOME=/home/"$DSDEV" BRAHMAND_SANDBOX="$SANDBOX" \
+    /usr/bin/timeout "$RUN_TIMEOUT" opencode run -m deepseek/deepseek-chat --thinking "$PROMPT" \
+    >>"$LOG" 2>&1
+OPENCODE_RC=$?
+log "BUILD #$ISSUE opencode rc=$OPENCODE_RC"
 
-/usr/bin/timeout "$RUN_TIMEOUT" "$OPENCODE" run -m deepseek/deepseek-chat --thinking \
-    "$PROMPT" >>"$LOG" 2>&1
-rc=$?
-log "BUILD end issue #$ISSUE rc=$rc"
+# 6) root (trusted, narrow): push any branch that got commits + PR + handback label (G5, G6)
+pushed=0
+for pair in "$CLONE:$REPO_URL" "$BCLONE:$BREPO_URL"; do
+    dir="${pair%%:*}"
+    repo="${pair##*:}"
+    if [ -n "$($GIT -C "$dir" log "origin/master..$BR" --oneline 2>/dev/null)" ]; then
+        if $GIT -C "$dir" push origin "$BR" >>"$LOG" 2>&1; then
+            log "pushed $BR ($dir)"
+            pushed=1
+            # Create PR for review (G6) — required for chairman:approve gate in deploy
+            "$GH" pr create -R "$repo" \
+                --title "#${ISSUE}: ${ISSUE_TITLE}" \
+                --body "Closes #${ISSUE}" \
+                --base master --head "$BR" >>"$LOG" 2>&1 || log "pr create warn (may already exist)"
+        else
+            log "push failed $BR ($dir)"
+        fi
+    fi
+done
 
-# --- return to a clean master (per golive workflow) ---
-"$GIT" checkout master >>"$LOG" 2>&1 || log "git checkout master failed (inspect)"
+if [ "$pushed" = "1" ]; then
+    "$GH" issue edit -R "$REPO_URL" "$ISSUE" --remove-label ds:ready --add-label ds:done >>"$LOG" 2>&1
+    "$GH" issue comment -R "$REPO_URL" "$ISSUE" \
+        --body "🤖 ds-build: \`$BR\` pushed (isolated, no creds). Tests run by dsdev. PR created. Ready for review." \
+        >>"$LOG" 2>&1
+    log "handback #$ISSUE -> ds:done"
+else
+    # G5: no commits → post failure comment + changes:requested so DS gets feedback
+    FAIL_SNIPPET=$(tail -50 "$LOG" | head -c 2000)
+    "$GH" issue comment -R "$REPO_URL" "$ISSUE" \
+        --body "🔴 ds-build failed for \`$BR\`: no commits from dsdev (opencode rc=${OPENCODE_RC}).
 
+\`\`\`
+${FAIL_SNIPPET}
+\`\`\`" >>"$LOG" 2>&1 || true
+    "$GH" issue edit -R "$REPO_URL" "$ISSUE" \
+        --remove-label ds:ready --add-label changes:requested >>"$LOG" 2>&1 || true
+    log "no commits from dsdev for #$ISSUE — posted failure + set changes:requested"
+fi
+
+# 7) reset clones to master for next run
+$GIT -C "$CLONE" checkout --quiet master 2>>"$LOG"; $GIT -C "$BCLONE" checkout --quiet master 2>>"$LOG"
 exit 0

@@ -303,6 +303,13 @@ def _persist_bar_and_options(completed: dict):
                     failed += 1
             if failed:
                 log.warning(f"Option persist [{instrument}]: {failed} row(s) failed")
+            n_total = len(state["token_map"])
+            n_priced = sum(1 for o in state["token_map"].values() if (o.get("ltp") or 0) > 0)
+            log.info(
+                f"OPTDIAG[{instrument}] total={n_total} priced={n_priced} "
+                f"ticks={_opt_diag['ticks']} lp_folds={_opt_diag['lp_folds']} "
+                f"no_lp={_opt_diag['no_lp']}"
+            )
         db.commit()
     except Exception as e:
         log.warning(f"Bar+options write failed for {instrument}: {e}")
@@ -351,6 +358,7 @@ OPTION_ATM_RANGE = 5  # ±5 strikes from ATM (11 strikes × CE/PE = 22 tokens)
 INSTRUMENT_GAP = {"NIFTY": 50, "SENSEX": 100}
 
 _option_state = {}  # instrument → {token_map, tsym_map, subscribed, atm, expiry}
+_opt_diag = {"ticks": 0, "lp_folds": 0, "no_lp": 0}  # DIAG: option tick delivery
 
 
 def _init_option_feed(api, instrument: str, spot: float):
@@ -575,6 +583,11 @@ def main():
                 opt = state["token_map"][token]
                 _apply_option_tick(opt, msg)  # guards ltp against lp-less ticks
                 _publish_option_tick(opt, inst)
+                _opt_diag["ticks"] += 1
+                if float(msg.get("lp", 0) or 0) > 0:
+                    _opt_diag["lp_folds"] += 1
+                else:
+                    _opt_diag["no_lp"] += 1
                 return  # Option tick — skip bucketing.
 
         # ── Index tick branch (existing) ───────────────────────────────────

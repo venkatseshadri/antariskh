@@ -304,44 +304,12 @@ def main():
                         f"Bars: {bar_count} (ckpt: {last_ts}), Options: {opt_count}"
                     )
 
-            # ── Process option LTPs (NIFTY + SENSEX) ─────────────────────────
-            # Separate transaction from bars — options are best-effort.
-            if instrument in ("NIFTY", "SENSEX"):
-                ltp_key = f"feed:{instrument}:options:ltp"
-                window_key = f"feed:{instrument}:options:window"
-
-                window_json = r.get(window_key)
-                if window_json:
-                    try:
-                        valid_strikes = json.loads(window_json)
-                        if valid_strikes:
-                            placeholders = ",".join("?" * len(valid_strikes))
-                            conn.execute(
-                                f"DELETE FROM option_prices WHERE strike NOT IN ({placeholders})",
-                                valid_strikes,
-                            )
-                    except Exception:
-                        pass
-
-                for raw in r.hgetall(ltp_key).values():
-                    tick = json.loads(raw)
-                    conn.execute(
-                        """INSERT OR REPLACE INTO option_prices
-                           (tsym, strike, option_type, ltp, oi, volume, timestamp)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            tick["tsym"],
-                            tick["strike"],
-                            tick["option_type"],
-                            tick["ltp"],
-                            tick.get("oi"),
-                            tick.get("volume"),
-                            tick["timestamp"],
-                        ),
-                    )
-                    opt_count += 1
-
-                conn.commit()
+            # Option LTPs are written directly to option_prices by feed.py
+            # (Redis purge, 06-11). The legacy block that re-synced them here from
+            # the feed:{inst}:options:ltp hash + :window key was deleting feed.py's
+            # fresh rows (strike NOT IN a now-frozen window) and restoring the stale
+            # 06-11 hash snapshot every cycle — the cause of ~19 days of frozen
+            # premiums. feed.py is the sole option_prices writer; do not touch it here.
 
             r.set(
                 f"consumer:{instrument}:heartbeat", datetime.now().isoformat(), ex=120

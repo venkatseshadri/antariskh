@@ -14,6 +14,7 @@ Exit 0 = clean (no drift beyond thresholds); exit 1 = drift / error.
 import argparse
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -98,9 +99,13 @@ def load_1min_bars(db_path: str, instrument: str, date: str) -> list:
         ]
     finally:
         conn.close()
+    return _interp_poison(raw, date)
+
+
+def _interp_poison(raw: list, label: str = "") -> list:
+    """Interpolate low <= 0 bars (poison fix) in place; returns the same list."""
     if not raw:
         return []
-
     poisoned = 0
     prev_low = None
     for i, bar in enumerate(raw):
@@ -113,10 +118,44 @@ def load_1min_bars(db_path: str, instrument: str, date: str) -> list:
             poisoned += 1
         prev_low = raw[i].get("low", 0) or 0
     if poisoned:
-        print(
-            f"[multitf_recompute] {date}: interpolated low for {poisoned} poisoned bars"
-        )
+        print(f"[multitf_recompute] {label}: interpolated low for {poisoned} poisoned bars")
     return raw
+
+
+def load_1min_range(db_path: str, instrument: str, start_date: str) -> list:
+    """1-min bars with date >= start_date (multi-day, for indicator seeding)."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        raw = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT timestamp, open, high, low, close, volume "
+                "FROM market_data "
+                "WHERE instrument=? AND substr(timestamp,1,10) >= ? "
+                "ORDER BY timestamp",
+                (instrument, start_date),
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    return _interp_poison(raw, start_date)
+
+
+def _aggregate_multiday(bars: list, tf: int) -> list:
+    """Aggregate multi-day 1-min bars → TF candles, PER DAY then concatenated.
+
+    aggregate_1min_to_tf buckets by session-minute only (no date), so feeding it
+    multiple days would merge same-time bars across days. Aggregate each day
+    separately and concatenate so the candle series spans days correctly — giving
+    indicators a real lookback window without cross-day OHLC contamination.
+    """
+    days = sorted({b["timestamp"][:10] for b in bars})
+    candles: list = []
+    for d in days:
+        day_bars = [b for b in bars if b["timestamp"][:10] == d]
+        candles += aggregate_1min_to_tf(day_bars, tf)
+    return candles
 
 
 # ── Multi-TF aggregation (session-start anchored) ──────────────────────────
@@ -321,32 +360,86 @@ def recompute_and_diff(
 
 # ── Heal ────────────────────────────────────────────────────────────────────
 
+_OHLC_COLS = ["open", "high", "low", "close", "volume"]
 
-def heal(db_path: str, instrument: str, date: str) -> int:
-    """Recompute all indicator columns from 1-min bars and write them back.
-    Returns number of rows updated."""
-    bars_1min = load_1min_bars(db_path, instrument, date)
+
+def _write_full_rows(
+    conn: sqlite3.Connection, instrument: str, tf: int, rows: list, retries: int = 5
+) -> int:
+    """Lock-safe upsert of OHLCV + indicators in ONE row (BEGIN IMMEDIATE + retry).
+
+    Writes every populated column. Using INSERT OR REPLACE with the indicator
+    columns ONLY (as the in-place enricher did) nulls the OHLCV columns it omits —
+    that clobber is why market_data_multitf OHLC went null. This writer is the sole
+    writer of the table: it carries the aggregated OHLC from 1-min so nothing is lost.
+    """
+    if not rows:
+        return 0
+    cols = ["timestamp", "instrument", "timeframe_min"] + _OHLC_COLS + IND_COLS
+    placeholders = ", ".join(["?"] * len(cols))
+    sql = f"INSERT OR REPLACE INTO market_data_multitf ({', '.join(cols)}) VALUES ({placeholders})"
+    for attempt in range(retries):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for r in rows:
+                vals = [r["timestamp"], instrument, tf] + [
+                    r.get(c) for c in (_OHLC_COLS + IND_COLS)
+                ]
+                conn.execute(sql, vals)
+            conn.commit()
+            return len(rows)
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise
+    return 0
+
+
+def heal(db_path: str, instrument: str, date: str, lookback_days: int = 40) -> int:
+    """Recompute OHLCV + all indicator columns from 1-min bars and write them back.
+
+    Loads ``lookback_days`` of prior 1-min history so intraday-TF indicators
+    (RSI/ATR/MACD/SMA) have a real window — single-day input leaves RSI pinned at
+    the 50 default. Aggregates per-day (no cross-day OHLC merge) and writes only the
+    target ``date``'s rows. Returns number of rows written."""
+    from datetime import datetime, timedelta
+
+    start_date = (
+        datetime.strptime(date, "%Y-%m-%d") - timedelta(days=lookback_days)
+    ).strftime("%Y-%m-%d")
+    bars_1min = load_1min_range(db_path, instrument, start_date)
     if not bars_1min:
         print(f"[multitf_recompute] No 1-min bars for {instrument} {date}")
         return 0
 
-    from multitf_enricher import _open, _write_indicators, IND_COLS as _COLS
+    from multitf_enricher import _open
 
     conn = _open(db_path)
     updated = 0
     try:
         for tf in TIMEFRAMES:
-            candles = aggregate_1min_to_tf(bars_1min, tf)
+            candles = _aggregate_multiday(bars_1min, tf)
             if not candles:
                 continue
             indicators_list = [
                 compute_row_indicators(candles, i, tf) for i in range(len(candles))
             ]
             rows = [
-                {"timestamp": c["timestamp"], **ind}
+                {
+                    "timestamp": c["timestamp"],
+                    "open": c["open"],
+                    "high": c["high"],
+                    "low": c["low"],
+                    "close": c["close"],
+                    "volume": c["volume"],
+                    **ind,
+                }
                 for c, ind in zip(candles, indicators_list)
+                if c["timestamp"][:10] == date
             ]
-            n = _write_indicators(conn, instrument, tf, rows)
+            n = _write_full_rows(conn, instrument, tf, rows)
             print(f"  {tf}m: {n} rows healed")
             updated += n
     finally:
@@ -357,15 +450,53 @@ def heal(db_path: str, instrument: str, date: str) -> int:
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
+def live_loop(instruments: list, interval: int = 60, stop_hhmm: str = "15:35"):
+    """Re-heal today's multi-TF rows from 1-min market_data every ``interval`` s,
+    keeping market_data_multitf fresh intraday (sole intraday writer). Writes the
+    multitf_enricher heartbeat data_health watches. Self-exits after ``stop_hhmm``
+    (cron re-launches next session; a pgrep guard prevents doubles)."""
+    from datetime import datetime
+    from config.sqlite_schema import get_sqlite_capture_path
+    from multitf_enricher import _live_dir
+
+    print(f"[multitf_recompute] live: {instruments} every {interval}s", flush=True)
+    while True:
+        now = datetime.now()
+        day = now.strftime("%Y-%m-%d")
+        for inst in instruments:
+            try:
+                db_path = str(get_sqlite_capture_path(inst))
+                n = heal(db_path, inst, day)
+                hb = _live_dir() / f"multitf_enricher_{inst}.heartbeat"
+                hb.write_text(now.isoformat())
+                print(f"[multitf_recompute] live {inst} {day}: {n} rows", flush=True)
+            except Exception as e:  # never let one instrument kill the loop
+                print(f"[multitf_recompute] live {inst} error: {e}", flush=True)
+        if now.strftime("%H:%M") >= stop_hhmm:
+            print("[multitf_recompute] past close — exiting live loop", flush=True)
+            return
+        time.sleep(interval)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Recompute multi-TF indicators from 1-min bars and diff/repair"
     )
     ap.add_argument("--instrument", default="NIFTY", choices=["NIFTY", "SENSEX", "MCX"])
-    ap.add_argument("--date", required=True, help="YYYY-MM-DD")
+    ap.add_argument("--date", help="YYYY-MM-DD (required for --heal / diff)")
     ap.add_argument("--heal", action="store_true", help="write recomputed values back")
+    ap.add_argument("--both", action="store_true", help="NIFTY + SENSEX (live mode)")
+    ap.add_argument("--live", action="store_true", help="re-heal today every 60s until close")
     ap.add_argument("--db", help="capture sqlite path (default: prod)")
     args = ap.parse_args()
+
+    if args.live:
+        instruments = ["NIFTY", "SENSEX"] if args.both else [args.instrument]
+        live_loop(instruments)
+        return
+
+    if not args.date:
+        ap.error("--date is required for --heal / diff")
 
     if args.db:
         db_path = args.db

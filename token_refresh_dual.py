@@ -48,7 +48,7 @@ def refresh_flattrade():
             cwd=str(PYTHON_TRADER),
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
 
         logger.info(f"Exit code: {result.returncode}")
@@ -78,7 +78,7 @@ def refresh_flattrade():
             return False
 
     except subprocess.TimeoutExpired:
-        logger.error("Flattrade refresh timeout (120s exceeded)")
+        logger.error("Flattrade refresh timeout (300s exceeded)")
         return False
     except Exception as e:
         logger.error(f"Flattrade refresh error: {e}")
@@ -103,7 +103,7 @@ def refresh_shoonya():
             cwd=str(PYTHON_TRADER / "Shoonya_oAuthAPI-py"),
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
 
         logger.info(f"Exit code: {result.returncode}")
@@ -130,7 +130,7 @@ def refresh_shoonya():
             return False
 
     except subprocess.TimeoutExpired:
-        logger.error("Shoonya refresh timeout (120s exceeded)")
+        logger.error("Shoonya refresh timeout (300s exceeded)")
         return False
     except Exception as e:
         logger.error(f"Shoonya refresh error: {e}")

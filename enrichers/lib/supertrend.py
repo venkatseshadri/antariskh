@@ -40,16 +40,13 @@ def compute_multiframe_supertrend(
     except Exception:
         pass
 
-    directions = [result["st_5min_direction"], result["st_15min_direction"]]
-    valid_dirs = [d for d in directions if d is not None]
-    if len(valid_dirs) >= 2:
-        bullish_count = sum(1 for d in valid_dirs if d == "bullish")
-        if bullish_count >= 2:
-            result["st_consensus"] = "bullish"
-        elif bullish_count == 0:
-            result["st_consensus"] = "bearish"
-        else:
-            result["st_consensus"] = "mixed"
+    # 15m is the primary trend read (Board decision 2026-07-02): higher timeframe wins
+    # outright on disagreement instead of abstaining to "mixed". 5m is a fallback only
+    # when 15m has no data yet (early session / short buffer).
+    if result["st_15min_direction"] is not None:
+        result["st_consensus"] = result["st_15min_direction"]
+    elif result["st_5min_direction"] is not None:
+        result["st_consensus"] = result["st_5min_direction"]
 
     return result
 

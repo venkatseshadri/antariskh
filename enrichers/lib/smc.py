@@ -116,7 +116,10 @@ def _analyze_structure(recent: List[Dict]) -> Dict:
     elif highs[-1] < highs[-2] and lows[-1] < lows[-2]:
         structure = "LL"
     else:
-        structure = "HH" if highs[-1] > highs[-2] else "LL"
+        # neither a clean higher-high nor a clean lower-low — an inside bar (contained
+        # within the prior range) or outside bar (took out both prior extremes).
+        # Genuinely ambiguous; don't force it into HH/LL just because high moved one way.
+        structure = "MIXED"
 
     next_target = None
     if structure == "HH":

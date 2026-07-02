@@ -747,6 +747,13 @@ def run_live(instrument: str):
     log_path = LIVE_DIR / f"{instrument}_1min.log"
     log.info(f"Watching {log_path}")
 
+    # Spot indices carry volume=0 always (an index isn't a tradable instrument), so VWAP
+    # is otherwise permanently None. Borrow real traded volume from the paired futures
+    # feed at the same timestamp instead — futures move 1:1 with spot intraday.
+    fut_log_path = LIVE_DIR / f"{instrument}-FUT_1min.log" if instrument in ("NIFTY", "SENSEX") else None
+    fut_last_size = 0
+    fut_volume_by_ts: dict = {}
+
     # Resume from last enriched bar
     row = conn.execute(
         "SELECT value FROM consumer_state WHERE key = ?",
@@ -766,6 +773,28 @@ def run_live(instrument: str):
             except OSError:
                 time.sleep(5)
                 continue
+            if fut_log_path is not None:
+                try:
+                    fut_current_size = os.path.getsize(fut_log_path)
+                    if fut_current_size > fut_last_size:
+                        with open(fut_log_path, "r") as f:
+                            f.seek(fut_last_size)
+                            fut_raw = f.read(fut_current_size - fut_last_size)
+                        fut_last_size = fut_current_size
+                        for fline in fut_raw.strip().split("\n"):
+                            fparts = fline.strip().split("|")
+                            if len(fparts) > 6:
+                                try:
+                                    fut_volume_by_ts[fparts[0]] = float(fparts[6])
+                                except ValueError:
+                                    pass
+                        # bounded cache — only same-minute lookups needed
+                        if len(fut_volume_by_ts) > 20:
+                            for old_ts in sorted(fut_volume_by_ts)[:-20]:
+                                del fut_volume_by_ts[old_ts]
+                except OSError:
+                    pass
+
             if current_size <= last_size:
                 continue
             # Read new bytes
@@ -791,6 +820,10 @@ def run_live(instrument: str):
                     }
                 except (ValueError, IndexError):
                     continue
+
+                fut_vol = fut_volume_by_ts.get(bar["timestamp"])
+                if fut_vol is not None:
+                    bar["volume"] = fut_vol
 
                 if last_ts and bar.get("timestamp", "") <= last_ts:
                     continue

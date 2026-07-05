@@ -110,7 +110,22 @@ def _kalki_block() -> str:
         return "🛠️ KALKI: status unavailable"
 
 
+def _is_trading_day() -> bool:
+    """Same weekend/holiday calendar every capture unit's ExecCondition already uses —
+    reused here (not reimplemented) so this can't drift from the systemd gate."""
+    try:
+        return subprocess.run(
+            [str(Path(__file__).parent / "check_market_open.sh"), "NSE"]
+        ).returncode == 0
+    except Exception:
+        return True   # fail open: on doubt, still send rather than go silent
+
+
 def main():
+    if not _is_trading_day():
+        print(f"🐧 PENGUIN — {HHMM} IST — non-trading day, report suppressed")
+        return
+
     svcs = {n: _svc(n) for n in (
         "feed", "consumer-nifty", "consumer-sensex",
         "enricher-nifty", "enricher-sensex",

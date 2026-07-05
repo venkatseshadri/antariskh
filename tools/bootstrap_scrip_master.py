@@ -1,18 +1,23 @@
 """Scrip Master bootstrap — Creates static_metadata.db with scrip_master table.
 
-Run once per day (or after Shoonya master download) to populate the table.
-Used by the Contract Specialist (Librarian) for symbol → token → lot_size lookups.
+Run once per day (pre-open, before feed cold-start) to rebuild the table from the
+real Shoonya NFO/BFO master dump. Used by the Contract Specialist (Librarian) and
+by ATOM Module 12 for symbol -> token -> lot_size lookups.
 
 Usage:
     python3 tools/bootstrap_scrip_master.py
 """
 
+import csv
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import duckdb
+
+from config.token_resolver import MASTER_DIR, _download_master
 
 DB_PATH = Path("/home/trading_ceo/antariksh/data/static_metadata.db")
 
@@ -62,51 +67,66 @@ def upsert_from_dataframe(df):
     print(f"Upserted {count} rows into scrip_master")
 
 
-def seed_sample():
-    """Seed with today's NIFTY weekly contracts (demo — replace with Shoonya master download)."""
-    from datetime import datetime, timedelta
-
-    init_schema()
-
-    today = datetime.now()
-    days_until_thu = (3 - today.weekday()) % 7
-    if days_until_thu == 0 and today.hour >= 15:
-        days_until_thu = 7
-    expiry_current = today + timedelta(days=days_until_thu)
-    expiry_next = expiry_current + timedelta(days=7)
-
+def _rows_from_master(exchange: str, symbol_name: str, keep) -> list:
+    """Parse one broker master file, keep only OPTIDX rows `keep(row)` accepts."""
+    path = MASTER_DIR / f"{exchange}_symbols.txt"
+    if not path.exists():
+        _download_master(exchange)
     records = []
-    atm = round(23810 / 50) * 50  # Approximate — live would use actual spot
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            if row.get("Instrument") != "OPTIDX" or not keep(row):
+                continue
+            try:
+                expiry = datetime.strptime(row["Expiry"], "%d-%b-%Y").date().isoformat()
+            except (ValueError, KeyError):
+                continue
+            records.append(
+                {
+                    "token": row.get("Token", ""),
+                    "tsym": row.get("TradingSymbol", ""),
+                    "exchange": exchange,
+                    "symbol": symbol_name,
+                    "expiry": expiry,
+                    "strike": float(row.get("StrikePrice", 0) or 0),
+                    "option_type": row.get("OptionType", ""),
+                    "lot_size": int(row.get("LotSize", 0) or 0),
+                    "instrument": "OPTIDX",
+                }
+            )
+    return records
 
-    for expiry in (expiry_current, expiry_next):
-        expiry_str = expiry.strftime("%d%b%Y").upper()
-        expiry_iso = expiry.strftime("%Y-%m-%d")
-        for offset in range(-600, 650, 50):
-            for opt in ("CE", "PE"):
-                strike = atm + offset
-                tsym = f"NIFTY{expiry_str}{strike}{opt}"
-                token = str(35000 + abs(offset) // 50 + (0 if opt == "CE" else 200))
-                if expiry == expiry_next:
-                    token = str(int(token) + 1000)  # Unique tokens for next expiry
-                records.append(
-                    {
-                        "token": token,
-                        "tsym": tsym,
-                        "exchange": "NFO",
-                        "symbol": "NIFTY",
-                        "expiry": expiry_iso,
-                        "strike": float(strike),
-                        "option_type": opt,
-                        "lot_size": 65,
-                        "instrument": "OPTIDX",
-                    }
-                )
 
+def build_from_broker_master():
+    """Real NIFTY + SENSEX index-option contracts from the Shoonya NFO/BFO master
+    dump (master-as-truth) — token/expiry/strike/lot_size all come from the broker
+    file itself, never hardcoded. Same filter rules as
+    config/token_resolver.py:_broker_weekly_expiries (NIFTY excludes NIFTYNXT;
+    SENSEX = BFO Symbol=='BSXOPT', not the SENSEX50 stock-option series)."""
     import pandas as pd
 
-    df = pd.DataFrame(records)
+    nifty = _rows_from_master(
+        "NFO",
+        "NIFTY",
+        lambda r: r.get("TradingSymbol", "").upper().startswith("NIFTY")
+        and not r.get("TradingSymbol", "").upper().startswith("NIFTYNXT"),
+    )
+    sensex = _rows_from_master("BFO", "SENSEX", lambda r: r.get("Symbol") == "BSXOPT")
+    return pd.DataFrame(nifty + sensex)
+
+
+def refresh():
+    """Daily pre-open entrypoint: re-download today's master (if not already fresh),
+    rebuild scrip_master from it. Fails loudly on an empty result rather than
+    silently leaving stale/no data."""
+    _download_master("NFO")
+    _download_master("BFO")
+    init_schema()
+    df = build_from_broker_master()
+    if df.empty:
+        raise SystemExit("scrip_master build produced 0 rows — check master files/filters")
     upsert_from_dataframe(df)
 
 
 if __name__ == "__main__":
-    seed_sample()
+    refresh()

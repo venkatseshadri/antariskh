@@ -139,7 +139,17 @@ def build_token_map(instruments: list) -> dict:
 
 def build_subscriptions(config: dict) -> list:
     """Flatten config into list of dicts; resolves product_root → token+tsym."""
-    from config.token_resolver import TokenResolver
+    from config.token_resolver import TokenResolver, master_age_days
+
+    for exchange in ("NFO", "BFO"):
+        age = master_age_days(exchange)
+        if age is None:
+            log.warning(f"{exchange} scrip master missing — resolver will download fresh")
+        elif age > 1:
+            log.warning(
+                f"{exchange} scrip master is {age}d stale (refresh_scrip_master.sh cron "
+                f"may have failed) — resolving contracts off stale expiry/lot-size data"
+            )
 
     resolver = TokenResolver()
     subs = []

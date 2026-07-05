@@ -1076,6 +1076,73 @@ the following week's entry analysis.
 (c) live Tue demo: contract default + expiry_weekly + margin matrix all show same-day
 expiry; feed subscribed both chains. Paste outputs in §5.
 
+### T25 — Scrip-master daily refresh cron (validator-filed 2026-07-05, from ATOM Phase 2 design review)
+> ⚠️ **PROCESS EXCEPTION — Board-authorized takeover, 2026-07-05.** Filed and built same
+> session by the validator (Claude), not DS — normally against §0b role separation, but
+> user (Board) explicitly ordered "T25 is blocking ATOM, build/fix now" rather than wait.
+> Recorded per the §0b exception clause; DS should still independently review, not treat
+> as pre-validated by a second party.
+> → ✅ BUILT (antariksh, same-session, 2026-07-05):
+> - `config/token_resolver.py:_download_master()` — added same-calendar-day TTL (was
+>   permanent `if path.exists(): return path`) + new `master_age_days()` helper.
+> - `tools/bootstrap_scrip_master.py` — **replaced fake demo data.** Found
+>   `static_metadata.db` was never built from the real broker master at all — its
+>   `seed_sample()` default wrote synthetic tokens, hardcoded NIFTY-only, lot_size=65
+>   guessed, expiry already-expired (14-May), zero SENSEX rows. Replaced with
+>   `build_from_broker_master()` — parses the real NFO/BFO master files (same OPTIDX +
+>   NIFTY-excl-NIFTYNXT / BSXOPT filters as `_broker_weekly_expiries`); `refresh()` is
+>   the new daily entrypoint.
+> - `cron/refresh_scrip_master.sh` — new wrapper (flock + log, same pattern as
+>   `run_token_refresh.sh`); installed `30 8 * * 1-5` in crontab, before the 09:14 capture
+>   cold-start (prior crontab backed up to scratchpad before editing).
+> - Ran it live: `NFO_symbols.txt`/`BFO_symbols.txt` now dated 2026-07-05 (were 28-May,
+>   38d stale); `static_metadata.db` rebuilt real — NIFTY 3,958 rows (lot_size **65**,
+>   nearest expiry 07-Jul), SENSEX 3,326 rows (lot_size 20, nearest expiry 09-Jul).
+> - Regression check: `test_atm_shift.py` + `test_option_feed_publish.py` +
+>   `test_t16_futures_roll.py` — same 4 pre-existing failures before and after (confirmed
+>   via `git stash`), all unrelated to this change (feed.py signature drift +
+>   date-hardcoded futures-roll test assertions). Zero new failures.
+> **Item 4 (staleness WARN) also Board-authorized + built, 2026-07-05:**
+> `feed.py:build_subscriptions()` now calls `master_age_days("NFO"/"BFO")` before
+> instantiating `TokenResolver()` and `log.warning`s if age > 1 trading day (or missing).
+> Verified live: backdated `NFO_symbols.txt` 3 days, confirmed
+> `WARNING:feed:NFO scrip master is 3d stale (refresh_scrip_master.sh cron may have
+> failed)...` fires, then restored the file's mtime to fresh — no lasting side effect.
+> **Residual for DS:** BSE/CDS/MCX/NSE masters still May-28 stale (out of scope — only
+> NFO/BFO feed NIFTY/SENSEX options); the WARN is a log line only, not yet plumbed into
+> the data_health alert surface DS uses for other sentinels (T16 EXPIRY pattern) — if
+> that surface should page/notify on this too, that wiring is DS's to pick up.
+
+**Found:** `config/token_resolver.py:_download_master()` has no TTL — `if path.exists(): return path`
+downloads the Shoonya NFO/BFO symbol-master zip **once ever**, then trusts it forever. No
+cron/systemd timer calls `_download_master` or `tools/bootstrap_scrip_master.py` on any
+schedule (checked crontab + `systemctl list-timers` — nothing). Live evidence right now:
+`data/masters/NFO_symbols.txt` / `BFO_symbols.txt` are dated **28-May** (38 days stale as of
+5-Jul); `data/static_metadata.db` (scrip_master table, used for lot_size/tick_size) is dated
+**12-May** (54 days stale, never even rebuilt from the 28-May download). Board confirmed the
+28-May contract set is still valid today — no drift yet, but any expiry-weekday change,
+lot-size revision, or newly-listed strike since would be silently invisible, and `feed.py`
+resolves live NIFTY/SENSEX option subscriptions off this same stale cache (`feed.py:144`
+`TokenResolver()`).
+
+**Ask:** a pre-open daily refresh so the market-open state is always current:
+1. Delete/bypass the cached `data/masters/{NFO,BFO,...}_symbols.txt(.zip)` (or add a same-day
+   check to `_download_master`) so it re-downloads once per trading day.
+2. Re-run `tools/bootstrap_scrip_master.py` to rebuild `static_metadata.db` from the fresh
+   download, same run.
+3. Wire as a cron/systemd timer well before the 09:14 capture cold-start (per
+   [[penguin_timer_requires_bug]] pattern — no `Requires=` on a one-shot capture unit), e.g.
+   08:30 IST daily, market days only.
+4. Add a staleness assertion `feed.py` (or the resolver) can check at startup — if the loaded
+   master is >1 trading day old, WARN loudly (data_health surface), don't silently proceed.
+
+**Accept:** (a) manual run of the refresh script twice same-day is idempotent (second run a
+no-op re-download or explicit force-flag only); (b) cron/timer entry installed, fires once
+pre-open on a trading day; (c) `static_metadata.db` `imported_at` timestamp advances same-day
+after the timer fires; (d) live demo: kill the cached files, let the timer run, confirm feed
+still resolves NIFTY+SENSEX weekly tokens correctly against the fresh master; (e) staleness
+WARN demonstrated by backdating the cache and starting feed.
+
 ## 4b. File map (cold-start orientation)
 | Thing | Path |
 |---|---|

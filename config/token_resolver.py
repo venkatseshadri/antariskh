@@ -60,12 +60,20 @@ WEEKLY_MONTH = {
 }
 
 
-def _download_master(exchange: str) -> Path:
+def _download_master(exchange: str, force: bool = False) -> Path:
+    """Fetch the broker master file, refreshing once per calendar day.
+
+    Bug fixed 2026-07-05: this used to be `if path.exists(): return path` — a
+    permanent cache with no TTL, so the file downloaded once ever and every expiry/
+    lot-size/strike revision since was silently invisible (found 38 days stale live).
+    """
     MASTER_DIR.mkdir(parents=True, exist_ok=True)
     fname = f"{exchange}_symbols.txt"
     path = MASTER_DIR / fname
-    if path.exists():
-        return path
+    if path.exists() and not force:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
+        if mtime == date.today():
+            return path
     import urllib.request
 
     url = MASTER_URLS.get(exchange)
@@ -75,6 +83,15 @@ def _download_master(exchange: str) -> Path:
         with zipfile.ZipFile(io.BytesIO(resp.read())) as zf:
             zf.extract(fname, MASTER_DIR)
     return path
+
+
+def master_age_days(exchange: str) -> Optional[int]:
+    """Age of the cached master file in days, or None if not downloaded yet."""
+    path = MASTER_DIR / f"{exchange}_symbols.txt"
+    if not path.exists():
+        return None
+    mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
+    return (date.today() - mtime).days
 
 
 def _broker_weekly_expiries(index: str) -> list[date]:

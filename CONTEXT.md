@@ -1,7 +1,7 @@
-# SESSION CONTEXT — Updated 2026-06-09 23:59
+# SESSION CONTEXT — Updated 2026-07-15 20:32
 
 Project: Antariksh — CrewAI options trading desk (NIFTY Iron Butterfly)
-Branch: `master` | Live data: VIX=15.56, NIFTY=23257.75, Regime=TRENDING_BEAR
+Branch: `feat/ouroboros-lld-gap` | Live data: VIX=13.26, NIFTY=24073.45, Regime=SIDEWAYS
 
 ## Locations
 ```
@@ -12,10 +12,10 @@ Branch: `master` | Live data: VIX=15.56, NIFTY=23257.75, Regime=TRENDING_BEAR
 GitHub: `github.com/venkatseshadri/antariskh`
 
 ## Last Built
-Built cached position-research (UNICORN pattern for position manager): position_research_cache + position_research.py + cron; run_bridge applies cached morph/roll/tighten, protective floor/SL/TP/EOD stay live; fixed broken risk_agent_crew sync call. Tests 10/10 + position_cache sim PASS
+Built NUCLEUS capital-orchestration layer: dynamic tier ceilings (T1 ATOM/T3 HYDROGEN real, T2 PROTON/T4 NEUTRON simulated) swept off live Shoonya margin, wired into ATOM's risk gate + HYDROGEN's entry gate
 
 ## Priority Queue
-RISK-PATH: run_bridge rewire re-activates deterministic morph/roll/tighten+floor+resting-SL/TP at next position-manager cron start (market open) — Board review before deploy. 15-min research cron NOT installed (cache activation = separate step)
+Watch first live NUCLEUS cron cycles; HYDROGEN's own check_account_margin() has the same collat/col field-name bug nucleus.py just fixed — flagged, not fixed (out of scope, DRY_RUN today)
 
 ## What's Where (read on demand)
   `trading_desk.py` (1928 lines)
@@ -27,7 +27,7 @@ RISK-PATH: run_bridge rewire re-activates deterministic morph/roll/tighten+floor
   `crews/pm_crew.py` (170 lines)
   `tools/risk_tools.py` (606 lines)
   `tools/execution_tools.py` (621 lines)
-  `tools/contract_tools.py` (534 lines)
+  `tools/contract_tools.py` (526 lines)
 
 ## Verify State
 ```bash
@@ -40,9 +40,9 @@ python3 -c "import os; os.environ.pop('ANTARIKSH_MOCK_MODE',''); from trading_de
 
 ## Recent Commits
 ```
-35bc890 porcupine: position_cache scenario — proves cached-research hot path (real position_manager)
-1aa70ae chore: auto-update session context
-0d43821 docs(porcupine): v4 aggregator wired into sim (bug #3b E2E guard)
-65a4e69 porcupine: wire v4 aggregator into the sim — bug #3b end-to-end guard
-ed409cd chore: auto-update session context
+5c876bc fix: scrip_master was never refreshed + built from fake demo data (T25)
+a0edb4a Suppress PENGUIN health report on weekends/holidays
+6bc1eae Fix structure_type forcing HH/LL on genuinely ambiguous bars
+4b7f047 Fix SuperTrend consensus tie-break + VWAP always-None for NIFTY/SENSEX
+cc91353 fix: broker token refresh timing out — bump login subprocess timeout 120s→300s
 ```

@@ -161,26 +161,210 @@ def _flattrade_session():
         return None
 
 
+def _shoonya_session():
+    """Same cred file/token ATOM, Penguin, and proton_live.py already use
+    (atom.broker_session.load_live_api — proven order placement, ATOM's
+    2026-07-13 live canary test). Wraps its raise-on-failure contract into
+    the None-on-failure contract this module expects (2026-07-27, added so
+    NEUTRON+/HYDROGEN+ can optionally run on Shoonya instead of Flattrade —
+    accepts the shared-account risk with ATOM/PROTON+ that Flattrade
+    isolation was originally built to avoid; mitigated the same way PROTON+
+    does, via check_account_margin() before every entry)."""
+    try:
+        atom_src = "/home/trading_ceo/atom/src"
+        if atom_src not in sys.path:
+            sys.path.insert(0, atom_src)
+        from atom.broker_session import load_live_api
+        return load_live_api()
+    except Exception:
+        return None
+
+
+def get_broker_session(broker: str):
+    """Dispatches to _flattrade_session() or _shoonya_session() by name.
+    Unrecognized broker string fails closed (returns None) rather than
+    silently defaulting to either broker."""
+    broker = (broker or "").upper()
+    if broker == "FLATTRADE":
+        return _flattrade_session()
+    if broker == "SHOONYA":
+        return _shoonya_session()
+    return None
+
+
 MARGIN_FLOOR_INR = 50_000.0  # same floor ATOM/PROTON's check_account_margin() uses
 
 
-def check_account_margin(api) -> tuple[bool, float | None]:
-    """Real Flattrade-reported free margin, account-level (cash + collateral —
-    Flattrade's get_limits() schema, distinct from Shoonya's collat/marginavailable
-    fields used in proton_live.py's version of this check). Fails closed: any
-    error/missing field/no session refuses entry rather than assuming margin is fine."""
+def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | None]:
+    """Real broker-reported free margin, account-level. Field names differ by
+    broker's get_limits() schema — Flattrade: cash+collateral; Shoonya:
+    cash+collat/marginavailable (same fields proton_live.py's version reads,
+    since a Shoonya-routed NEUTRON+/HYDROGEN+ shares ATOM/PROTON+'s account).
+    Fails closed: any error/missing field/no session refuses entry rather
+    than assuming margin is fine."""
     if api is None:
         return False, None
     try:
         limits = api.get_limits()
         if not isinstance(limits, dict) or limits.get("stat") != "Ok":
             return False, None
-        cash = float(limits.get("cash", 0) or 0)
-        collateral = float(limits.get("collateral", 0) or 0)
-        avail = cash + collateral
+        if (broker or "").upper() == "SHOONYA":
+            cash = float(limits.get("cash", 0) or 0)
+            col = float(limits.get("collat", limits.get("col", 0)) or 0)
+            avail = float(limits.get("marginavailable", limits.get("marginallowed", cash + col)))
+        else:  # FLATTRADE
+            cash = float(limits.get("cash", 0) or 0)
+            collateral = float(limits.get("collateral", 0) or 0)
+            avail = cash + collateral
         return avail >= MARGIN_FLOOR_INR, avail
     except Exception:
         return False, None
+
+
+# ── Real-order primitives (2026-07-27) — shared by NEUTRON+/HYDROGEN+'s
+# LIVE_ENABLED path, same NorenRestApiPy method signatures proton_live.py
+# already proved against Shoonya (same vendor API family, Flattrade's
+# NorenApi.place_order/cancel_order/get_positions take identical args).
+# This module's own run_daily()/base NEUTRON paper simulation above is
+# untouched and stays paper-only forever — these are broker-mechanical
+# building blocks the orbiter files' real-order path calls into, not a
+# change to this file's own behavior.
+
+BUY, SELL = "B", "S"
+LIMIT = "LMT"
+SL_LIMIT = "SL-LMT"
+NRML = "M"
+MARKETABLE_BUFFER_PCT = 0.02
+SL_TRIGGER_BUFFER_PCT = 0.01
+MAX_LOTS = 1  # same hard cap proton_live.py uses
+
+
+@dataclass(frozen=True)
+class LiveOrderResult:
+    ok: bool
+    norenordno: str | None
+    raw: dict
+
+
+def _ok(resp) -> bool:
+    return isinstance(resp, dict) and resp.get("stat") == "Ok"
+
+
+def _norenordno(resp):
+    return resp.get("norenordno") if isinstance(resp, dict) else None
+
+
+def marketable_limit(action: str, ltp: float) -> float:
+    mult = 1 + MARKETABLE_BUFFER_PCT if action == BUY else 1 - MARKETABLE_BUFFER_PCT
+    return round(ltp * mult, 1)
+
+
+def place_leg(
+    api, action: str, exchange: str, tradingsymbol: str, qty: int, ltp: float, remarks: str
+) -> LiveOrderResult:
+    price = marketable_limit(action, ltp)
+    resp = api.place_order(
+        buy_or_sell=action,
+        product_type=NRML,
+        exchange=exchange,
+        tradingsymbol=tradingsymbol,
+        quantity=qty,
+        discloseqty=0,
+        price_type=LIMIT,
+        price=price,
+        retention="DAY",
+        remarks=remarks,
+    )
+    return LiveOrderResult(_ok(resp), _norenordno(resp), resp)
+
+
+def place_resting_sl(
+    api,
+    action: str,
+    exchange: str,
+    tradingsymbol: str,
+    qty: int,
+    trigger_price: float,
+    remarks: str,
+) -> LiveOrderResult:
+    """Resting SL-LMT — the broker-side backstop the software combo-check
+    doesn't have. action=BUY (closing a short leg on a stop-up)."""
+    limit_price = round(trigger_price * (1 + SL_TRIGGER_BUFFER_PCT), 1)
+    resp = api.place_order(
+        buy_or_sell=action,
+        product_type=NRML,
+        exchange=exchange,
+        tradingsymbol=tradingsymbol,
+        quantity=qty,
+        discloseqty=0,
+        price_type=SL_LIMIT,
+        price=limit_price,
+        trigger_price=round(trigger_price, 1),
+        retention="DAY",
+        remarks=remarks,
+    )
+    return LiveOrderResult(_ok(resp), _norenordno(resp), resp)
+
+
+def cancel_order(api, orderno: str) -> LiveOrderResult:
+    resp = api.cancel_order(orderno=orderno)
+    return LiveOrderResult(_ok(resp), _norenordno(resp), resp)
+
+
+def cancel_resting_sl(api, sl_order_ids: dict) -> dict:
+    canceled = {}
+    for leg_name, ordno in (sl_order_ids or {}).items():
+        if not ordno:
+            continue
+        r = cancel_order(api, ordno)
+        canceled[leg_name] = {"ok": r.ok, "raw": r.raw}
+    return canceled
+
+
+def broker_position_qty(api, tsym: str) -> int | None:
+    try:
+        positions = api.get_positions() or []
+        by_tsym = {p["tsym"]: int(float(p["netqty"])) for p in positions}
+        return by_tsym.get(tsym, 0)
+    except Exception:
+        return None
+
+
+def broker_confirms_flat(api, tsyms: list[str]) -> bool:
+    """Checks the SPECIFIC contracts about to be traded are flat at the broker
+    before entering — catches a stray/leftover position in that exact strike,
+    not just 'whatever our own state remembers' (our own state is None by the
+    time this runs, so there is nothing else to compare against)."""
+    for tsym in tsyms:
+        qty = broker_position_qty(api, tsym)
+        if qty is None or qty != 0:
+            return False
+    return True
+
+
+def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:
+    """Capital ceiling from NUCLEUS (antariksh/nucleus.py), dynamically swept
+    across all 4 tiers off real broker margin. Fail-closed: any read/parse/
+    staleness failure returns (None, reason) — caller must refuse entry rather
+    than assume unlimited capital. Same contract as proton_live.py's
+    _nucleus_ceiling(), generalized to take any tier key (T3_HYDROGEN,
+    T4_NEUTRON)."""
+    alloc_file = Path(__file__).resolve().parent / "data" / "nucleus_allocation.json"
+    try:
+        raw = json.loads(alloc_file.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None, "NO_FILE"
+    try:
+        ts = datetime.fromisoformat(raw["updated_at"])
+        ceiling = float(raw["tiers"][tier]["ceiling_inr"])
+    except (KeyError, TypeError, ValueError):
+        return None, "MALFORMED"
+    age_min = (datetime.now() - ts).total_seconds() / 60
+    if age_min < 0:
+        return None, "FUTURE_TIMESTAMP"
+    if age_min > 1080:  # 18h — covers overnight gap, matches proton_live.py
+        return None, "STALE"
+    return ceiling, None
 
 
 def _leg_ltp(api, exchange: str, token: str) -> float:

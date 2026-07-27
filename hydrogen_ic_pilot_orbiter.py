@@ -11,10 +11,23 @@ not the current/nearest. Also lives on NIFTY expiry for SENSEX vice versa.
 Same ORBITER port as ATOM+/PROTON+/NEUTRON+: Multi-Gated Entry, ATR TSL,
 Dynamic Take-Profit, Dynamic Legging. Enters any day vol-filter passes.
 Static PT (60%) / SL (1.0x) backstop always active.
+
+Real-order path (2026-07-27, Board-gated, DRY by default): LIVE_ENABLED gates
+actual real order placement (Flattrade or Shoonya, selectable), same on/off
+pattern as proton_live.py's PROTON_LIVE_TRADING. Deliberately NOT parallel to
+PROTON's dual-index alternation — NIFTY and SENSEX are fully independent
+processes here (own cron, own state, own ledger), matching this file's
+existing paper design; neither instrument's entry depends on the other's
+expiry. If routed through Flattrade: proton_live.py's own docstring flags
+Flattrade order placement as never tested in this codebase (that's WHY
+PROTON switched to Shoonya) — treat LIVE_ENABLED=True on Flattrade here as
+materially higher-risk than PROTON's proven Shoonya path until it has a
+verified live fill.
 """
 
 import inspect
 import json
+import os
 import sys
 import numpy as np
 from datetime import date, datetime, time, timedelta
@@ -29,6 +42,15 @@ from monthly_ic_pilot import (
     _flattrade_session,
     _leg_ltp,
     check_account_margin,
+    get_broker_session,
+    place_leg,
+    place_resting_sl,
+    cancel_resting_sl,
+    broker_confirms_flat,
+    nucleus_ceiling,
+    BUY,
+    SELL,
+    MAX_LOTS,
     SL_MULT,
     PT_FRAC,
     RISK_FREE_RATE,
@@ -50,6 +72,9 @@ from orbiter_monthly import (
 )
 
 WING_STRIKES = 2
+LIVE_ENABLED = os.environ.get("HYDROGEN_LIVE_TRADING") == "YES_REAL_MONEY"
+BROKER = os.environ.get("HYDROGEN_BROKER", "FLATTRADE").upper()
+NUCLEUS_TIER = "T3_HYDROGEN"
 
 INSTRUMENT_PARAMS = {
     "NIFTY": {"step": 50, "lot": 75},
@@ -178,6 +203,82 @@ def _open_side(
     return side
 
 
+def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
+    """Place one side's directional 2-leg spread for real (hedge BUY first,
+    then short SELL, then a resting SL-LMT on the short) — same sequencing
+    as proton_live.py's _orbiter_enter_legs so a mid-sequence failure never
+    leaves a naked short. Resting SL trigger = side['dynamic_sl'], the same
+    ATR-trailing level the software poll already tracks (this file has no
+    separate atr_sl_multiplier() concept; reusing dynamic_sl keeps the
+    broker-side backstop consistent with whatever the software would exit
+    at anyway)."""
+    result = {"stage": None, "orders": {}, "sl_orders": {}}
+    legs = side["legs"]
+    entry_prices = side.get("entry_leg_prices") or {}
+
+    leg = legs["hedge"]
+    r = place_leg(
+        api, BUY, leg["exchange"], leg["tsym"], qty,
+        entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge",
+    )
+    result["orders"]["hedge"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    if not r.ok:
+        result["stage"] = "failed_hedge"
+        return result
+
+    leg = legs["short"]
+    r = place_leg(
+        api, SELL, leg["exchange"], leg["tsym"], qty,
+        entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
+    )
+    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    if not r.ok:
+        result["stage"] = "failed_short_hedge_live"
+        return result
+
+    r = place_resting_sl(
+        api, BUY, leg["exchange"], leg["tsym"], qty, side["dynamic_sl"], remarks=f"{remarks_prefix}_SL_short",
+    )
+    result["sl_orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    if not r.ok:
+        result["stage"] = "complete_but_sl_failed"
+    if result["stage"] is None:
+        result["stage"] = "complete"
+    return result
+
+
+def _exit_side_live(api, side: dict, qty: int, exit_prices: dict | None, remarks_prefix: str) -> dict:
+    """Close one side's 2 legs for real (short buyback first, then hedge
+    sell). Cancels the resting SL first. Tracks legs already closed in
+    side['legs_closed'] (mutated in place, persists across retries) so a
+    retry after a short-succeeds/hedge-fails partial close never re-places
+    the short a second time — same pattern as proton_live.py's
+    _orbiter_exit_side."""
+    result = {"stage": None, "orders": {}, "sl_cancel": {}}
+    result["sl_cancel"] = cancel_resting_sl(api, side.get("sl_order_ids", {}))
+    already_closed = side.setdefault("legs_closed", {})
+    legs = side["legs"]
+    for leg_name, action in (("short", BUY), ("hedge", SELL)):
+        if leg_name in already_closed:
+            result["orders"][leg_name] = {
+                "ok": True, "norenordno": already_closed[leg_name], "skipped_already_closed": True,
+            }
+            continue
+        leg = legs[leg_name]
+        price = (exit_prices or {}).get(leg_name)
+        if price is None:
+            result["stage"] = f"failed_close_{leg_name}_no_price"
+            return result
+        r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}")
+        result["orders"][leg_name] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+        if not r.ok:
+            result["stage"] = f"failed_close_{leg_name}"
+            return result
+        already_closed[leg_name] = r.norenordno or True
+    result["stage"] = "complete"
+    return result
+
+
 def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
     entry_rv = trailing_rv(closes, today)
     median_rv = trailing_median_rv(closes, today)
@@ -241,16 +342,23 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
         LOG(event)
         return event
 
-    margin_ok, avail_margin = check_account_margin(_flattrade_session())
-    if not margin_ok:
-        event = {
-            "instrument": instrument,
-            "action": "SKIP",
-            "reason": "margin_insufficient",
-            "avail_margin": avail_margin,
-        }
-        LOG(event)
-        return event
+    api = get_broker_session(BROKER) if LIVE_ENABLED else None
+    if LIVE_ENABLED:
+        if api is None:
+            event = {"instrument": instrument, "action": "SKIP", "reason": "no_broker_session", "broker": BROKER}
+            LOG(event)
+            return event
+        margin_ok, avail_margin = check_account_margin(api, BROKER)
+        if not margin_ok:
+            event = {
+                "instrument": instrument,
+                "action": "SKIP",
+                "reason": "margin_insufficient",
+                "avail_margin": avail_margin,
+                "broker": BROKER,
+            }
+            LOG(event)
+            return event
 
     expiry = resolve_next_week_expiry(instrument, now)
     S0 = float(closes[closes.index <= today].iloc[-1])
@@ -258,6 +366,43 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
     side = _open_side(instrument, structure, row, S0, expiry, entry_rv, today)
 
     params = INSTRUMENT_PARAMS[instrument]
+
+    if LIVE_ENABLED:
+        legs = side["legs"]
+        if not broker_confirms_flat(api, [legs["short"]["tsym"], legs["hedge"]["tsym"]]):
+            event = {
+                "instrument": instrument,
+                "action": "REFUSE_ENTRY",
+                "reason": "broker_position_check_failed_or_nonzero",
+                "broker": BROKER,
+            }
+            LOG(event)
+            return event
+        if side.get("entry_leg_prices") is None:
+            event = {
+                "instrument": instrument,
+                "action": "REFUSE_ENTRY",
+                "reason": "no_real_quotes_for_live_order",
+                "broker": BROKER,
+            }
+            LOG(event)
+            return event
+        wing = abs(side["hedge_k"] - side["short_k"])
+        required_margin = max(wing - side["entry_credit"], 0.0) * params["lot"] * MAX_LOTS
+        ceiling, ceiling_reason = nucleus_ceiling(NUCLEUS_TIER)
+        if ceiling is None or required_margin > ceiling:
+            event = {
+                "instrument": instrument,
+                "action": "REFUSE_ENTRY",
+                "reason": "nucleus_ceiling_check_failed",
+                "required_margin": required_margin,
+                "nucleus_ceiling": ceiling,
+                "nucleus_fail_reason": ceiling_reason,
+                "broker": BROKER,
+            }
+            LOG(event)
+            return event
+
     cycle = {
         "instrument": instrument,
         "entry_date": today.isoformat(),
@@ -279,9 +424,28 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
         "gate1": g1.reason,
         "gate3": g3.reason,
         "cycle": cycle,
+        "dry_run": not LIVE_ENABLED,
     }
-    LOG(event)
-    return event
+    if not LIVE_ENABLED:
+        LOG(event)
+        return event
+
+    qty = params["lot"] * MAX_LOTS
+    enter_result = _enter_side_live(api, side, qty, remarks_prefix=f"HYDROGEN_{instrument}")
+    event["enter_result"] = enter_result
+    event["broker"] = BROKER
+    if enter_result["stage"].startswith("complete"):
+        side["sl_order_ids"] = {"short": enter_result.get("sl_orders", {}).get("short", {}).get("norenordno")}
+        cycle[_SIDE_FOR_STRUCTURE[structure]] = side
+        LOG(event)
+        return event
+
+    LOG({**event, "stranded": True})
+    return {
+        "instrument": instrument,
+        "action": "HALT_STRANDED_LEGS",
+        "stranded_legs": {"cycle": cycle, "enter_result": enter_result},
+    }
 
 
 def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime) -> dict:
@@ -292,6 +456,10 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
     T = max((expiry - today).days / 365, 0)
     is_expiry_day = today >= expiry
     lot_size = cycle.get("lot_size", INSTRUMENT_PARAMS["NIFTY"]["lot"])
+
+    api = get_broker_session(BROKER) if LIVE_ENABLED else None
+    if LIVE_ENABLED and api is None:
+        return {"action": "SKIP_TICK", "instrument": instrument, "reason": "no_broker_session", "broker": BROKER}
 
     row = _read_enriched_row(instrument, today)
     events = []
@@ -333,16 +501,26 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                     reason = tp.reason
 
         if reason:
-            events.append(
-                {
-                    "side": side_name,
-                    "reason": reason,
-                    "value": value,
-                    "pricing_source": pricing_source,
-                    "pnl_per_lot": pnl,
-                }
-            )
-            cycle[side_name] = None
+            event = {
+                "side": side_name,
+                "reason": reason,
+                "value": value,
+                "pricing_source": pricing_source,
+                "pnl_per_lot": pnl,
+            }
+            if LIVE_ENABLED:
+                qty = cycle.get("lot_size", lot_size)
+                close_result = _exit_side_live(api, side, qty, leg_prices, remarks_prefix=f"HYDROGEN_{instrument}")
+                event["close_result"] = close_result
+                event["broker"] = BROKER
+                if close_result["stage"] == "complete":
+                    cycle[side_name] = None
+                else:
+                    event["partial_close_needs_human"] = True
+                    cycle[side_name] = side
+            else:
+                cycle[side_name] = None
+            events.append(event)
             continue
 
         if row is not None and cycle["phase"] == "DIRECTIONAL_ANCHOR" and len(active_sides) == 1:
@@ -352,11 +530,51 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                 new_side = _open_side(
                     instrument, other_structure, row, S, expiry, side["sigma"], today
                 )
-                cycle[other_side_name] = new_side
-                cycle["phase"] = "CONSOLIDATION"
-                events.append(
-                    {"side": other_side_name, "reason": "MORPH_ADD", "structure": other_structure}
-                )
+                if LIVE_ENABLED:
+                    if new_side.get("entry_leg_prices") is None:
+                        events.append(
+                            {
+                                "side": other_side_name,
+                                "reason": "MORPH_ADD_SKIPPED_NO_QUOTES",
+                                "structure": other_structure,
+                            }
+                        )
+                    else:
+                        qty = cycle.get("lot_size", lot_size)
+                        enter_result = _enter_side_live(
+                            api, new_side, qty, remarks_prefix=f"HYDROGEN_{instrument}_MORPH"
+                        )
+                        if enter_result["stage"].startswith("complete"):
+                            new_side["sl_order_ids"] = {
+                                "short": enter_result.get("sl_orders", {}).get("short", {}).get("norenordno")
+                            }
+                            cycle[other_side_name] = new_side
+                            cycle["phase"] = "CONSOLIDATION"
+                            events.append(
+                                {
+                                    "side": other_side_name,
+                                    "reason": "MORPH_ADD",
+                                    "structure": other_structure,
+                                    "enter_result": enter_result,
+                                    "broker": BROKER,
+                                }
+                            )
+                        else:
+                            events.append(
+                                {
+                                    "side": other_side_name,
+                                    "reason": "MORPH_ADD_FAILED",
+                                    "structure": other_structure,
+                                    "enter_result": enter_result,
+                                    "broker": BROKER,
+                                }
+                            )
+                else:
+                    cycle[other_side_name] = new_side
+                    cycle["phase"] = "CONSOLIDATION"
+                    events.append(
+                        {"side": other_side_name, "reason": "MORPH_ADD", "structure": other_structure}
+                    )
             elif asymmetric_breakage_trigger(structure, side["short_k"], S):
                 cycle["phase"] = "ASYMMETRIC_BREAKAGE"
 
@@ -382,6 +600,15 @@ def run_daily(instrument: str, now: datetime = None) -> dict:
     today = now.date()
 
     cycle = STATE()
+    if isinstance(cycle, dict) and cycle.get("stranded_legs"):
+        result = {
+            "instrument": instrument,
+            "action": "HALT_STRANDED_LEGS",
+            "stranded_legs": cycle["stranded_legs"],
+        }
+        LOG(result)
+        return result
+
     if instrument == "NIFTY":
         closes = combined_daily_closes()
     else:
@@ -392,6 +619,8 @@ def run_daily(instrument: str, now: datetime = None) -> dict:
         if result["action"] == "EXIT":
             SAVE(None)
             LOG(result)
+        elif result["action"] == "SKIP_TICK":
+            LOG(result)
         else:
             SAVE(cycle)
             LOG(result)
@@ -399,6 +628,8 @@ def run_daily(instrument: str, now: datetime = None) -> dict:
         result = _try_enter(instrument, closes, today, now)
         if result.get("action") == "ENTER":
             SAVE(result["cycle"])
+        elif result.get("action") == "HALT_STRANDED_LEGS":
+            SAVE({"stranded_legs": result["stranded_legs"]})
     return result
 
 
@@ -409,12 +640,14 @@ if __name__ == "__main__":
 
     INSTRUMENT = sys.argv[1].upper()
     BASE = Path(__file__).resolve().parent
-    STATE_FILE = BASE / "data" / "hydrogen" / f"hydrogen_ic_pilot_orbiter_{INSTRUMENT.lower()}_state.json"
-    LEDGER_FILE = BASE / "logs" / "hydrogen" / f"hydrogen_ic_pilot_orbiter_{INSTRUMENT.lower()}.jsonl"
-    # Paper-only by design — no broker connection exists anywhere in this file.
-    # If a real-order path is ever added, this must become a flag read like
-    # proton_live.py's LIVE_ENABLED, not stay a hardcoded constant.
-    ORDER_MODE = "PAPER"
+    # Existing plain-name files already carry real paper-trading history —
+    # LIVE gets its own distinctly-named path instead (see monthly_ic_pilot_
+    # orbiter.py's matching comment for why this inverts proton_live.py's
+    # convention).
+    _fname = f"hydrogen_ic_pilot_orbiter_{INSTRUMENT.lower()}"
+    STATE_FILE = BASE / "data" / "hydrogen" / (f"{_fname}_live_state.json" if LIVE_ENABLED else f"{_fname}_state.json")
+    LEDGER_FILE = BASE / "logs" / "hydrogen" / (f"{_fname}_live.jsonl" if LIVE_ENABLED else f"{_fname}.jsonl")
+    ORDER_MODE = "REAL" if LIVE_ENABLED else "PAPER"
 
     def STATE() -> dict | None:
         if STATE_FILE.exists():

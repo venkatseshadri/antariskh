@@ -1,4 +1,4 @@
-"""
+"""Entry Crew — Traffic Light Agent (Multi-TF candle color patterns)."""
 
 import os
 import sys
@@ -11,7 +11,7 @@ from crewai.tools import tool
 from tools.entry_tools import query_traffic_light as _query_traffic_light
 from dotenv import load_dotenv
 
-Entry Crew — Traffic Light Agent (Multi-TF candle color patterns).
+"""
 
 Analyzes candle GREEN/RED across 6 timeframes.
 Detects: continuation, pullback, resumption, exhaustion, reversal.

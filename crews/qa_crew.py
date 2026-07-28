@@ -1,4 +1,4 @@
-"""QA Tester Crew — validation and quality gates.
+"""QA Tester Crew — validation and quality gates."""
 
 import os
 import sys
@@ -16,7 +16,7 @@ from tools.qa_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Single agent validating CTO-approved, Dev-implemented changes.
 Runs test suites, checks for regressions, tests specific scenarios,
 and produces signed QA reports. Nothing deploys without QA PASS.

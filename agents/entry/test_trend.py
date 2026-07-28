@@ -1,3 +1,8 @@
+"""Test Trend Agent — standalone and mock.
+
+Coverage:
+  1. Tool test: query_trend_tool returns valid JSON with expected keys (no DuckDB needed)
+  2. Agent integration: run_trend_analysis (requires DEEPSEEK_API_KEY, skipped if absent)
 """
 
 import json
@@ -5,18 +10,9 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-        import duckdb
-    from tools.entry_tools import query_trend
-    from tools.entry_tools import query_trend
-    from agents.entry.trend_agent import run_trend_analysis
+from tools.entry_tools import query_trend
+from agents.entry.trend_agent import run_trend_analysis
 from dotenv import load_dotenv
-
-Test Trend Agent — standalone and mock.
-
-Coverage:
-  1. Tool test: query_trend_tool returns valid JSON with expected keys (no DuckDB needed)
-  2. Agent integration: run_trend_analysis (requires DEEPSEEK_API_KEY, skipped if absent)
-"""
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent

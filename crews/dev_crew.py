@@ -1,4 +1,4 @@
-"""Dev Engineer Crew — source code implementation.
+"""Dev Engineer Crew — source code implementation."""
 
 import os
 import sys
@@ -17,7 +17,7 @@ from tools.dev_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Single agent implementing CTO-approved changes. Reads source, previews edits,
 applies changes with auto-rollback on syntax error, commits atomically.
 

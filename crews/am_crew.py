@@ -1,4 +1,4 @@
-"""Asset Manager Crew — 2-agent financial oversight + CEO/PM reporting.
+"""Asset Manager Crew — 2-agent financial oversight + CEO/PM reporting."""
 
 import os
 import sys
@@ -17,7 +17,7 @@ from tools.am_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Agents: FinancialTracker (P&L, margin, limits), FinancialReporter (CEO/PM reports).
 
 Uses CrewAI Process.hierarchical. Deterministic tools from tools/am_tools.py.

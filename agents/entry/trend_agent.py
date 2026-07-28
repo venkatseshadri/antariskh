@@ -1,4 +1,4 @@
-"""
+"""Entry Crew — Trend Agent (Family 1 of 7)."""
 
 import os
 import sys
@@ -11,7 +11,7 @@ from crewai.tools import tool
 from tools.entry_tools import query_trend as _query_trend
 from dotenv import load_dotenv
 
-Entry Crew — Trend Agent (Family 1 of 7).
+"""
 
 Analyzes EMA/SMA alignment + SuperTrend across 6 timeframes.
 Uses deterministic `query_trend` tool from antariksh.tools.entry_tools.

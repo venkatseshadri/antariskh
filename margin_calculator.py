@@ -154,67 +154,6 @@ print(json.dumps(result))
         logger.error("❌ Flattrade margin error: %s", e)
         return False
 
-        ft_tokens = _json.loads(ft_creds_file.read_text())
-
-        sys.path.insert(0, str(PYTHON_TRADER / "FlattradeApi-py"))
-        from api_helper import NorenApiPy as FlattradeApi
-
-        api = FlattradeApi()
-        ret = api.set_session(
-            userid="FT055702",
-            accesstoken=ft_tokens.get("access_token"),
-        )
-
-        if not ret:
-            logger.error("❌ Flattrade login failed")
-            return False
-
-        limits_resp = api.get_limits()
-        if not limits_resp or limits_resp.get("stat") != "Ok":
-            logger.error("❌ Flattrade get_limits failed: %s", limits_resp)
-            return False
-
-        cash = float(limits_resp.get("cash", 0))
-        used = float(limits_resp.get("marginused", 0))
-        col = float(limits_resp.get("collateral", 0))
-        grcoll = float(limits_resp.get("grcoll", 0))
-
-        margin_avail = float(
-            limits_resp.get(
-                "marginavailable", limits_resp.get("marginallowed", cash + col)
-            )
-        )
-        free = margin_avail - used
-
-        limits_data = {
-            "timestamp": datetime.now().isoformat(),
-            "total_margin_available": margin_avail,
-            "used_margin": used,
-            "free_margin": free,
-            "cash_available": cash,
-            "collateral_value": col,
-            "gross_collateral": grcoll,
-            "account_id": limits_resp.get("actid", "FT055702"),
-        }
-
-        ft_limits_file = Path(__file__).parent / "data" / "broker_limits_flattrade.json"
-        ft_limits_file.parent.mkdir(parents=True, exist_ok=True)
-        ft_limits_file.write_text(_json.dumps(limits_data, indent=2))
-
-        logger.info(
-            f"✅ Flattrade margin: {format_inr(margin_avail)} "
-            f"(free: {format_inr(free)}, used: {format_inr(used)})"
-        )
-        logger.info(f"   Saved to {ft_limits_file}")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Flattrade margin error: {e}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-        return False
-
 
 def main():
     logger.info("MARGIN CALCULATOR JOB — START")

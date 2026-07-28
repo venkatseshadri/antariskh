@@ -1,0 +1,61 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest crewai numpy pandas scipy pydantic croniter \
+            python-dotenv duckdb requests redis gspread google-auth chromadb anthropic
+
+      # Fast, deterministic subset only — no DEEPSEEK_API_KEY secret configured,
+      # so llm/slow-marked tests (real DeepSeek calls) are excluded here by design.
+      - name: Run engine test suite
+        run: python3 -m pytest tests/ -m engine -q
+
+      - name: Run mandatory trading-desk integration test
+        run: python3 tests/test_integration_end_to_end.py
+
+  tag-on-green:
+    needs: pytest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next patch version
+        id: next
+        run: |
+          latest=$(git tag -l 'v*.*.*' | sort -V | tail -n1)
+          if [ -z "$latest" ]; then
+            new="v1.0.0"
+          else
+            IFS='.' read -r major minor patch <<< "${latest#v}"
+            new="v${major}.${minor}.$((patch + 1))"
+          fi
+          echo "tag=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.next.outputs.tag }}"
+          git push origin "${{ steps.next.outputs.tag }}"

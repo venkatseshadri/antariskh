@@ -47,7 +47,7 @@ sys.path.insert(0, "/usr/local/lib/python3.12/dist-packages")
 from api_helper import NorenApiPy
 
 sys.path.insert(0, str(PROJECT_ROOT))
-from config.sqlite_schema import open_capture_db
+from config.sqlite_schema import open_capture_db, init_order_updates_schema
 
 CRED_FILE = SHOONYA_DIR / "cred.yml"
 INSTRUMENTS_FILE = PROJECT_ROOT / "config" / "instruments.yaml"
@@ -259,6 +259,55 @@ def _get_capture_db(instrument: str):
     if instrument not in _capture_dbs:
         _capture_dbs[instrument] = open_capture_db(instrument, autocommit=True)
     return _capture_dbs[instrument]
+
+
+_orders_db = None
+
+
+def _get_orders_db():
+    """Dedicated 'ORDERS' pseudo-instrument DB (capture_orders.sqlite) — not tied
+    to any single instrument's own capture DB, since one order can be NIFTY,
+    SENSEX, or MCX."""
+    global _orders_db
+    if _orders_db is None:
+        _orders_db = open_capture_db("ORDERS", autocommit=True)
+        init_order_updates_schema(_orders_db)
+    return _orders_db
+
+
+def _write_order_update(msg: dict):
+    """order_update_callback — one broker order-status event. Never raises: a
+    write failure here must never take down the WebSocket thread (same discipline
+    as _write_1min_sqlite/_persist_bar_and_options)."""
+    try:
+        db = _get_orders_db()
+        db.execute(
+            "INSERT OR REPLACE INTO order_updates "
+            "(norenordno, uid, actid, exch, tsym, trantype, qty, prc, status, "
+            "reporttype, raw_json, received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                msg.get("norenordno"),
+                msg.get("uid"),
+                msg.get("actid"),
+                msg.get("exch"),
+                msg.get("tsym"),
+                msg.get("trantype"),
+                int(msg["qty"]) if msg.get("qty") else None,
+                float(msg["prc"]) if msg.get("prc") else None,
+                msg.get("status"),
+                msg.get("reporttype"),
+                json.dumps(msg),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        db.commit()
+        log.info(
+            f"ORDER_UPDATE norenordno={msg.get('norenordno')} "
+            f"tsym={msg.get('tsym')} status={msg.get('status')} "
+            f"reporttype={msg.get('reporttype')}"
+        )
+    except Exception as e:
+        log.warning(f"Order-update write failed: {e} | msg={msg}")
 
 
 def _persist_bar_and_options(completed: dict):
@@ -565,8 +614,12 @@ def main():
 
     # ── Shoonya session ───────────────────────────────────────────────────
     api = NorenApiPy()
-    ret = api.injectOAuthHeader(creds["Access_token"], creds["UID"], creds["Account_ID"])
-    api.set_credentials(creds["Access_token"], creds["UID"], creds["Account_ID"])
+
+    def _authenticate(fresh_creds: dict) -> None:
+        api.injectOAuthHeader(fresh_creds["Access_token"], fresh_creds["UID"], fresh_creds["Account_ID"])
+        api.set_credentials(fresh_creds["Access_token"], fresh_creds["UID"], fresh_creds["Account_ID"])
+
+    _authenticate(creds)
     log.info("Shoonya authenticated")
 
     socket_opened = False
@@ -646,34 +699,79 @@ def main():
         log.warning("WebSocket closed — will reconnect")
 
     # ── Start with reconnect loop ──────────────────────────────────────────
+    # 2026-07-24 incident: broker was closing the session with WS close code
+    # 1008 (policy violation — stale/rejected session), and this loop kept
+    # retrying the SAME in-memory token forever. Each start_websocket() call
+    # also spawns a new background thread without tearing down the previous
+    # one, and websocket-client's own reconnect=1 dispatcher retries via
+    # recursive calls (not a loop) — rapid repeated 1008 rejections eventually
+    # blew the stack (RecursionError, logged as "maximum recursion depth
+    # exceeded"). Fix: reload credentials fresh every attempt (picks up a
+    # token refreshed elsewhere instead of retrying a dead one forever),
+    # explicitly close the previous connection first, detect the SDK's own
+    # ws_auth_failed flag (set on exactly this 1008 case) instead of just
+    # blindly retrying, and back off exponentially so failures can never
+    # arrive fast enough to trigger the library's recursion bug.
+    consecutive_failures = 0
     while True:
         socket_opened = False
+        api.ws_auth_failed = False
+
+        try:
+            fresh_creds = load_creds()
+            _authenticate(fresh_creds)
+        except Exception as e:
+            log.error(f"Credential reload failed (using previous credentials): {e}")
+
+        try:
+            api.close_websocket()
+        except Exception:
+            pass
+
         try:
             log.info("Starting WebSocket...")
             api.start_websocket(
-                order_update_callback=lambda msg: None,
+                order_update_callback=_write_order_update,
                 subscribe_callback=on_tick,
                 socket_open_callback=on_open,
             )
 
             for _ in range(30):
-                if socket_opened:
+                if socket_opened or getattr(api, "ws_auth_failed", False):
                     break
                 time.sleep(1)
-            else:
-                log.error("Socket open timeout (30s) — reconnecting")
-                time.sleep(5)
-                continue
 
-            log.info("WebSocket active — waiting for events")
-            while socket_opened:
-                time.sleep(1)
+            if getattr(api, "ws_auth_failed", False):
+                log.error(
+                    "Broker rejected session (WS close 1008 — policy violation); "
+                    "reloading credentials and retrying"
+                )
+                consecutive_failures += 1
+            elif not socket_opened:
+                log.error("Socket open timeout (30s) — reconnecting")
+                consecutive_failures += 1
+            else:
+                consecutive_failures = 0
+                log.info("WebSocket active — waiting for events")
+                while socket_opened and not getattr(api, "ws_auth_failed", False):
+                    time.sleep(1)
+                if getattr(api, "ws_auth_failed", False):
+                    log.error("Broker rejected session mid-stream (WS close 1008) — reconnecting")
+                    consecutive_failures += 1
 
         except Exception as e:
             log.error(f"WebSocket error: {e}")
+            consecutive_failures += 1
 
-        log.info("Reconnecting in 5s...")
-        time.sleep(5)
+        # Single shared backoff point — every path above (timeout, auth
+        # rejection, mid-stream rejection, exception) falls through to here
+        # rather than `continue`-ing past it. The original bug was exactly
+        # this: a `continue` from inside the retry branches skipped the
+        # backoff entirely, so failures could repeat as fast as the broker
+        # would respond — which is what let the recursion depth climb.
+        backoff = min(5 * (2 ** consecutive_failures), 60)
+        log.info(f"Reconnecting in {backoff}s...")
+        time.sleep(backoff)
 
 
 if __name__ == "__main__":

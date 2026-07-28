@@ -1,4 +1,4 @@
-"""Post-Mortem Analyst Crew — 2-agent trade review + PM recommendations.
+"""Post-Mortem Analyst Crew — 2-agent trade review + PM recommendations."""
 
 import os, sys
 from crewai import Agent, Task, Crew, Process
@@ -25,7 +25,7 @@ from tools.pa_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Agents: TradeReviewer, PatternAnalyst.
 """
 

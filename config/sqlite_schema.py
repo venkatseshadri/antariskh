@@ -178,6 +178,10 @@ def init_enriched_schema(conn: sqlite3.Connection):
             pivot_s1                       REAL,
             pivot_s2                       REAL,
             pivot_s3                       REAL,
+            cpr_tc                         REAL,
+            cpr_bc                         REAL,
+            cpr_width                      REAL,
+            cpr_width_pct                  REAL,
 
             fib_0                          REAL,
             fib_236                        REAL,
@@ -255,6 +259,18 @@ def init_enriched_schema(conn: sqlite3.Connection):
     """)
     conn.commit()
 
+    # Migration: add CPR columns to existing databases (2026-07-15, Project Square)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(market_data_enriched)")}
+    for col, col_type in (
+        ("cpr_tc", "REAL"),
+        ("cpr_bc", "REAL"),
+        ("cpr_width", "REAL"),
+        ("cpr_width_pct", "REAL"),
+    ):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE market_data_enriched ADD COLUMN {col} {col_type}")
+    conn.commit()
+
 
 def init_option_prices_schema(conn: sqlite3.Connection):
     """Per-strike option LTPs — append-only time series with (tsym, timestamp) PK."""
@@ -314,6 +330,37 @@ def init_option_prices_schema(conn: sqlite3.Connection):
             ON option_prices(strike, option_type)
         """)
         conn.commit()
+    conn.commit()
+
+
+def init_order_updates_schema(conn: sqlite3.Connection):
+    """Raw broker order-update events (from Shoonya's order_update_callback) —
+    append-only, one row per status change. Not tied to any instrument's own
+    capture DB (an order can be NIFTY/SENSEX/MCX) — lives in its own dedicated
+    'ORDERS' pseudo-instrument DB (capture_orders.sqlite). One order (norenordno)
+    generates multiple rows over its life (New -> ... -> Complete/Rejected/Canceled)
+    — PK is (norenordno, received_at), mirroring option_prices' append-only shape."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS order_updates (
+            norenordno   TEXT NOT NULL,
+            uid          TEXT,
+            actid        TEXT,
+            exch         TEXT,
+            tsym         TEXT,
+            trantype     TEXT,
+            qty          INTEGER,
+            prc          REAL,
+            status       TEXT,
+            reporttype   TEXT,
+            raw_json     TEXT NOT NULL,
+            received_at  TEXT NOT NULL,
+            PRIMARY KEY (norenordno, received_at)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_order_updates_norenordno
+        ON order_updates(norenordno)
+    """)
     conn.commit()
 
 

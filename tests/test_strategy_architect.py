@@ -1,5 +1,9 @@
 """E2E test: Strategy Architect — regime → strategy → strike selection.
 
+Feeds the Architect a TRENDING_BEAR signal from the Technical Scout
+and verifies it maps to a Call Credit Spread using DuckDB data + skill file.
+"""
+
 import os, sys
 from pathlib import Path
 from crewai import Agent, Task, Crew
@@ -7,11 +11,6 @@ from crewai.llm import LLM
 from crews.ta_crew import strategy_architect as _architect, load_skill_file
 from tools.ta_strategy_tools import FetchOptionChainTool, FetchGreeksTool
 from dotenv import load_dotenv
-
-
-Feeds the Architect a TRENDING_BEAR signal from the Technical Scout
-and verifies it maps to a Call Credit Spread using DuckDB data + skill file.
-"""
 
 
 # Load .env

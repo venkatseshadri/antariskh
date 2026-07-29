@@ -60,7 +60,9 @@ RISK_FREE_RATE = 0.06
 RV_WINDOW = 20
 RV_MEDIAN_LOOKBACK = 126
 STRIKE_GAP = 50
-LOT_SIZE = 75
+LOT_SIZE = 65  # NIFTY, per broker scrip master (corrected 2026-07-29 — was 75,
+# stale after NSE's lot-size revision; caused a real order rejection today,
+# "Quantity 75 is not a multiple of lot size 65.00")
 
 HIST_CSV = Path("/home/trading_ceo/trading-knowledge-base/nifty_minute_2015_2026.csv")
 STATE_PATH = Path(__file__).resolve().parent / "data" / "neutron" / "monthly_ic_pilot_state.json"
@@ -198,11 +200,15 @@ MARGIN_FLOOR_INR = 50_000.0  # same floor ATOM/PROTON's check_account_margin() u
 
 def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | None]:
     """Real broker-reported free margin, account-level. Field names differ by
-    broker's get_limits() schema — Flattrade: cash+collateral; Shoonya:
-    cash+collat/marginavailable (same fields proton_live.py's version reads,
-    since a Shoonya-routed NEUTRON+/HYDROGEN+ shares ATOM/PROTON+'s account).
-    Fails closed: any error/missing field/no session refuses entry rather
-    than assuming margin is fine."""
+    broker's get_limits() schema — both Flattrade and Shoonya return
+    cash+collateral (verified 2026-07-29 against a real live Shoonya
+    response: the response has no "collat"/"col"/"marginavailable" keys at
+    all — an earlier version of this function copied proton_live.py's
+    field-name guess for those without checking, which silently zeroed out
+    collateral and compared cash-only against the floor, producing a false
+    "insufficient margin" on a real entry attempt with ~Rs573k actually
+    available). Fails closed: any error/missing field/no session refuses
+    entry rather than assuming margin is fine."""
     if api is None:
         return False, None
     try:
@@ -211,8 +217,8 @@ def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | 
             return False, None
         if (broker or "").upper() == "SHOONYA":
             cash = float(limits.get("cash", 0) or 0)
-            col = float(limits.get("collat", limits.get("col", 0)) or 0)
-            avail = float(limits.get("marginavailable", limits.get("marginallowed", cash + col)))
+            collateral = float(limits.get("collateral", 0) or 0)
+            avail = cash + collateral
         else:  # FLATTRADE
             cash = float(limits.get("cash", 0) or 0)
             collateral = float(limits.get("collateral", 0) or 0)

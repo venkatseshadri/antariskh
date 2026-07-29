@@ -80,8 +80,12 @@ BROKER = os.environ.get("HYDROGEN_BROKER", "FLATTRADE").upper()
 NUCLEUS_TIER = "T3_HYDROGEN"
 
 INSTRUMENT_PARAMS = {
-    "NIFTY": {"step": 50, "lot": 75},
-    "SENSEX": {"step": 100, "lot": 10},
+    # Lot sizes corrected 2026-07-29 — were 75/10, stale after NSE's lot-size
+    # revision. Caused a real order rejection in NEUTRON+ today ("Quantity 75
+    # is not a multiple of lot size 65.00"); verified against the broker
+    # scrip master directly (NIFTY=65, SENSEX=20).
+    "NIFTY": {"step": 50, "lot": 65},
+    "SENSEX": {"step": 100, "lot": 20},
 }
 
 _OPT_TYPE = {"bull_put_spread": "PE", "bear_call_spread": "CE"}
@@ -572,8 +576,15 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                 elif current_short_ltp >= side["dynamic_sl"]:
                     reason = "TSL_ATR"
             if reason is None:
+                # net_credit must be lot-multiplied to match pnl's units (pnl =
+                # (entry_credit - value) * lot_size) — passing the bare
+                # per-point entry_credit here inflated profit_pct/decay_pct by
+                # exactly lot_size inside orbiter_tp_check (profit_pct =
+                # current_pnl / net_credit * 100), causing IV_CRUSH/DECAY_80
+                # to fire on ~2% real profit as if it were >100%. Found live in
+                # NEUTRON+, 2026-07-29 — same shared function, same bug here.
                 tp = orbiter_tp_check(
-                    structure, side["entry_credit"], pnl, row, S, entry_ts, expiry_ts, now
+                    structure, side["entry_credit"] * lot_size, pnl, row, S, entry_ts, expiry_ts, now
                 )
                 if tp.triggered:
                     reason = tp.reason

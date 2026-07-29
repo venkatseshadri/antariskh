@@ -38,7 +38,6 @@ from monthly_ic_pilot import (
     combined_daily_closes,
     trailing_rv,
     trailing_median_rv,
-    _flattrade_session,
     _leg_ltp,
     check_account_margin,
     get_broker_session,
@@ -60,8 +59,6 @@ from monthly_ic_pilot import (
 from orbiter_monthly import (
     _read_enriched_row,
     _f,
-    gate1_regime,
-    gate1_tiger_override,
     gate3_entry_abort,
     gate2_strikes,
     phase_machine_direction,
@@ -73,14 +70,31 @@ from orbiter_monthly import (
     orbiter_tp_check,
 )
 
+# Gate1 (ADX+CPR regime filter, shared with PROTON+/HYDROGEN+ via
+# orbiter_monthly.gate1_regime / atom.orbiter._gate1_regime_core) removed
+# for NEUTRON+ entirely, 2026-07-29 (Board override). Both its inputs are
+# intraday-scoped and don't map to a 30-day hold: CPR is a single day's
+# H/L/C pivot snapshot ("breakout day likely"), and ADX(14) here is
+# computed over 1-MINUTE bars (confirmed in enrichers/lib/buffer.py — a
+# ~14-minute lookback), not the 5-min ADX atom.orbiter's docstring
+# describes for ATOM's original intraday use case. Neither says anything
+# meaningful about the coming month. NEUTRON+'s own vol-filter
+# (trailing_rv 20d vs trailing_median_rv 126d, checked earlier in
+# _try_enter) is the genuinely monthly-scale regime signal; gate3 (PCR)
+# remains as the entry-day sanity check.
+
 WING_STRIKES = 2
 LIVE_ENABLED = os.environ.get("NEUTRON_LIVE_TRADING") == "YES_REAL_MONEY"
 BROKER = os.environ.get("NEUTRON_BROKER", "FLATTRADE").upper()
 NUCLEUS_TIER = "T4_NEUTRON"
 
 INSTRUMENT_PARAMS = {
-    "NIFTY": {"step": 50, "lot": 75},
-    "SENSEX": {"step": 100, "lot": 10},
+    # Lot sizes corrected 2026-07-29 — were 75/10, stale after NSE's lot-size
+    # revision. Caused a real order rejection today ("Quantity 75 is not a
+    # multiple of lot size 65.00"); verified against the broker scrip master
+    # directly (NIFTY=65, SENSEX=20).
+    "NIFTY": {"step": 50, "lot": 65},
+    "SENSEX": {"step": 100, "lot": 20},
 }
 
 _OPT_TYPE = {"bull_put_spread": "PE", "bear_call_spread": "CE"}
@@ -142,7 +156,7 @@ def _side_value_bs(
 def _price_side(side: dict, S: float, T: float) -> tuple[float, str, dict | None]:
     legs = side.get("legs") or {}
     if legs.get("short") and legs.get("hedge"):
-        api = _flattrade_session()
+        api = get_broker_session(BROKER)
         if api is not None:
             short_ltp = _leg_ltp(api, legs["short"]["exchange"], legs["short"]["token"])
             hedge_ltp = _leg_ltp(api, legs["hedge"]["exchange"], legs["hedge"]["token"])
@@ -365,13 +379,6 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
             }
         )
 
-    g1 = gate1_regime(row)
-    g1 = gate1_tiger_override(row, g1, row.get("timestamp"))
-    if not g1.passed:
-        event = {"instrument": instrument, "action": "SKIP", "reason": g1.reason, "gate": g1.gate}
-        LOG(event)
-        return event
-
     g3 = gate3_entry_abort(row)
     if not g3.passed:
         event = {"instrument": instrument, "action": "SKIP", "reason": g3.reason, "gate": g3.gate}
@@ -457,7 +464,6 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
         "entry_rv": entry_rv,
         "median_rv": median_rv,
         "structure": structure,
-        "gate1": g1.reason,
         "gate3": g3.reason,
         "cycle": cycle,
         "dry_run": not LIVE_ENABLED,
@@ -571,8 +577,16 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                 elif current_short_ltp >= side["dynamic_sl"]:
                     reason = "TSL_ATR"
             if reason is None:
+                # net_credit must be lot-multiplied to match pnl's units (pnl =
+                # (entry_credit - value) * lot_size) — passing the bare
+                # per-point entry_credit here inflated profit_pct/decay_pct by
+                # exactly lot_size inside orbiter_tp_check (profit_pct =
+                # current_pnl / net_credit * 100), causing IV_CRUSH/DECAY_80
+                # to fire on ~2% real profit as if it were >100%. Found live,
+                # 2026-07-29 — real entries were exiting within ~10-15 minutes
+                # of opening, not a genuine fast decay.
                 tp = orbiter_tp_check(
-                    structure, side["entry_credit"], pnl, row, S, entry_ts, expiry_ts, now
+                    structure, side["entry_credit"] * lot_size, pnl, row, S, entry_ts, expiry_ts, now
                 )
                 if tp.triggered:
                     reason = tp.reason

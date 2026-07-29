@@ -51,7 +51,14 @@ class FakeApi:
 
     def get_quotes(self, exchange, token):
         self.calls.append(("get_quotes", {"exchange": exchange, "token": token}))
-        return self._quotes_resp
+        # Real broker echoes back the requested token/exch in every quote
+        # response — _leg_ltp validates against this (2026-07-29 fix), so
+        # the mock must match unless a test explicitly overrides token/exch
+        # to test the mismatch-rejection path itself.
+        resp = dict(self._quotes_resp)
+        resp.setdefault("token", token)
+        resp.setdefault("exch", exchange)
+        return resp
 
 
 LEG = {"exchange": "NFO", "token": "12345", "tsym": "NIFTY28JUL26P24250"}
@@ -342,7 +349,7 @@ def test_orbiter_price_side_broker_maps_each_leg_to_its_own_token_not_swapped():
         def get_quotes(self, exchange, token):
             self.calls.append(("get_quotes", {"exchange": exchange, "token": token}))
             prices = {"63946": "35.0", "63950": "60.0"}  # hedge token, short token
-            return {"stat": "Ok", "lp": prices[token]}
+            return {"stat": "Ok", "lp": prices[token], "token": token, "exch": exchange}
 
     side = {"legs": _legs_raw()}  # hedge token=63946, short token=63950
     result = pl._orbiter_price_side_broker(TokenAwareApi(), side)
@@ -602,7 +609,7 @@ def test_live_mode_partial_exit_also_preserves_surviving_leg(monkeypatch):
                 "PSHORT": "100.0", "PHEDGE": "40.0",  # put value = 60 -> hits static_sl(60)
                 "CSHORT": "50.0", "CHEDGE": "20.0",    # call value = 30 -> no trigger
             }
-            return {"stat": "Ok", "lp": prices[token]}
+            return {"stat": "Ok", "lp": prices[token], "token": token, "exch": exchange}
 
     monkeypatch.setattr(pl, "LIVE_ENABLED", True)
     monkeypatch.setattr(
@@ -673,7 +680,7 @@ def test_live_mode_failed_close_leg_stays_tracked_not_orphaned(monkeypatch):
                 "PSHORT": "100.0", "PHEDGE": "40.0",   # put value = 60 -> hits static_sl(60)
                 "CSHORT": "100.0", "CHEDGE": "20.0",   # call value = 80 -> also hits static_sl(60)
             }
-            return {"stat": "Ok", "lp": prices[token]}
+            return {"stat": "Ok", "lp": prices[token], "token": token, "exch": exchange}
 
         def place_order(self, **kwargs):
             self.calls.append(("place_order", kwargs))

@@ -449,10 +449,24 @@ def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:
 
 
 def _leg_ltp(api, exchange: str, token: str) -> float:
-    """Real LTP for one leg, or NaN if the quote call fails."""
+    """Real LTP for one leg, or NaN if the quote call fails or returns a
+    mismatched instrument. Found live 2026-07-29: under concurrent load
+    (ATOM+/PROTON+/NEUTRON+ all polling the same Shoonya account
+    simultaneously), get_quotes() twice returned a price suspiciously close
+    to the underlying spot instead of the requested option's real premium —
+    caused a false PT/IV_CRUSH trigger and a bad exit-order price. The
+    response always echoes back its own token/exch (verified live), so
+    cross-checking those against what was actually requested before
+    trusting "lp" closes this class of bug regardless of the exact
+    broker-side mechanism."""
     try:
         q = api.get_quotes(exchange, token)
-        if q and q.get("stat") == "Ok":
+        if (
+            q
+            and q.get("stat") == "Ok"
+            and str(q.get("token")) == str(token)
+            and str(q.get("exch")) == str(exchange)
+        ):
             return float(q.get("lp", "nan"))
     except Exception:
         pass

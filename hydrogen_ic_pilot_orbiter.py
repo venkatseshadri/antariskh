@@ -45,9 +45,11 @@ from monthly_ic_pilot import (
     get_broker_session,
     place_leg,
     place_resting_sl,
+    cancel_order,
     cancel_resting_sl,
     broker_confirms_flat,
     resting_sl_fired_unreconciled,
+    confirm_shoonya_fill,
     nucleus_ceiling,
     BUY,
     SELL,
@@ -222,7 +224,10 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, BUY, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge",
     )
-    result["orders"]["hedge"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    result["orders"]["hedge"] = {
+        "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
+        "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
+    }
     if not r.ok:
         result["stage"] = "failed_hedge"
         return result
@@ -232,7 +237,10 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, SELL, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
     )
-    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    result["orders"]["short"] = {
+        "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
+        "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
+    }
     if not r.ok:
         result["stage"] = "failed_short_hedge_live"
         return result
@@ -271,12 +279,40 @@ def _exit_side_live(api, side: dict, qty: int, exit_prices: dict | None, remarks
             result["stage"] = f"failed_close_{leg_name}_no_price"
             return result
         r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}")
-        result["orders"][leg_name] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+        result["orders"][leg_name] = {
+            "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
+            "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
+        }
         if not r.ok:
             result["stage"] = f"failed_close_{leg_name}"
             return result
         already_closed[leg_name] = r.norenordno or True
     result["stage"] = "complete"
+    return result
+
+
+def _replace_resting_sl_live(api, side: dict, qty: int, new_trigger: float, remarks_prefix: str) -> dict:
+    """Cancel the existing resting SL and place a new one at the ratcheted
+    trigger. orbiter_tsl_ratchet() updates side['dynamic_sl'] in memory every
+    tick, but the broker-side resting SL-LMT order placed at entry never
+    moved to match — without this, the real backstop stays pinned at its
+    original (looser) trigger forever while the software's own trailing
+    stop tightens, so the two drift apart exactly when it matters most.
+    Best-effort: if the replace leg fails, the OLD resting SL (if the cancel
+    also failed) or nothing (if cancel succeeded but replace didn't) is left
+    — logged either way, never silently dropped, but not blocking the tick."""
+    result = {"cancel": None, "replace": None}
+    old_ordno = side.get("sl_order_ids", {}).get("short")
+    if old_ordno:
+        c = cancel_order(api, old_ordno)
+        result["cancel"] = {"ok": c.ok, "raw": c.raw}
+    leg = side["legs"]["short"]
+    r = place_resting_sl(
+        api, BUY, leg["exchange"], leg["tsym"], qty, new_trigger, remarks=f"{remarks_prefix}_SL_replace",
+    )
+    result["replace"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    if r.ok:
+        side.setdefault("sl_order_ids", {})["short"] = r.norenordno
     return result
 
 
@@ -511,9 +547,25 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
         if reason is None and row is not None:
             atr = _f(row.get("atr_daily")) or _f(row.get("atr"))
             if current_short_ltp is not None:
+                old_sl = side["dynamic_sl"]
                 side["dynamic_sl"] = orbiter_tsl_ratchet(
                     side["dynamic_sl"], side["entry_short_ltp"], current_short_ltp, atr
                 )
+                if LIVE_ENABLED and side["dynamic_sl"] != old_sl and side.get("sl_order_ids", {}).get("short"):
+                    replace_result = _replace_resting_sl_live(
+                        api, side, cycle.get("lot_size", lot_size), side["dynamic_sl"],
+                        remarks_prefix=f"HYDROGEN_{instrument}",
+                    )
+                    events.append(
+                        {
+                            "side": side_name,
+                            "reason": "SL_RATCHET_REPLACED",
+                            "old_trigger": old_sl,
+                            "new_trigger": side["dynamic_sl"],
+                            "replace_result": replace_result,
+                            "broker": BROKER,
+                        }
+                    )
                 catastrophe = orbiter_catastrophe_stop(side["dynamic_sl"])
                 if current_short_ltp >= catastrophe:
                     reason = "CATASTROPHE_STOP"

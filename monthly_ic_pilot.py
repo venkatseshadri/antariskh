@@ -36,6 +36,7 @@ was daily-granularity.
 import json
 import sqlite3
 import sys
+import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import date, datetime
@@ -387,6 +388,33 @@ def shoonya_order_status(norenordno: str) -> dict | None:
         return {"status": row[0], "reporttype": row[1], "price": row[2], "qty": row[3], "received_at": row[4]}
     except Exception:
         return None
+
+
+FILL_TERMINAL_STATUSES = {"COMPLETE", "REJECTED", "CANCELED", "CANCELLED"}
+
+
+def confirm_shoonya_fill(norenordno: str | None, broker: str, timeout_s: float = 5.0, poll_interval: float = 1.0) -> dict | None:
+    """Short-poll feed.py's shared order_updates table for a terminal status
+    on this order (COMPLETE/REJECTED/CANCELED) — real fill confirmation via
+    the SAME WS every Shoonya-routed system (ATOM, PROTON+, and now NEUTRON+/
+    HYDROGEN+ if NEUTRON_BROKER=SHOONYA) already streams into, rather than
+    just trusting place_order()'s immediate REST accept response (which only
+    means 'queued', not 'filled'). No-op for Flattrade (broker != SHOONYA) or
+    a missing norenordno — returns None immediately rather than polling
+    pointlessly. Enrichment, not a hard gate: caller should log the result,
+    not block the sequence on it timing out (a slow/missing confirmation
+    doesn't mean the order failed, just that this check couldn't prove it
+    succeeded within the poll window)."""
+    if broker.upper() != "SHOONYA" or not norenordno:
+        return None
+    deadline = _time.monotonic() + timeout_s
+    latest = None
+    while _time.monotonic() < deadline:
+        latest = shoonya_order_status(norenordno)
+        if latest and latest.get("status") in FILL_TERMINAL_STATUSES:
+            return latest
+        _time.sleep(poll_interval)
+    return latest
 
 
 def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:

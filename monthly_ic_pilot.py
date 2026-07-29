@@ -397,6 +397,20 @@ def shoonya_order_status(norenordno: str) -> dict | None:
 
 
 FILL_TERMINAL_STATUSES = {"COMPLETE", "REJECTED", "CANCELED", "CANCELLED"}
+FILL_FAILURE_STATUSES = {"REJECTED", "CANCELED", "CANCELLED"}
+
+
+def fill_rejected(fill_confirmation: dict | None) -> bool:
+    """True only when Shoonya's order-update feed explicitly confirms this
+    order was rejected/canceled. The REST accept (stat=Ok) only means
+    "queued for processing," not filled — found live 2026-07-29: a MORPH_ADD
+    call spread had both legs accepted then rejected by a cash-vs-collateral
+    broker rule, but stage was recorded "complete" anyway because only the
+    REST accept was checked, never the actual fill status. None
+    (Flattrade, or a Shoonya read that couldn't confirm either way) is NOT
+    treated as a rejection — falls back to trusting the REST accept, same
+    as before this existed."""
+    return bool(fill_confirmation) and fill_confirmation.get("status") in FILL_FAILURE_STATUSES
 
 
 def confirm_shoonya_fill(norenordno: str | None, broker: str, timeout_s: float = 5.0, poll_interval: float = 1.0) -> dict | None:

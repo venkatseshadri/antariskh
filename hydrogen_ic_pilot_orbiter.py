@@ -50,6 +50,7 @@ from monthly_ic_pilot import (
     broker_confirms_flat,
     resting_sl_fired_unreconciled,
     confirm_shoonya_fill,
+    fill_rejected,
     nucleus_ceiling,
     BUY,
     SELL,
@@ -228,11 +229,9 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, BUY, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge",
     )
-    result["orders"]["hedge"] = {
-        "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
-        "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
-    }
-    if not r.ok:
+    fc = confirm_shoonya_fill(r.norenordno, BROKER)
+    result["orders"]["hedge"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
+    if not r.ok or fill_rejected(fc):
         result["stage"] = "failed_hedge"
         return result
 
@@ -241,11 +240,9 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, SELL, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
     )
-    result["orders"]["short"] = {
-        "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
-        "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
-    }
-    if not r.ok:
+    fc = confirm_shoonya_fill(r.norenordno, BROKER)
+    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
+    if not r.ok or fill_rejected(fc):
         result["stage"] = "failed_short_hedge_live"
         return result
 
@@ -283,11 +280,9 @@ def _exit_side_live(api, side: dict, qty: int, exit_prices: dict | None, remarks
             result["stage"] = f"failed_close_{leg_name}_no_price"
             return result
         r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}")
-        result["orders"][leg_name] = {
-            "ok": r.ok, "norenordno": r.norenordno, "raw": r.raw,
-            "fill_confirmation": confirm_shoonya_fill(r.norenordno, BROKER),
-        }
-        if not r.ok:
+        fc = confirm_shoonya_fill(r.norenordno, BROKER)
+        result["orders"][leg_name] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
+        if not r.ok or fill_rejected(fc):
             result["stage"] = f"failed_close_{leg_name}"
             return result
         already_closed[leg_name] = r.norenordno or True

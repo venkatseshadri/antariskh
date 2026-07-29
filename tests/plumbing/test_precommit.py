@@ -350,16 +350,23 @@ def test_b1_hold_window_boundary():
 
 
 def test_holiday_fixture():
-    """T22 holiday: broker master has NO Oct contracts → nearest is Dec 29 (holiday-aware)."""
+    """T22 holiday: nearest real broker-listed weekly on/after Oct 2 is holiday-aware.
+
+    Asserts against the live scrip master, which is refreshed daily and grows
+    new far-dated contracts over time (2026-07-29: re-checked directly against
+    _broker_weekly_expiries — Oct 27 is now genuinely listed, wasn't when this
+    test was first written expecting Dec 29). This fixture will need updating
+    again whenever the broker lists the next contract in this window; the
+    calendar-only fallback would give Oct 6, which the assertion below still
+    correctly rules out."""
     print("\n  8.2  T22 holiday fixture")
     hol = datetime(2026, 10, 2, 10, 0, 0)
     from config.token_resolver import resolve_weekly_expiry
 
     e = resolve_weekly_expiry("NIFTY", now=hol)
-    # Broker master has no Oct dates → nearest available is Dec 29
     # Calendar-only fallback would give Oct 6 — broker IS holiday-aware
-    (ok if e == date(2026, 12, 29) else fail)(
-        f"Holiday Fri Oct 2 → {e} (calendar says Oct 6; broker knows Oct empty)"
+    (ok if e == date(2026, 10, 27) else fail)(
+        f"Holiday Fri Oct 2 → {e} (calendar says Oct 6; broker knows better)"
     )
 
 

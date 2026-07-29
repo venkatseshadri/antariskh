@@ -342,6 +342,53 @@ def broker_confirms_flat(api, tsyms: list[str]) -> bool:
     return True
 
 
+def resting_sl_fired_unreconciled(api, short_tsym: str) -> bool:
+    """Broker-agnostic (REST get_positions) reconciliation check — did the
+    resting SL-LMT order on this short leg already fire at the broker since
+    our last tick, without us knowing? Between 15-min polls the broker-side
+    stop can trigger on its own; without this check the software poll would
+    keep computing PT/SL/TSL off a leg that's already closed, and could try
+    to close it a second time. Same pattern as proton_live.py's _check_exit
+    reconciliation, generalized here since this module's callers manage
+    legs per-side rather than per-position. Fails safe: an unreadable broker
+    response returns False (don't halt on an API hiccup — a stuck real
+    problem will still be caught on the very next tick)."""
+    qty = broker_position_qty(api, short_tsym)
+    return qty is not None and qty == 0
+
+
+def shoonya_order_status(norenordno: str) -> dict | None:
+    """Reads the latest status for a Shoonya order number from feed.py's own
+    order_updates SQLite table (Shoonya-account-scoped — feed.py's WS already
+    has order_update_callback wired for ATOM/PROTON+'s account, and Shoonya's
+    order-update channel reports ALL activity on the logged-in account, not
+    just orders placed via the session object that opened the WS). Read-only,
+    never opens a second Shoonya WS — Shoonya allows exactly one WS per
+    account (enforced elsewhere, atom/tests/test_broker_ws.py), so a
+    NEUTRON+/HYDROGEN+ process running on NEUTRON_BROKER=SHOONYA must NEVER
+    call start_websocket() itself; this is how it gets fill/reject visibility
+    instead, for free, riding on Penguin's already-running connection.
+    Only meaningful when BROKER=SHOONYA — Flattrade orders never appear here
+    (separate broker, no shared infrastructure). Returns None on any read
+    failure or missing order (e.g. feed.py's WS was down, or BROKER=FLATTRADE)."""
+    try:
+        path = get_sqlite_capture_path("ORDERS")
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                "SELECT status, reporttype, prc, qty, received_at FROM order_updates "
+                "WHERE norenordno=? ORDER BY received_at DESC LIMIT 1",
+                (norenordno,),
+            ).fetchone()
+        finally:
+            con.close()
+        if row is None:
+            return None
+        return {"status": row[0], "reporttype": row[1], "price": row[2], "qty": row[3], "received_at": row[4]}
+    except Exception:
+        return None
+
+
 def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:
     """Capital ceiling from NUCLEUS (antariksh/nucleus.py), dynamically swept
     across all 4 tiers off real broker margin. Fail-closed: any read/parse/

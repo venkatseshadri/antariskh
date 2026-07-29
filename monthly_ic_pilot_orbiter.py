@@ -46,6 +46,7 @@ from monthly_ic_pilot import (
     place_resting_sl,
     cancel_resting_sl,
     broker_confirms_flat,
+    resting_sl_fired_unreconciled,
     nucleus_ceiling,
     BUY,
     SELL,
@@ -464,6 +465,31 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
     events = []
     active_sides = [s for s in ("put", "call") if cycle.get(s) is not None]
 
+    # Reconciliation: did a resting SL already fire at the broker since the
+    # last tick (cron down, or it fired between 15-min polls)? If so, a side
+    # we think is still open is actually already closed at the broker — halt
+    # for a human rather than keep computing PT/SL/TSL off a dead leg, or
+    # worse, try to close it a second time. Same discipline as proton_live.py's
+    # _check_exit reconciliation.
+    if LIVE_ENABLED:
+        for side_name in active_sides:
+            side = cycle[side_name]
+            if not side.get("sl_order_ids"):
+                continue
+            short_tsym = side["legs"]["short"]["tsym"]
+            if resting_sl_fired_unreconciled(api, short_tsym):
+                stranded = {
+                    "cycle": cycle,
+                    "reason": "resting_sl_fired_unreconciled",
+                    "side": side_name,
+                    "broker": BROKER,
+                }
+                return {
+                    "instrument": instrument,
+                    "action": "HALT_STRANDED_LEGS",
+                    "stranded_legs": stranded,
+                }
+
     for side_name in active_sides:
         side = cycle[side_name]
         structure = "bull_put_spread" if side["opt_type"] == "PE" else "bear_call_spread"
@@ -625,7 +651,9 @@ def run_daily(instrument: str, now: datetime = None) -> dict:
         if result["action"] == "EXIT":
             SAVE(None)
             LOG(result)
-        elif result["action"] == "SKIP_TICK":
+        elif result["action"] in ("SKIP_TICK", "HALT_STRANDED_LEGS"):
+            if result["action"] == "HALT_STRANDED_LEGS":
+                SAVE({"stranded_legs": result["stranded_legs"]})
             LOG(result)
         else:
             SAVE(cycle)

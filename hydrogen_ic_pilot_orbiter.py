@@ -171,7 +171,8 @@ def _open_side(
     instrument: str, structure: str, row: dict, S0: float, expiry: date, sigma: float, today: date
 ) -> dict:
     params = INSTRUMENT_PARAMS[instrument]
-    smap = gate2_strikes(row, S0, wing_strikes=WING_STRIKES, step=params["step"])
+    T0 = max((expiry - today).days / 365, 1 / 365)
+    smap = gate2_strikes(row, S0, wing_strikes=WING_STRIKES, step=params["step"], sigma=sigma, T=T0)
     opt_type = _OPT_TYPE[structure]
     short_k, hedge_k = (
         (smap.put_short, smap.put_hedge) if opt_type == "PE" else (smap.call_short, smap.call_hedge)
@@ -182,7 +183,6 @@ def _open_side(
         for k, v in legs_raw.items()
         if v is not None
     }
-    T0 = max((expiry - today).days / 365, 1 / 365)
     side = {
         "instrument": instrument,
         "short_k": short_k,
@@ -217,6 +217,43 @@ def _open_side(
         }
     )
     return side
+
+
+def _monthly_bb(closes, today: date, period: int = 20) -> tuple[float | None, float | None, float | None]:
+    """Same fix as monthly_ic_pilot_orbiter.py's _monthly_bb, ported here
+    2026-08-03 — HYDROGEN+ never had this wired in at all (not just missing
+    the wrong-TF fix, missing the override mechanism entirely), so its
+    gate2_strikes/phase_machine_direction/orbiter_tp_check have been running
+    on the ~20-min/~3hr intraday buffer's bb/vwap this whole time. Real
+    20-day BB off daily closes doubles as the VWAP substitute (mid) — see
+    monthly_ic_pilot_orbiter.py's docstring for the no-daily-volume-data
+    reasoning."""
+    hist = closes[closes.index <= today]
+    if len(hist) < period:
+        return None, None, None
+    window = hist.iloc[-period:]
+    mid, std = float(window.mean()), float(window.std())
+    return mid + 2 * std, mid - 2 * std, mid
+
+
+def _with_monthly_bb(row: dict, closes, today: date) -> dict:
+    bb_upper, bb_lower, vwap_real = _monthly_bb(closes, today)
+    if bb_upper is None:
+        return row
+    return {**row, "bb_upper_real": bb_upper, "bb_lower_real": bb_lower, "vwap_real": vwap_real}
+
+
+def _hedge_cash_shortfall(hedge_price: float | None, qty: int, cash_avail: float | None) -> dict | None:
+    """Ported from monthly_ic_pilot_orbiter.py 2026-08-03 — same real Shoonya
+    cash-vs-collateral rule (option BUY needs cash, not collateral), never
+    gated here before. None if covered, else a dict with hedge_cost/
+    cash_avail for the caller to log."""
+    if hedge_price is None:
+        return None
+    hedge_cost = hedge_price * qty
+    if cash_avail is None or hedge_cost > cash_avail:
+        return {"hedge_cost": hedge_cost, "cash_avail": cash_avail}
+    return None
 
 
 def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
@@ -386,13 +423,15 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
         LOG(event)
         return event
 
+    row = _with_monthly_bb(row, closes, today)
+
     api = get_broker_session(BROKER) if LIVE_ENABLED else None
     if LIVE_ENABLED:
         if api is None:
             event = {"instrument": instrument, "action": "SKIP", "reason": "no_broker_session", "broker": BROKER}
             LOG(event)
             return event
-        margin_ok, avail_margin, _cash_avail = check_account_margin(api, BROKER)
+        margin_ok, avail_margin, cash_avail = check_account_margin(api, BROKER)
         if not margin_ok:
             event = {
                 "instrument": instrument,
@@ -428,6 +467,19 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
                 "action": "REFUSE_ENTRY",
                 "reason": "no_real_quotes_for_live_order",
                 "broker": BROKER,
+            }
+            LOG(event)
+            return event
+        shortfall = _hedge_cash_shortfall(
+            side["entry_leg_prices"].get("hedge"), params["lot"] * MAX_LOTS, cash_avail
+        )
+        if shortfall is not None:
+            event = {
+                "instrument": instrument,
+                "action": "REFUSE_ENTRY",
+                "reason": "cash_insufficient_for_option_buy",
+                "broker": BROKER,
+                **shortfall,
             }
             LOG(event)
             return event
@@ -506,6 +558,8 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
         return {"action": "SKIP_TICK", "instrument": instrument, "reason": "no_broker_session", "broker": BROKER}
 
     row = _read_enriched_row(instrument, today)
+    if row is not None:
+        row = _with_monthly_bb(row, closes, today)
     events = []
     active_sides = [s for s in ("put", "call") if cycle.get(s) is not None]
 
@@ -650,20 +704,43 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
             events.append(event)
             continue
 
-        if row is not None and cycle["phase"] == "DIRECTIONAL_ANCHOR" and len(active_sides) == 1:
+        # Gate dropped from phase == "DIRECTIONAL_ANCHOR" to just len==1, same
+        # fix + same reasoning as monthly_ic_pilot_orbiter.py, 2026-08-03 —
+        # once phase moves to CONSOLIDATION it never reverts, so a side that
+        # later exits on its own (profitable PCR_DIVERGENCE, etc.) could
+        # never get a fresh spread re-added. consolidation_trigger's own
+        # PCR-flat + unbreached check is the real safety gate.
+        if row is not None and len(active_sides) == 1:
             if consolidation_trigger(row, structure, side["short_k"], S):
                 other_structure = _OTHER_STRUCTURE[structure]
                 other_side_name = _SIDE_FOR_STRUCTURE[other_structure]
                 new_side = _open_side(
-                    instrument, other_structure, row, S, expiry, side["sigma"], today
+                    instrument, other_structure, _with_monthly_bb(row, closes, today), S, expiry, side["sigma"], today
                 )
                 if LIVE_ENABLED:
+                    cash_shortfall = None
+                    if new_side.get("entry_leg_prices") is not None:
+                        _, _, morph_cash_avail = check_account_margin(api, BROKER)
+                        cash_shortfall = _hedge_cash_shortfall(
+                            new_side["entry_leg_prices"].get("hedge"),
+                            cycle.get("lot_size", lot_size),
+                            morph_cash_avail,
+                        )
                     if new_side.get("entry_leg_prices") is None:
                         events.append(
                             {
                                 "side": other_side_name,
                                 "reason": "MORPH_ADD_SKIPPED_NO_QUOTES",
                                 "structure": other_structure,
+                            }
+                        )
+                    elif cash_shortfall is not None:
+                        events.append(
+                            {
+                                "side": other_side_name,
+                                "reason": "MORPH_ADD_SKIPPED_CASH_INSUFFICIENT",
+                                "structure": other_structure,
+                                **cash_shortfall,
                             }
                         )
                     else:

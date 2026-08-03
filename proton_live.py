@@ -62,6 +62,7 @@ import pandas as pd
 sys.path.insert(0, "/home/trading_ceo/atom/src")
 from atom.broker_session import load_live_api
 
+from config.lot_size import get_lot_size
 from config.sqlite_schema import get_sqlite_capture_path
 from config.token_resolver import resolve_weekly_expiry, TokenResolver
 from monthly_ic_pilot import (
@@ -70,6 +71,8 @@ from monthly_ic_pilot import (
     trailing_rv,
     trailing_median_rv,
     RISK_FREE_RATE,
+    shoonya_order_status,
+    FILL_FAILURE_STATUSES,
 )
 from backtester import black_scholes_call, black_scholes_put
 import orbiter_weekly as orbiter_mod
@@ -109,10 +112,12 @@ SENSEX_HIST_CSV = Path(__file__).resolve().parent / "data" / "sensex_candlestick
 # untouched; this is a one-time copy, not a symlink (root's cache directory
 # itself isn't reachable to link against anyway).
 
+# Lot sizes now sourced live from scrip_master (config/lot_size.py), not
+# hardcoded — see that module's docstring for why (2026-07-30).
 INDEX_CONFIG = {
     "NIFTY": {
         "gap": 50,
-        "lot_size": 75,
+        "lot_size": get_lot_size("NIFTY"),
         "target_delta": 0.25,
         "triggered_by_expiry_of": "SENSEX",
         "resolver_kwarg": "nifty_spot",
@@ -120,7 +125,7 @@ INDEX_CONFIG = {
     },
     "SENSEX": {
         "gap": 100,
-        "lot_size": 10,
+        "lot_size": get_lot_size("SENSEX"),
         "target_delta": 0.20,
         "triggered_by_expiry_of": "NIFTY",
         "resolver_kwarg": "sensex_spot",
@@ -212,6 +217,26 @@ def place_resting_sl(
 def cancel_order(api, orderno: str) -> LiveOrderResult:
     resp = api.cancel_order(orderno=orderno)
     return LiveOrderResult(_ok(resp), _norenordno(resp), resp)
+
+
+def _replace_resting_sl_live(api, side: dict, qty: int, new_trigger: float, remarks_prefix: str) -> dict:
+    """Cancel the existing resting SL and place a new one at new_trigger. Best
+    effort: if the replace leg fails, whatever the cancel left behind is
+    logged either way, never silently dropped, but not blocking the tick.
+    Same pattern as monthly_ic_pilot_orbiter.py's helper of the same name."""
+    result = {"cancel": None, "replace": None}
+    old_ordno = side.get("sl_order_ids", {}).get("short")
+    if old_ordno:
+        c = cancel_order(api, old_ordno)
+        result["cancel"] = {"ok": c.ok, "raw": c.raw}
+    leg = side["legs"]["short"]
+    r = place_resting_sl(
+        api, BUY, leg["exchange"], leg["tsym"], qty, new_trigger, remarks=f"{remarks_prefix}_SL_replace",
+    )
+    result["replace"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw}
+    if r.ok:
+        side.setdefault("sl_order_ids", {})["short"] = r.norenordno
+    return result
 
 
 def atr_sl_multiplier(rv: float, median_rv: float) -> float:
@@ -961,6 +986,29 @@ def _check_exit_orbiter(state: dict, today: date, now: datetime) -> dict | None:
         elif value >= static_sl:
             reason = "SL"
 
+        # Resting SL-LMT is retention="DAY" (exchange auto-cancels EOD) and
+        # was never re-armed on later days if the ratchet hadn't moved it
+        # since entry — same gap fixed live in monthly_ic_pilot_orbiter.py
+        # 2026-07-31 (NEUTRON+ NIFTY found running naked since day-1 EOD).
+        # Re-arm at the current dynamic_sl whenever the recorded order is
+        # confirmed dead at the broker.
+        if reason is None and LIVE_ENABLED:
+            old_ordno = side.get("sl_order_ids", {}).get("short")
+            if old_ordno:
+                status = shoonya_order_status(old_ordno)
+                if status is not None and status.get("status") in FILL_FAILURE_STATUSES:
+                    replace_result = _replace_resting_sl_live(
+                        api, side, pos["qty"], side["dynamic_sl"], remarks_prefix=f"PROTON_{index}",
+                    )
+                    exited_events_note = {
+                        "side": side_name,
+                        "reason": "SL_REARMED_EXPIRED",
+                        "old_status": status.get("status"),
+                        "new_trigger": side["dynamic_sl"],
+                        "replace_result": replace_result,
+                    }
+                    _log_ledger(exited_events_note)
+
         dynamic_sl = side["dynamic_sl"]
         if reason is None and current_short_ltp is not None:
             if atr:
@@ -968,6 +1016,26 @@ def _check_exit_orbiter(state: dict, today: date, now: datetime) -> dict | None:
                     dynamic_sl, entry_short_ltp, current_short_ltp, atr
                 )
                 side["dynamic_sl"] = dynamic_sl
+                # Ratchet moved the trigger in memory but the broker-side
+                # resting SL never got pushed to match — was completely
+                # missing here (unlike monthly_ic_pilot_orbiter.py/
+                # hydrogen_ic_pilot_orbiter.py, which both call this on
+                # ratchet movement). Without it the real backstop stays
+                # pinned at its original trigger forever while the software's
+                # trailing stop tightens, drifting apart exactly when it
+                # matters most.
+                if LIVE_ENABLED and side.get("sl_order_ids", {}).get("short"):
+                    replace_result = _replace_resting_sl_live(
+                        api, side, pos["qty"], dynamic_sl, remarks_prefix=f"PROTON_{index}",
+                    )
+                    _log_ledger(
+                        {
+                            "side": side_name,
+                            "reason": "SL_RATCHET_REPLACED",
+                            "new_trigger": dynamic_sl,
+                            "replace_result": replace_result,
+                        }
+                    )
             catastrophe = orbiter_mod.orbiter_catastrophe_stop(dynamic_sl)
             if current_short_ltp >= catastrophe:
                 reason = "CATASTROPHE_STOP"
@@ -1097,9 +1165,13 @@ _MORPH_STRUCT = {"bull_put_spread": "bear_call_spread", "bear_call_spread": "bul
 
 
 def _morph_check_orbiter(state: dict, today: date, now: datetime) -> dict | None:
+    """phase check dropped 2026-08-03 — same fix as monthly_ic_pilot_orbiter.py
+    /hydrogen_ic_pilot_orbiter.py/weekly_ic_pilot_orbiter.py: pos["phase"]
+    never reverts to DIRECTIONAL_ANCHOR once CONSOLIDATION, so a side that
+    later exits on its own (e.g. profitable PCR_DIVERGENCE) could never get
+    a fresh spread re-added. consolidation_trigger's own PCR-flat +
+    unbreached check (below) is the real safety gate, not the phase."""
     pos = state["orbiter_position"]
-    if pos["phase"] != "DIRECTIONAL_ANCHOR":
-        return None
     active_sides = [s for s in ("put", "call") if pos.get(s) is not None]
     if len(active_sides) != 1:
         return None

@@ -21,6 +21,7 @@ atom/src/atom/orbiter.py's actual implementation.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import sys
 from dataclasses import dataclass, field
@@ -56,6 +57,20 @@ ORBITER_CFG = {
     "tsl.ratchet.premium_drop_pct": 25,
     "tsl.ratchet.atr_fraction": 0.5,
     "tsl.catastrophe.above_pct": 50,
+    # Forward-looking strike anchor, added 2026-08-03. gate2_strikes' BB
+    # anchor (row['bb_upper_real']/['bb_lower_real'], a 20-day *trailing*
+    # historical band) was found live to be roughly half the width of the
+    # actual expected move over NEUTRON+'s ~27-30 day *forward* hold — e.g.
+    # 2026-08-03: BB 2sigma width 700.7pts vs a proper sigma*sqrt(T) 2sigma
+    # forward move of 1559.8pts at the same realized vol. The 07-29 live
+    # entry (pre-dating even the 07-31 wrong-TF BB fix) landed at ~0.50
+    # delta as a direct symptom. 1.0 here targets a ~1-SD forward move
+    # (~16-delta in the standard normal approximation) — a defensible,
+    # standard premium-selling target, not a rigorously-derived optimum;
+    # tune if a different risk profile is wanted. Takes priority over the
+    # BB anchor when the position's own sigma/T are available (they always
+    # are — sigma is already tracked per-side, T from days-to-expiry).
+    "gate2.sigma_multiplier": 1.0,
 }
 
 
@@ -177,9 +192,18 @@ class StrikeMap:
     atm: int
 
 
-def gate2_strikes(row: dict, spot: float, wing_strikes: int = 3, step: int = 50) -> StrikeMap:
-    """Gate 2: anchor condor boundaries off real BB (multitf daily) if present,
-    plus VWAP/MaxPain. `step` must be 50 for NIFTY, 100 for SENSEX."""
+def gate2_strikes(
+    row: dict, spot: float, wing_strikes: int = 3, step: int = 50,
+    sigma: float | None = None, T: float | None = None,
+) -> StrikeMap:
+    """Gate 2: anchor condor boundaries off a forward-looking sigma*sqrt(T)
+    expected move when sigma/T are supplied (added 2026-08-03 — see
+    ORBITER_CFG['gate2.sigma_multiplier']'s docstring for why: the BB anchor
+    below is a 20-day *trailing* band, roughly half the width of the actual
+    expected move over a monthly *forward* hold, found live). Falls back to
+    real BB (multitf daily) if present, else a fixed wing_strikes*step floor
+    from ATM, when sigma/T aren't given — old callers stay unaffected.
+    `step` must be 50 for NIFTY, 100 for SENSEX."""
     atm = round(spot / step) * step
     vwap = _f(row.get("vwap_real")) or _f(row.get("vwap")) or spot
     bb_width = _f(row.get("bb_width"))
@@ -197,7 +221,16 @@ def gate2_strikes(row: dict, spot: float, wing_strikes: int = 3, step: int = 50)
     def _nearest(target: float) -> int:
         return round(target / step) * step
 
-    if bb_upper and bb_lower:
+    sigma_move = (
+        spot * sigma * math.sqrt(T) * ORBITER_CFG["gate2.sigma_multiplier"]
+        if sigma and sigma > 0 and T and T > 0
+        else None
+    )
+
+    if sigma_move:
+        call_short = _nearest(spot + sigma_move) + step
+        put_short = _nearest(spot - sigma_move) - step
+    elif bb_upper and bb_lower:
         call_short = _nearest(bb_upper) + step
         put_short = _nearest(bb_lower) - step
     else:

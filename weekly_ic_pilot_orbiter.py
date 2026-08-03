@@ -18,6 +18,7 @@ import numpy as np
 from datetime import date, datetime, time
 from pathlib import Path
 
+from config.lot_size import get_lot_size
 from config.token_resolver import resolve_weekly_expiry, TokenResolver
 from backtester import black_scholes_call, black_scholes_put
 from monthly_ic_pilot import (
@@ -47,9 +48,11 @@ from orbiter_monthly import (
 
 WING_STRIKES = 2
 
+# Lot sizes now sourced live from scrip_master (config/lot_size.py), not
+# hardcoded — see that module's docstring for why (2026-07-30).
 INSTRUMENT_PARAMS = {
-    "NIFTY": {"step": 50, "lot": 75},
-    "SENSEX": {"step": 100, "lot": 10},
+    "NIFTY": {"step": 50, "lot": get_lot_size("NIFTY")},
+    "SENSEX": {"step": 100, "lot": get_lot_size("SENSEX")},
 }
 
 STATE_PATH = Path(__file__).resolve().parent / "data" / "weekly_ic_pilot_orbiter_state.json"
@@ -364,7 +367,13 @@ def _mark_open_cycle(state: dict, cycle: dict, closes, today: date, now: datetim
             cycle[side_name] = None
             continue
 
-        if row is not None and cycle["phase"] == "DIRECTIONAL_ANCHOR" and len(active_sides) == 1:
+        # Gate dropped from phase == "DIRECTIONAL_ANCHOR" to just len==1, same
+        # fix as monthly_ic_pilot_orbiter.py/hydrogen_ic_pilot_orbiter.py,
+        # 2026-08-03 — phase never reverts once CONSOLIDATION, so a side that
+        # later exits on its own could never get re-added.
+        # consolidation_trigger's own PCR-flat + unbreached check is the
+        # real safety gate.
+        if row is not None and len(active_sides) == 1:
             if consolidation_trigger(row, structure, side["short_k"], S):
                 other_structure = _OTHER_STRUCTURE[structure]
                 other_side_name = _SIDE_FOR_STRUCTURE[other_structure]

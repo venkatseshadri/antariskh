@@ -239,6 +239,20 @@ def _roll_leg_live(
         return result
 
     open_price = _leg_ltp(api, new_leg["exchange"], new_leg["token"])
+    if open_action == BUY:
+        # Rolling the hedge closes the old hedge (SELL, no cash needed) then
+        # opens a new one (BUY, needs actual cash — same Shoonya rule as
+        # entry/MORPH_ADD, see _hedge_cash_shortfall's docstring). The old
+        # hedge is already closed at this point, so skipping here leaves the
+        # short leg naked — same real stranding as a failed open, hence the
+        # matching stage name so the caller's existing HALT_STRANDED_LEGS
+        # check (stage.startswith("failed_open_")) catches it. 2026-08-03.
+        _, _, roll_cash_avail = check_account_margin(api, BROKER)
+        shortfall = _hedge_cash_shortfall(open_price, qty, roll_cash_avail)
+        if shortfall is not None:
+            result["stage"] = f"failed_open_{leg_name}_cash_insufficient"
+            result["cash_shortfall"] = shortfall
+            return result
     r = place_leg(
         api, open_action, new_leg["exchange"], new_leg["tsym"], qty, open_price,
         remarks=f"{remarks_prefix}_ROLL_OPEN_{leg_name}",
@@ -308,7 +322,8 @@ def _open_side(
     instrument: str, structure: str, row: dict, S0: float, expiry: date, sigma: float, today: date
 ) -> dict:
     params = INSTRUMENT_PARAMS[instrument]
-    smap = gate2_strikes(row, S0, wing_strikes=WING_STRIKES, step=params["step"])
+    T0 = max((expiry - today).days / 365, 1 / 365)
+    smap = gate2_strikes(row, S0, wing_strikes=WING_STRIKES, step=params["step"], sigma=sigma, T=T0)
     opt_type = _OPT_TYPE[structure]
     short_k, hedge_k = (
         (smap.put_short, smap.put_hedge) if opt_type == "PE" else (smap.call_short, smap.call_hedge)
@@ -319,7 +334,6 @@ def _open_side(
         for k, v in legs_raw.items()
         if v is not None
     }
-    T0 = max((expiry - today).days / 365, 1 / 365)
     side = {
         "instrument": instrument,
         "short_k": short_k,
@@ -938,7 +952,20 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
             events.append(event)
             continue
 
-        if row is not None and cycle["phase"] == "DIRECTIONAL_ANCHOR" and len(active_sides) == 1:
+        # Gated on phase == "DIRECTIONAL_ANCHOR" only, until 2026-08-03: once
+        # MORPH_ADD succeeded once (phase -> "CONSOLIDATION"), that phase
+        # never reverts, so if the other side later exits on its own (e.g.
+        # a profitable PCR_DIVERGENCE close, as happened live 2026-07-31)
+        # this block could never re-evaluate — permanently stuck one-sided
+        # regardless of market conditions, even in a trend that's exactly
+        # when a fresh spread on the closed side would help. Found live
+        # 2026-08-03 (NIFTY gapped up, put side had already closed 07-31,
+        # call side left naked with no re-add path). consolidation_trigger's
+        # own PCR-flat + active-side-unbreached check already provides the
+        # real safety gate (won't fire mid-trend/mid-breach) — the phase
+        # restriction was redundant and wrong. Now re-evaluates every tick
+        # whenever exactly one side is active, regardless of phase history.
+        if row is not None and len(active_sides) == 1:
             if consolidation_trigger(row, structure, side["short_k"], S):
                 other_structure = _OTHER_STRUCTURE[structure]
                 other_side_name = _SIDE_FOR_STRUCTURE[other_structure]
@@ -992,8 +1019,9 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                                 }
                             )
                         else:
-                            # entry failed — don't set cycle[other_side_name];
-                            # phase stays DIRECTIONAL_ANCHOR, retry next tick
+                            # entry failed — don't set cycle[other_side_name],
+                            # don't touch phase; consolidation_trigger gets
+                            # re-checked next tick regardless of phase now.
                             events.append(
                                 {
                                     "side": other_side_name,

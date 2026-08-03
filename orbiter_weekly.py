@@ -275,23 +275,32 @@ def asymmetric_breakage_trigger(structure: str, short_strike: float, spot: float
 def orbiter_initial_tsl(
     short_entry_ltp: float, atr_value: float | None, sl_pct_fallback: float = 35.0
 ) -> float:
-    m = ORBITER_CFG["tsl.atr_multiplier"]
-    if atr_value and atr_value > 0:
-        return round(short_entry_ltp + m * atr_value, 2)
+    """atr_value is ignored — see orbiter_tsl_ratchet's docstring. atr_value
+    stays in the signature (unused) so proton_live.py/weekly_ic_pilot_
+    orbiter.py's call sites don't need changing. 2026-08-02."""
     return round(short_entry_ltp * (1 + sl_pct_fallback / 100.0), 2)
 
 
 def orbiter_tsl_ratchet(
     current_sl: float, short_entry_ltp: float, short_current_ltp: float, atr_value: float | None
 ) -> float:
+    """atr_value is ignored (kept in the signature, see orbiter_initial_tsl).
+    atr_daily here is the underlying index's own real daily ATR (market_
+    data_multitf, timeframe_min=1440 — genuinely daily-scoped, not the ~3hr
+    rolling-buffer version monthly_ic_pilot_orbiter.py's wrong-TF bug was
+    about), but it was still added directly onto a rupee OPTION premium
+    with no delta/vol conversion — index points vs premium rupees,
+    dimensionally wrong regardless of timeframe. Same root cause, same fix
+    as monthly_ic_pilot_orbiter.py, 2026-08-02: reimplemented as a clean
+    breakeven ratchet instead — once premium has decayed >= the configured
+    threshold from entry, ratchet SL to breakeven, no ATR involved. Never
+    moves the SL up."""
     if short_entry_ltp <= 0:
         return current_sl
     drop_pct = (short_entry_ltp - short_current_ltp) / short_entry_ltp
     threshold = ORBITER_CFG["tsl.ratchet.premium_drop_pct"] / 100.0
-    atr = atr_value or 0.0
-    if drop_pct >= threshold and atr > 0:
-        new_sl = round(current_sl - ORBITER_CFG["tsl.ratchet.atr_fraction"] * atr, 2)
-        return max(new_sl, short_entry_ltp)
+    if drop_pct >= threshold:
+        return min(current_sl, short_entry_ltp)
     return current_sl
 
 

@@ -235,9 +235,13 @@ def test_asymmetric_breakage_call_side():
 # ── ATR TSL / ratchet / catastrophe ────────────────────────────────────────
 
 
-def test_initial_tsl_uses_atr_when_available():
+def test_initial_tsl_ignores_atr_dimensionally_wrong():
+    """atr_value is index-points on the underlying, not option-premium
+    rupees — ignored regardless of being supplied, falls back to the
+    pct-of-premium SL always. Fixed 2026-08-02, see orbiter_initial_tsl's
+    docstring."""
     sl = ow.orbiter_initial_tsl(short_entry_ltp=100.0, atr_value=20.0)
-    assert sl == 100.0 + 1.5 * 20.0
+    assert sl == pytest.approx(135.0)
 
 
 def test_initial_tsl_falls_back_without_atr():
@@ -246,10 +250,13 @@ def test_initial_tsl_falls_back_without_atr():
 
 
 def test_ratchet_lowers_sl_after_25pct_drop():
+    """Ratchets straight to breakeven once premium decay clears the
+    threshold — no ATR involved (dimensionally wrong, fixed 2026-08-02),
+    atr_value kept in the call but unused."""
     sl = ow.orbiter_tsl_ratchet(
         current_sl=130.0, short_entry_ltp=100.0, short_current_ltp=70.0, atr_value=20.0
     )
-    assert sl == 130.0 - 0.5 * 20.0
+    assert sl == 100.0
 
 
 def test_ratchet_never_moves_up_or_below_entry():

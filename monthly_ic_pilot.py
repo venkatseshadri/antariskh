@@ -198,7 +198,7 @@ def get_broker_session(broker: str):
 MARGIN_FLOOR_INR = 50_000.0  # same floor ATOM/PROTON's check_account_margin() uses
 
 
-def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | None]:
+def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | None, float | None]:
     """Real broker-reported free margin, account-level. Field names differ by
     broker's get_limits() schema — both Flattrade and Shoonya return
     cash+collateral (verified 2026-07-29 against a real live Shoonya
@@ -208,13 +208,29 @@ def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | 
     collateral and compared cash-only against the floor, producing a false
     "insufficient margin" on a real entry attempt with ~Rs573k actually
     available). Fails closed: any error/missing field/no session refuses
-    entry rather than assuming margin is fine."""
+    entry rather than assuming margin is fine.
+
+    Returns (margin_ok, avail=cash+collateral, cash=cash alone). `cash` is
+    ShoonyaApi-py's officially documented "Cash Margin available" field
+    (github.com/Shoonya-Dev/ShoonyaApi-py README) — added 2026-08-02 so
+    callers can gate option-BUY legs on cash alone. Real Shoonya rejection
+    hit live 2026-07-29: `RED:RULE:{Allow CAC credit but disallow collateral
+    and daylong cash for option buy}` — buying an option (a hedge leg)
+    requires actual cash, not collateral, but this function's own `avail`
+    treats them as one fungible pool. get_limits() also returns undocumented
+    cash_coll/mf_cash_coll/mf_coll fields that likely segment collateral's
+    SEBI-mandated cash-equivalent portion more precisely, but no official
+    field-level docs exist for them (checked ShoonyaApi-py README + FAQ,
+    2026-08-02) — not used here, `cash` alone is the conservative, sourced
+    choice; a caller requiring `cash` to cover an option-buy leg can only
+    ever be more restrictive than reality, never less, unlike guessing at
+    the undocumented fields' semantics."""
     if api is None:
-        return False, None
+        return False, None, None
     try:
         limits = api.get_limits()
         if not isinstance(limits, dict) or limits.get("stat") != "Ok":
-            return False, None
+            return False, None, None
         if (broker or "").upper() == "SHOONYA":
             cash = float(limits.get("cash", 0) or 0)
             collateral = float(limits.get("collateral", 0) or 0)
@@ -223,9 +239,9 @@ def check_account_margin(api, broker: str = "FLATTRADE") -> tuple[bool, float | 
             cash = float(limits.get("cash", 0) or 0)
             collateral = float(limits.get("collateral", 0) or 0)
             avail = cash + collateral
-        return avail >= MARGIN_FLOOR_INR, avail
+        return avail >= MARGIN_FLOOR_INR, avail, cash
     except Exception:
-        return False, None
+        return False, None, None
 
 
 # ── Real-order primitives (2026-07-27) — shared by NEUTRON+/HYDROGEN+'s

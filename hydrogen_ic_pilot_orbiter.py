@@ -33,6 +33,7 @@ import numpy as np
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from config.lot_size import get_lot_size
 from config.token_resolver import resolve_weekly_expiry, TokenResolver
 from backtester import black_scholes_call, black_scholes_put
 from monthly_ic_pilot import (
@@ -52,6 +53,8 @@ from monthly_ic_pilot import (
     confirm_shoonya_fill,
     fill_rejected,
     nucleus_ceiling,
+    shoonya_order_status,
+    FILL_FAILURE_STATUSES,
     BUY,
     SELL,
     MAX_LOTS,
@@ -60,6 +63,7 @@ from monthly_ic_pilot import (
     RISK_FREE_RATE,
 )
 from orbiter_monthly import (
+    ORBITER_CFG,
     _read_enriched_row,
     _f,
     gate1_regime,
@@ -70,7 +74,6 @@ from orbiter_monthly import (
     consolidation_trigger,
     asymmetric_breakage_trigger,
     orbiter_initial_tsl,
-    orbiter_tsl_ratchet,
     orbiter_catastrophe_stop,
     orbiter_tp_check,
 )
@@ -81,12 +84,10 @@ BROKER = os.environ.get("HYDROGEN_BROKER", "FLATTRADE").upper()
 NUCLEUS_TIER = "T3_HYDROGEN"
 
 INSTRUMENT_PARAMS = {
-    # Lot sizes corrected 2026-07-29 — were 75/10, stale after NSE's lot-size
-    # revision. Caused a real order rejection in NEUTRON+ today ("Quantity 75
-    # is not a multiple of lot size 65.00"); verified against the broker
-    # scrip master directly (NIFTY=65, SENSEX=20).
-    "NIFTY": {"step": 50, "lot": 65},
-    "SENSEX": {"step": 100, "lot": 20},
+    # Lot sizes now sourced live from scrip_master (config/lot_size.py),
+    # not hardcoded — see that module's docstring for why (2026-07-30).
+    "NIFTY": {"step": 50, "lot": get_lot_size("NIFTY")},
+    "SENSEX": {"step": 100, "lot": get_lot_size("SENSEX")},
 }
 
 _OPT_TYPE = {"bull_put_spread": "PE", "bear_call_spread": "CE"}
@@ -191,7 +192,14 @@ def _open_side(
         "sigma": sigma,
     }
     value, pricing_source, leg_prices = _price_side(side, S0, T0)
-    atr = _f(row.get("atr_daily")) or _f(row.get("atr"))
+    # atr_daily/atr are the UNDERLYING index's daily point-ATR, not the
+    # option premium's own ATR — orbiter_initial_tsl adds it straight onto
+    # the rupee premium, dimensionally meaningless (no per-leg premium ATR
+    # or live delta tracked anywhere to convert correctly). Same fix as
+    # monthly_ic_pilot_orbiter.py's _open_side, 2026-08-02 — forced None so
+    # orbiter_initial_tsl falls back to its pct-of-premium path instead of a
+    # guessed conversion factor on live-money SL math.
+    atr = None
     entry_short_ltp = (
         leg_prices["short"]
         if leg_prices
@@ -384,7 +392,7 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
             event = {"instrument": instrument, "action": "SKIP", "reason": "no_broker_session", "broker": BROKER}
             LOG(event)
             return event
-        margin_ok, avail_margin = check_account_margin(api, BROKER)
+        margin_ok, avail_margin, _cash_avail = check_account_margin(api, BROKER)
         if not margin_ok:
             event = {
                 "instrument": instrument,
@@ -542,14 +550,49 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
         elif is_expiry_day:
             reason = "EXPIRY"
 
+        # Resting SL-LMT is retention="DAY" (exchange auto-cancels EOD) and
+        # only got re-placed when the ratchet actually moved it — in a quiet
+        # market that never fires, so it silently expires and never gets
+        # re-armed on later days. Same gap fixed live in
+        # monthly_ic_pilot_orbiter.py 2026-07-31 (NEUTRON+ NIFTY found
+        # running naked since day-1 EOD). Re-arm at the same dynamic_sl
+        # trigger whenever the recorded order is confirmed dead.
+        if reason is None and LIVE_ENABLED:
+            old_ordno = side.get("sl_order_ids", {}).get("short")
+            if old_ordno:
+                status = shoonya_order_status(old_ordno)
+                if status is not None and status.get("status") in FILL_FAILURE_STATUSES:
+                    replace_result = _replace_resting_sl_live(
+                        api, side, cycle.get("lot_size", lot_size), side["dynamic_sl"],
+                        remarks_prefix=f"HYDROGEN_{instrument}",
+                    )
+                    events.append(
+                        {
+                            "side": side_name,
+                            "reason": "SL_REARMED_EXPIRED",
+                            "old_status": status.get("status"),
+                            "new_trigger": side["dynamic_sl"],
+                            "replace_result": replace_result,
+                            "broker": BROKER,
+                        }
+                    )
+
         current_short_ltp = leg_prices["short"] if leg_prices else None
         if reason is None and row is not None:
-            atr = _f(row.get("atr_daily")) or _f(row.get("atr"))
             if current_short_ltp is not None:
                 old_sl = side["dynamic_sl"]
-                side["dynamic_sl"] = orbiter_tsl_ratchet(
-                    side["dynamic_sl"], side["entry_short_ltp"], current_short_ltp, atr
-                )
+                # Same fix as monthly_ic_pilot_orbiter.py's _mark_open,
+                # 2026-08-02 — atr is wrong-unit (see _open_side's comment),
+                # orbiter_tsl_ratchet's atr-scaled step is unusable.
+                # Reimplemented directly, dimensionally clean, no atr:
+                # ratchet to breakeven once premium has decayed >= the same
+                # threshold, never up.
+                entry_ltp = side["entry_short_ltp"]
+                if entry_ltp > 0:
+                    drop_pct = (entry_ltp - current_short_ltp) / entry_ltp
+                    threshold = ORBITER_CFG["tsl.ratchet.premium_drop_pct"] / 100.0
+                    if drop_pct >= threshold:
+                        side["dynamic_sl"] = min(side["dynamic_sl"], entry_ltp)
                 if LIVE_ENABLED and side["dynamic_sl"] != old_sl and side.get("sl_order_ids", {}).get("short"):
                     replace_result = _replace_resting_sl_live(
                         api, side, cycle.get("lot_size", lot_size), side["dynamic_sl"],

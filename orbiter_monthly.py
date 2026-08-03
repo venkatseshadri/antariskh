@@ -181,7 +181,7 @@ def gate2_strikes(row: dict, spot: float, wing_strikes: int = 3, step: int = 50)
     """Gate 2: anchor condor boundaries off real BB (multitf daily) if present,
     plus VWAP/MaxPain. `step` must be 50 for NIFTY, 100 for SENSEX."""
     atm = round(spot / step) * step
-    vwap = _f(row.get("vwap")) or spot
+    vwap = _f(row.get("vwap_real")) or _f(row.get("vwap")) or spot
     bb_width = _f(row.get("bb_width"))
 
     if row.get("bb_upper_real") is not None:
@@ -226,8 +226,10 @@ def gate2_strikes(row: dict, spot: float, wing_strikes: int = 3, step: int = 50)
 
 
 def phase_machine_direction(row: dict, spot: float) -> str:
-    """Phase 1: directional anchor via VWAP vs spot."""
-    vwap = _f(row.get("vwap"))
+    """Phase 1: directional anchor via VWAP vs spot. Prefers row['vwap_real']
+    (real 20d SMA, NEUTRON+ only, see monthly_ic_pilot_orbiter._monthly_bb)
+    over the ~3hr rolling buffer vwap — wrong-timeframe fix, 2026-08-02."""
+    vwap = _f(row.get("vwap_real")) or _f(row.get("vwap"))
     if vwap and spot > vwap * 1.002:
         return "bear_call_spread"
     if vwap and spot < vwap * 0.998:
@@ -236,10 +238,12 @@ def phase_machine_direction(row: dict, spot: float) -> str:
 
 
 def consolidation_trigger(row: dict, structure: str, short_strike: float, spot: float) -> bool:
-    """Phase 2: fire MORPH_ADD when ADX<20, PCR flat, short strike unbreached."""
-    adx = _f(row.get("adx"))
-    if adx is None or adx >= ORBITER_CFG["phase2.adx.max"]:
-        return False
+    """Phase 2: fire MORPH_ADD when PCR flat, short strike unbreached.
+    ADX gate dropped 2026-08-01 — same reasoning as Gate1's removal above:
+    this file's `adx` is computed over 1-MINUTE bars (enrichers/lib/buffer.py),
+    a ~14-minute lookback that says nothing about whether the regime holds
+    for the rest of a multi-week hold. PCR (live OI snapshot) + the
+    unbreached check remain as the gate."""
     pcr = _f(row.get("pcr_total"))
     pcr_ok = True
     if pcr is not None:
@@ -308,7 +312,7 @@ def orbiter_tp_check(
     expiry is the hard stop, caller runs EXPIRY check before this each tick).
     `elapsed`/`total_duration` span the multi-week hold window."""
     # P1: Statistical Stretch (VWAP +/- 2.5 sigma)
-    vwap = _f(row.get("vwap"))
+    vwap = _f(row.get("vwap_real")) or _f(row.get("vwap"))
     if vwap:
         bb_width = _f(row.get("bb_width")) or 0.0
         sigma_est = vwap * bb_width / 4 if bb_width else vwap * 0.01

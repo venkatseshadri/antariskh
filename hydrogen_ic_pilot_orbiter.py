@@ -309,7 +309,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     leg = legs["hedge"]
     r = place_leg(
         api, BUY, leg["exchange"], leg["tsym"], qty,
-        entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge",
+        entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge", token=leg["token"],
     )
     fc = confirm_shoonya_fill(r.norenordno, BROKER)
     result["orders"]["hedge"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
@@ -320,7 +320,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     leg = legs["short"]
     r = place_leg(
         api, SELL, leg["exchange"], leg["tsym"], qty,
-        entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
+        entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short", token=leg["token"],
     )
     fc_short = confirm_shoonya_fill(r.norenordno, BROKER)
     result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc_short}
@@ -383,7 +383,7 @@ def _exit_side_live(api, side: dict, qty: int, exit_prices: dict | None, remarks
         if price is None:
             result["stage"] = f"failed_close_{leg_name}_no_price"
             return result
-        r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}")
+        r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}", token=leg["token"])
         fc = confirm_shoonya_fill(r.norenordno, BROKER)
         result["orders"][leg_name] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
         if not r.ok or fill_rejected(fc):

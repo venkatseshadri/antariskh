@@ -142,6 +142,23 @@ def marketable_limit(action: str, ltp: float) -> float:
     return round(ltp * mult, 1)
 
 
+def marketable_limit_from_book(action: str, bid: float | None, ask: float | None, ltp: float) -> float:
+    """Same fix as monthly_ic_pilot.py's marketable_limit_from_book — see
+    its docstring for the 2026-08-05 incident (lp=158.40 vs real
+    bp1=39.30/sp1=90.25 on a thin far-OTM strike; the %-buffer-on-stale-lp
+    SELL limit landed miles above the real book and never filled). Ported
+    here since proton_live.py has its own separate place_leg/
+    marketable_limit, not monthly_ic_pilot.py's."""
+    tick = 0.05
+    if action == BUY:
+        if ask and ask > 0:
+            return round(ask + tick, 2)
+    else:
+        if bid and bid > 0:
+            return round(max(bid - tick, tick), 2)
+    return marketable_limit(action, ltp)
+
+
 @dataclass(frozen=True)
 class LiveOrderResult:
     ok: bool
@@ -158,9 +175,19 @@ def _norenordno(resp):
 
 
 def place_leg(
-    api, action: str, exchange: str, tradingsymbol: str, qty: int, ltp: float, remarks: str
+    api, action: str, exchange: str, tradingsymbol: str, qty: int, ltp: float, remarks: str,
+    token: str | None = None,
 ) -> LiveOrderResult:
-    price = marketable_limit(action, ltp)
+    bid = ask = None
+    if token is not None:
+        try:
+            q = api.get_quotes(exchange, token)
+            if q and q.get("stat") == "Ok" and str(q.get("token")) == str(token) and str(q.get("exch")) == str(exchange):
+                bid = float(q.get("bp1") or 0) or None
+                ask = float(q.get("sp1") or 0) or None
+        except Exception:
+            pass
+    price = marketable_limit_from_book(action, bid, ask, ltp) if token is not None else marketable_limit(action, ltp)
     resp = api.place_order(
         buy_or_sell=action,
         product_type=NRML,

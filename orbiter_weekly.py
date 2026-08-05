@@ -233,6 +233,16 @@ def gate2_strikes(row: dict, spot: float, wing_strikes: int = 3) -> StrikeMap:
             put_short = min(put_short, max_pain - wing_strikes * STRIKE_GAP)
             put_hedge = put_short - wing_strikes * STRIKE_GAP
 
+    # NOT applying orbiter_monthly.py's 50-ending liquidity snap here —
+    # checked 2026-08-05 (added, then reverted same day): PROTON+ trades
+    # the NEAREST weekly expiry, and a live comparison on HYDROGEN+'s
+    # next-week contract (2 weeks out, less liquid than PROTON+'s 1-week)
+    # showed every strike — 50- and 100-ending alike — genuinely liquid
+    # (80k-600k+ OI, sub-0.6pt spreads). The dead-50-strike gap that
+    # motivated the monthly-side fix is monthly-specific (contracts ~3
+    # weeks+ out where trading interest concentrates on round-100 strikes),
+    # not a weekly one.
+
     return StrikeMap(
         put_short, put_hedge, call_short, call_hedge, vwap, bb_upper, bb_lower, max_pain, atm
     )

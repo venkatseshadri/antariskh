@@ -281,10 +281,42 @@ def marketable_limit(action: str, ltp: float) -> float:
     return round(ltp * mult, 1)
 
 
+def marketable_limit_from_book(action: str, bid: float | None, ask: float | None, ltp: float) -> float:
+    """Prices a limit order to cross the spread and fill immediately, off
+    REAL current bid/ask (bp1/sp1) rather than a %-buffer on last-traded-
+    price. Found live 2026-08-05: lp=158.40 on a thin far-OTM strike, but
+    the real book was bp1=39.30/sp1=90.25 — lp was stale by ~100+ points.
+    marketable_limit()'s 2% buffer on that stale lp priced a SELL at
+    155.20, miles above the real best bid, so it sat unfilled and left a
+    naked hedge leg alone at the broker. BUY prices one tick past the ask
+    (crosses it), SELL one tick past the bid — guaranteed marketable
+    against the CURRENT book, not a stale trade. Falls back to the old
+    lp-based buffer only when bid/ask aren't available (0/missing, e.g. a
+    genuinely no-quote instrument)."""
+    tick = 0.05
+    if action == BUY:
+        if ask and ask > 0:
+            return round(ask + tick, 2)
+    else:
+        if bid and bid > 0:
+            return round(max(bid - tick, tick), 2)
+    return marketable_limit(action, ltp)
+
+
 def place_leg(
-    api, action: str, exchange: str, tradingsymbol: str, qty: int, ltp: float, remarks: str
+    api, action: str, exchange: str, tradingsymbol: str, qty: int, ltp: float, remarks: str,
+    token: str | None = None,
 ) -> LiveOrderResult:
-    price = marketable_limit(action, ltp)
+    bid = ask = None
+    if token is not None:
+        try:
+            q = api.get_quotes(exchange, token)
+            if q and q.get("stat") == "Ok" and str(q.get("token")) == str(token) and str(q.get("exch")) == str(exchange):
+                bid = float(q.get("bp1") or 0) or None
+                ask = float(q.get("sp1") or 0) or None
+        except Exception:
+            pass
+    price = marketable_limit_from_book(action, bid, ask, ltp) if token is not None else marketable_limit(action, ltp)
     resp = api.place_order(
         buy_or_sell=action,
         product_type=NRML,

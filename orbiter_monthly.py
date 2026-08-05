@@ -195,6 +195,7 @@ class StrikeMap:
 def gate2_strikes(
     row: dict, spot: float, wing_strikes: int = 3, step: int = 50,
     sigma: float | None = None, T: float | None = None,
+    liquidity_snap_100: bool = False,
 ) -> StrikeMap:
     """Gate 2: anchor condor boundaries off a forward-looking sigma*sqrt(T)
     expected move when sigma/T are supplied (added 2026-08-03 — see
@@ -203,7 +204,16 @@ def gate2_strikes(
     expected move over a monthly *forward* hold, found live). Falls back to
     real BB (multitf daily) if present, else a fixed wing_strikes*step floor
     from ATM, when sigma/T aren't given — old callers stay unaffected.
-    `step` must be 50 for NIFTY, 100 for SENSEX."""
+    `step` must be 50 for NIFTY, 100 for SENSEX.
+
+    liquidity_snap_100 (added 2026-08-05, default False): NEUTRON+-only —
+    this function is shared with HYDROGEN+ (next-week expiry), and the
+    50-ending-strike liquidity gap this snaps around is monthly-specific,
+    verified live: NEUTRON+'s ~3-week-out contract had a 50-ending strike
+    with ZERO open interest next to round-100 neighbors at 500k+ OI each;
+    the SAME comparison on HYDROGEN+'s actual next-week contract showed
+    every strike (50- and 100-ending alike) liquid, 80k-600k+ OI, sub-0.6pt
+    spreads. Pass True only from NEUTRON+'s caller. See the gate below."""
     atm = round(spot / step) * step
     vwap = _f(row.get("vwap_real")) or _f(row.get("vwap")) or spot
     bb_width = _f(row.get("bb_width"))
@@ -249,6 +259,26 @@ def gate2_strikes(
         else:
             put_short = min(put_short, max_pain - wing_strikes * step)
             put_hedge = put_short - wing_strikes * step
+
+    if step == 50 and liquidity_snap_100:
+        # NIFTY-monthly-only liquidity snap, added 2026-08-05. Found live: a
+        # sigma-anchored short strike landed on 25350 (zero open interest,
+        # 50pt bid-ask spread) while the neighboring round-100 strikes
+        # 25300/25400 had ~0.20pt spreads and 500k+ OI each — NIFTY's real
+        # trading interest concentrates on 100-multiples, the 50-interval
+        # half-strikes are often genuinely dead despite being listed.
+        # Applied last, after every other anchor path (sigma/BB/floor/
+        # max_pain) has picked a raw target. Rounds AWAY from spot only
+        # (ceil for calls, floor for puts) — nearest-rounding could pull a
+        # strike back inside the wing_strikes/max_pain floor those checks
+        # just enforced (caught by test_gate2_max_pain_biases_strikes_
+        # outward); this never weakens either guarantee, only ever adds
+        # distance. Hedge is rebuilt at the same wing_strikes*step distance
+        # from the snapped short so wing width stays exactly as configured.
+        call_short = math.ceil(call_short / 100) * 100
+        put_short = math.floor(put_short / 100) * 100
+        call_hedge = call_short + wing_strikes * step
+        put_hedge = put_short - wing_strikes * step
 
     return StrikeMap(
         put_short, put_hedge, call_short, call_hedge, vwap, bb_upper, bb_lower, max_pain, atm

@@ -196,6 +196,26 @@ def _hedge_cash_shortfall(hedge_price: float | None, qty: int, cash_avail: float
     return None
 
 
+def _strike_has_liquidity(api, exchange: str, token: str, max_spread_pct: float = 0.15) -> bool:
+    """Real bid/ask liquidity check, added 2026-08-05. Found live: a
+    NEUTRON+ NIFTY monthly strike with real bp1=39.30/sp1=90.25 (spread
+    56% of ask) sat as a resting order with zero fills for a full tick,
+    while neighboring strikes had sub-1% spreads. False on any unreadable
+    quote or a missing/zero bid or ask (fail closed — don't roll into a
+    strike we can't confirm is tradeable)."""
+    try:
+        q = api.get_quotes(exchange, token)
+    except Exception:
+        return False
+    if not q or q.get("stat") != "Ok":
+        return False
+    bid = float(q.get("bp1") or 0)
+    ask = float(q.get("sp1") or 0)
+    if bid <= 0 or ask <= 0:
+        return False
+    return (ask - bid) / ask <= max_spread_pct
+
+
 def _roll_leg_live(
     api, side: dict, leg_name: str, instrument: str, expiry: date, S: float,
     qty: int, atr: float | None, remarks_prefix: str,
@@ -221,6 +241,16 @@ def _roll_leg_live(
         result["stage"] = "failed_no_new_strike_token"
         return result
 
+    if instrument == "NIFTY" and not _strike_has_liquidity(api, new_leg["exchange"], new_leg["token"]):
+        # Checked before touching anything (old leg still fully intact) —
+        # same monthly-only dead-strike risk as gate2_strikes'
+        # liquidity_snap_100 (roll-in's ±step move isn't covered by that
+        # snap, it's a separate raw strike computation above). Don't roll
+        # into an illiquid strike just because it's the next one over.
+        result["stage"] = "skipped_illiquid_target"
+        result["liquidity_check"] = {"exchange": new_leg["exchange"], "token": new_leg["token"]}
+        return result
+
     close_action = BUY if leg_name == "short" else SELL
     open_action = SELL if leg_name == "short" else BUY
 
@@ -231,7 +261,7 @@ def _roll_leg_live(
     close_price = _leg_ltp(api, old_leg["exchange"], old_leg["token"])
     r = place_leg(
         api, close_action, old_leg["exchange"], old_leg["tsym"], qty, close_price,
-        remarks=f"{remarks_prefix}_ROLL_CLOSE_{leg_name}",
+        remarks=f"{remarks_prefix}_ROLL_CLOSE_{leg_name}", token=old_leg["token"],
     )
     fc = confirm_shoonya_fill(r.norenordno, BROKER)
     result["close"] = {"ok": r.ok, "norenordno": r.norenordno, "fill_confirmation": fc}
@@ -256,7 +286,7 @@ def _roll_leg_live(
             return result
     r = place_leg(
         api, open_action, new_leg["exchange"], new_leg["tsym"], qty, open_price,
-        remarks=f"{remarks_prefix}_ROLL_OPEN_{leg_name}",
+        remarks=f"{remarks_prefix}_ROLL_OPEN_{leg_name}", token=new_leg["token"],
     )
     fc = confirm_shoonya_fill(r.norenordno, BROKER)
     result["open"] = {"ok": r.ok, "norenordno": r.norenordno, "fill_confirmation": fc}
@@ -324,7 +354,10 @@ def _open_side(
 ) -> dict:
     params = INSTRUMENT_PARAMS[instrument]
     T0 = max((expiry - today).days / 365, 1 / 365)
-    smap = gate2_strikes(row, S0, wing_strikes=WING_STRIKES, step=params["step"], sigma=sigma, T=T0)
+    smap = gate2_strikes(
+        row, S0, wing_strikes=WING_STRIKES, step=params["step"], sigma=sigma, T=T0,
+        liquidity_snap_100=True,
+    )
     opt_type = _OPT_TYPE[structure]
     short_k, hedge_k = (
         (smap.put_short, smap.put_hedge) if opt_type == "PE" else (smap.call_short, smap.call_hedge)
@@ -438,7 +471,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     leg = legs["hedge"]
     r = place_leg(
         api, BUY, leg["exchange"], leg["tsym"], qty,
-        entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge",
+        entry_prices.get("hedge", side["entry_credit"]), remarks=f"{remarks_prefix}_hedge", token=leg["token"],
     )
     fc = confirm_shoonya_fill(r.norenordno, BROKER)
     result["orders"]["hedge"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
@@ -449,7 +482,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     leg = legs["short"]
     r = place_leg(
         api, SELL, leg["exchange"], leg["tsym"], qty,
-        entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
+        entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short", token=leg["token"],
     )
     fc_short = confirm_shoonya_fill(r.norenordno, BROKER)
     result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc_short}
@@ -520,7 +553,7 @@ def _exit_side_live(api, side: dict, qty: int, exit_prices: dict | None, remarks
         if price is None:
             result["stage"] = f"failed_close_{leg_name}_no_price"
             return result
-        r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}")
+        r = place_leg(api, action, leg["exchange"], leg["tsym"], qty, price, remarks=f"{remarks_prefix}_CLOSE_{leg_name}", token=leg["token"])
         fc = confirm_shoonya_fill(r.norenordno, BROKER)
         result["orders"][leg_name] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
         if not r.ok or fill_rejected(fc):
@@ -1003,10 +1036,16 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
                                 "roll_result": roll_result, "broker": BROKER,
                             },
                         }
+                    if stage == "complete":
+                        roll_reason = "ROLLED_IN"
+                    elif stage == "skipped_illiquid_target":
+                        roll_reason = "ROLL_SKIPPED_ILLIQUID"
+                    else:
+                        roll_reason = "ROLL_FAILED_CLOSE"
                     events.append(
                         {
                             "side": side_name,
-                            "reason": "ROLLED_IN" if stage == "complete" else "ROLL_FAILED_CLOSE",
+                            "reason": roll_reason,
                             "leg": leg_name,
                             "old_strike": old_leg["strike"], "new_strike": new_strike,
                             "roll_result": roll_result, "broker": BROKER,

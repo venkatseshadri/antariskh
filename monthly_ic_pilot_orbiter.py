@@ -39,6 +39,7 @@ from monthly_ic_pilot import (
     combined_daily_closes,
     trailing_rv,
     trailing_median_rv,
+    fo_market_is_open,
     _leg_ltp,
     check_account_margin,
     get_broker_session,
@@ -374,6 +375,52 @@ def _open_side(
     return side
 
 
+def _verify_real_entry(api, legs: dict, qty: int, margin_before: float | None) -> dict:
+    """Cross-checks the account's actual position + available margin after
+    placing entry orders — added 2026-08-05 after a real incident: Shoonya
+    returned REST "stat: Ok" + real-looking order numbers for orders placed
+    at 09:00 (before F&O market open at 09:15 — no pre-open session exists
+    for derivatives), but broker order history later showed
+    'Error Occurred : 5 "no data"' for every one of them. fill_confirmation
+    was null too (the WS-based check), but fill_rejected(None) trusts the
+    REST accept by design (reasonable for WS lag, wrong for a genuine silent
+    drop) — nothing caught it. get_positions() is the account's actual
+    current state; it can't be phantom the way a REST accept or a specific
+    order's history lookup can still (per Shoonya's own docs, neither
+    get_orderbook/get_tradebook/single_order_history take a date — they're
+    today/session-scoped, so this check has to happen NOW, immediately
+    after placement, not reconstructed later). Position match is the hard
+    gate; margin consumption is a softer corroborating signal only (margin
+    moves for other reasons too), logged but not blocking on its own."""
+    try:
+        positions = api.get_positions() or []
+        position_readable = True
+    except Exception:
+        positions = []
+        position_readable = False
+    by_tsym = {p.get("tsym"): p for p in positions}
+    hedge_qty = int(float(by_tsym.get(legs["hedge"]["tsym"], {}).get("netqty", 0) or 0))
+    short_qty = int(float(by_tsym.get(legs["short"]["tsym"], {}).get("netqty", 0) or 0))
+    position_ok = position_readable and hedge_qty == qty and short_qty == -qty
+
+    try:
+        _, avail_margin, _ = check_account_margin(api, BROKER)
+    except Exception:
+        avail_margin = None
+    margin_consumed = (
+        margin_before is not None and avail_margin is not None and avail_margin < margin_before
+    )
+    return {
+        "position_ok": position_ok,
+        "hedge_qty": hedge_qty,
+        "short_qty": short_qty,
+        "expected_qty": qty,
+        "margin_before": margin_before,
+        "margin_after": avail_margin,
+        "margin_consumed": margin_consumed,
+    }
+
+
 def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     """Place one side's directional 2-leg spread for real (hedge BUY first,
     then short SELL, then a resting SL-LMT on the short) — same sequencing
@@ -386,6 +433,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     result = {"stage": None, "orders": {}, "sl_orders": {}}
     legs = side["legs"]
     entry_prices = side.get("entry_leg_prices") or {}
+    _, margin_before, _ = check_account_margin(api, BROKER)
 
     leg = legs["hedge"]
     r = place_leg(
@@ -403,11 +451,41 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, SELL, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
     )
-    fc = confirm_shoonya_fill(r.norenordno, BROKER)
-    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
-    if not r.ok or fill_rejected(fc):
+    fc_short = confirm_shoonya_fill(r.norenordno, BROKER)
+    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc_short}
+    if not r.ok or fill_rejected(fc_short):
         result["stage"] = "failed_short_hedge_live"
         return result
+
+    # Verification order (2026-08-05): WS first (already-flowing data,
+    # zero extra API cost, checked once — see confirm_shoonya_fill's
+    # docstring), REST position/margin check only as a fallback when the WS
+    # didn't positively confirm both legs. reporttype=="Fill" is Shoonya's
+    # own documented signal for a genuine execution (ShoonyaApi-py README,
+    # get_singleorderhistory section) — stronger than `status` alone.
+    fc_hedge = result["orders"]["hedge"]["fill_confirmation"]
+    ws_confirmed = (
+        bool(fc_hedge) and fc_hedge.get("reporttype") == "Fill"
+        and bool(fc_short) and fc_short.get("reporttype") == "Fill"
+    )
+    if not ws_confirmed:
+        verify = _verify_real_entry(api, legs, qty, margin_before)
+        result["position_verify"] = verify
+        if not verify["position_ok"]:
+            hedge_real = verify["hedge_qty"] == qty
+            short_real = verify["short_qty"] == -qty
+            if hedge_real != short_real:
+                # One real, one not — a genuine naked leg sitting at the
+                # broker, same stranding class as a mid-sequence order
+                # failure. Needs a human, not a retry.
+                result["stage"] = "failed_naked_leg_position_mismatch"
+            else:
+                # Neither leg real (both phantom, or the position check
+                # itself was unreadable) — nothing actually happened at the
+                # broker, safe to just retry next tick like any other
+                # failed entry.
+                result["stage"] = "failed_phantom_fill_no_real_position"
+            return result
 
     r = place_resting_sl(
         api, BUY, leg["exchange"], leg["tsym"], qty, side["dynamic_sl"], remarks=f"{remarks_prefix}_SL_short",
@@ -566,6 +644,11 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
 
     row = _with_monthly_bb(row, closes, today)
 
+    if LIVE_ENABLED and not fo_market_is_open(now):
+        event = {"instrument": instrument, "action": "SKIP", "reason": "fo_market_not_open", "broker": BROKER}
+        LOG(event)
+        return event
+
     api = get_broker_session(BROKER) if LIVE_ENABLED else None
     if LIVE_ENABLED:
         if api is None:
@@ -700,6 +783,13 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
     T = max((expiry - today).days / 365, 0)
     is_expiry_day = today >= expiry
     lot_size = cycle.get("lot_size", INSTRUMENT_PARAMS["NIFTY"]["lot"])
+
+    if LIVE_ENABLED and not fo_market_is_open(now):
+        # Same fo_market_is_open() gate as _try_enter — this tick's exit/
+        # roll/MORPH_ADD paths all place real orders too, same phantom-order
+        # risk as a fresh entry if attempted before 09:15. See
+        # fo_market_is_open's docstring. 2026-08-05.
+        return {"action": "SKIP_TICK", "instrument": instrument, "reason": "fo_market_not_open", "broker": BROKER}
 
     api = get_broker_session(BROKER) if LIVE_ENABLED else None
     if LIVE_ENABLED and api is None:

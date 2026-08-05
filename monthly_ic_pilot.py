@@ -36,7 +36,6 @@ was daily-granularity.
 import json
 import sqlite3
 import sys
-import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import date, datetime
@@ -412,7 +411,6 @@ def shoonya_order_status(norenordno: str) -> dict | None:
         return None
 
 
-FILL_TERMINAL_STATUSES = {"COMPLETE", "REJECTED", "CANCELED", "CANCELLED"}
 FILL_FAILURE_STATUSES = {"REJECTED", "CANCELED", "CANCELLED"}
 
 
@@ -429,28 +427,24 @@ def fill_rejected(fill_confirmation: dict | None) -> bool:
     return bool(fill_confirmation) and fill_confirmation.get("status") in FILL_FAILURE_STATUSES
 
 
-def confirm_shoonya_fill(norenordno: str | None, broker: str, timeout_s: float = 5.0, poll_interval: float = 1.0) -> dict | None:
-    """Short-poll feed.py's shared order_updates table for a terminal status
-    on this order (COMPLETE/REJECTED/CANCELED) — real fill confirmation via
-    the SAME WS every Shoonya-routed system (ATOM, PROTON+, and now NEUTRON+/
-    HYDROGEN+ if NEUTRON_BROKER=SHOONYA) already streams into, rather than
-    just trusting place_order()'s immediate REST accept response (which only
-    means 'queued', not 'filled'). No-op for Flattrade (broker != SHOONYA) or
-    a missing norenordno — returns None immediately rather than polling
-    pointlessly. Enrichment, not a hard gate: caller should log the result,
-    not block the sequence on it timing out (a slow/missing confirmation
-    doesn't mean the order failed, just that this check couldn't prove it
-    succeeded within the poll window)."""
+def confirm_shoonya_fill(norenordno: str | None, broker: str) -> dict | None:
+    """Single read of feed.py's shared order_updates table for this order's
+    latest known status — real fill confirmation via the SAME WS every
+    Shoonya-routed system (ATOM, PROTON+, and now NEUTRON+/HYDROGEN+ if
+    NEUTRON_BROKER=SHOONYA) already streams into, rather than just trusting
+    place_order()'s immediate REST accept response (which only means
+    'queued', not 'filled'). No-op for Flattrade (broker != SHOONYA) or a
+    missing norenordno. One check, not a poll loop (2026-08-05 — was a
+    5x1s sleep-poll; the WS write is near-instant once the exchange
+    actually processes the order, and repeated local DB reads add nothing
+    a single read doesn't already give). Enrichment/corroboration, not the
+    hard gate — _verify_real_entry's get_positions() check is what actually
+    blocks a phantom fill from being recorded as real; this can still be
+    genuinely absent for a real order that's still in flight, same as
+    before."""
     if broker.upper() != "SHOONYA" or not norenordno:
         return None
-    deadline = _time.monotonic() + timeout_s
-    latest = None
-    while _time.monotonic() < deadline:
-        latest = shoonya_order_status(norenordno)
-        if latest and latest.get("status") in FILL_TERMINAL_STATUSES:
-            return latest
-        _time.sleep(poll_interval)
-    return latest
+    return shoonya_order_status(norenordno)
 
 
 def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:
@@ -476,6 +470,28 @@ def nucleus_ceiling(tier: str) -> tuple[float | None, str | None]:
     if age_min > 1080:  # 18h — covers overnight gap, matches proton_live.py
         return None, "STALE"
     return ceiling, None
+
+
+def fo_market_is_open(now: datetime | None = None) -> bool:
+    """NSE F&O has NO pre-open session (unlike equity's 09:00-09:08 window) —
+    trading genuinely starts at 09:15, not 09:00. NEUTRON+ NIFTY's cron fires
+    its first tick at 09:00 (0,15,30,45 9-15 * * 1-5) — found live 2026-08-04:
+    a real entry attempt at 09:00:24-34 got a REST "stat: Ok" + a real-looking
+    order number back from Shoonya for all 3 legs, but broker order history
+    later showed "Error Occurred : 5 \"no data\"" for every one of them — the
+    exchange never actually registered any of them, yet the code recorded
+    stage="complete" and saved state as if a real position existed (state
+    fill_confirmation was null but fill_rejected(None) trusts the REST accept
+    by design — reasonable for WS lag, wrong for a pre-open silent drop).
+    State desync self-halted the tier for ~23h until manually reconciled.
+    Real fix is the fill-confirmation gate below; this is the cheaper
+    root-trigger fix — refuse real order placement before the exchange is
+    actually open, so this exact submission window can't recur. 2026-08-05."""
+    now = now or datetime.now()
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 100 + now.minute
+    return 915 <= t <= 1530
 
 
 def _leg_ltp(api, exchange: str, token: str) -> float:

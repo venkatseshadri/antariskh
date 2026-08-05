@@ -40,6 +40,7 @@ from monthly_ic_pilot import (
     combined_daily_closes,
     trailing_rv,
     trailing_median_rv,
+    fo_market_is_open,
     _flattrade_session,
     _leg_ltp,
     check_account_margin,
@@ -256,6 +257,41 @@ def _hedge_cash_shortfall(hedge_price: float | None, qty: int, cash_avail: float
     return None
 
 
+def _verify_real_entry(api, legs: dict, qty: int, margin_before: float | None) -> dict:
+    """Same guardrail as monthly_ic_pilot_orbiter.py's _verify_real_entry —
+    see its docstring for the 2026-08-05 phantom-order incident this
+    responds to. get_positions() is the account's actual current state, the
+    only signal that can't itself be phantom; margin consumption is a
+    softer corroborating signal, logged not blocking."""
+    try:
+        positions = api.get_positions() or []
+        position_readable = True
+    except Exception:
+        positions = []
+        position_readable = False
+    by_tsym = {p.get("tsym"): p for p in positions}
+    hedge_qty = int(float(by_tsym.get(legs["hedge"]["tsym"], {}).get("netqty", 0) or 0))
+    short_qty = int(float(by_tsym.get(legs["short"]["tsym"], {}).get("netqty", 0) or 0))
+    position_ok = position_readable and hedge_qty == qty and short_qty == -qty
+
+    try:
+        _, avail_margin, _ = check_account_margin(api, BROKER)
+    except Exception:
+        avail_margin = None
+    margin_consumed = (
+        margin_before is not None and avail_margin is not None and avail_margin < margin_before
+    )
+    return {
+        "position_ok": position_ok,
+        "hedge_qty": hedge_qty,
+        "short_qty": short_qty,
+        "expected_qty": qty,
+        "margin_before": margin_before,
+        "margin_after": avail_margin,
+        "margin_consumed": margin_consumed,
+    }
+
+
 def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     """Place one side's directional 2-leg spread for real (hedge BUY first,
     then short SELL, then a resting SL-LMT on the short) — same sequencing
@@ -268,6 +304,7 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
     result = {"stage": None, "orders": {}, "sl_orders": {}}
     legs = side["legs"]
     entry_prices = side.get("entry_leg_prices") or {}
+    _, margin_before, _ = check_account_margin(api, BROKER)
 
     leg = legs["hedge"]
     r = place_leg(
@@ -285,11 +322,33 @@ def _enter_side_live(api, side: dict, qty: int, remarks_prefix: str) -> dict:
         api, SELL, leg["exchange"], leg["tsym"], qty,
         entry_prices.get("short", side["entry_short_ltp"]), remarks=f"{remarks_prefix}_short",
     )
-    fc = confirm_shoonya_fill(r.norenordno, BROKER)
-    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc}
-    if not r.ok or fill_rejected(fc):
+    fc_short = confirm_shoonya_fill(r.norenordno, BROKER)
+    result["orders"]["short"] = {"ok": r.ok, "norenordno": r.norenordno, "raw": r.raw, "fill_confirmation": fc_short}
+    if not r.ok or fill_rejected(fc_short):
         result["stage"] = "failed_short_hedge_live"
         return result
+
+    # WS first (already-flowing, zero extra cost, checked once), REST
+    # position/margin fallback only if the WS didn't positively confirm
+    # both legs — see monthly_ic_pilot_orbiter.py's _enter_side_live for
+    # the full 2026-08-05 reasoning. reporttype=="Fill" is Shoonya's own
+    # documented genuine-execution signal.
+    fc_hedge = result["orders"]["hedge"]["fill_confirmation"]
+    ws_confirmed = (
+        bool(fc_hedge) and fc_hedge.get("reporttype") == "Fill"
+        and bool(fc_short) and fc_short.get("reporttype") == "Fill"
+    )
+    if not ws_confirmed:
+        verify = _verify_real_entry(api, legs, qty, margin_before)
+        result["position_verify"] = verify
+        if not verify["position_ok"]:
+            hedge_real = verify["hedge_qty"] == qty
+            short_real = verify["short_qty"] == -qty
+            result["stage"] = (
+                "failed_naked_leg_position_mismatch" if hedge_real != short_real
+                else "failed_phantom_fill_no_real_position"
+            )
+            return result
 
     r = place_resting_sl(
         api, BUY, leg["exchange"], leg["tsym"], qty, side["dynamic_sl"], remarks=f"{remarks_prefix}_SL_short",
@@ -425,6 +484,11 @@ def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:
 
     row = _with_monthly_bb(row, closes, today)
 
+    if LIVE_ENABLED and not fo_market_is_open(now):
+        event = {"instrument": instrument, "action": "SKIP", "reason": "fo_market_not_open", "broker": BROKER}
+        LOG(event)
+        return event
+
     api = get_broker_session(BROKER) if LIVE_ENABLED else None
     if LIVE_ENABLED:
         if api is None:
@@ -552,6 +616,9 @@ def _mark_open(instrument: str, cycle: dict, closes, today: date, now: datetime)
     T = max((expiry - today).days / 365, 0)
     is_expiry_day = today >= expiry
     lot_size = cycle.get("lot_size", INSTRUMENT_PARAMS["NIFTY"]["lot"])
+
+    if LIVE_ENABLED and not fo_market_is_open(now):
+        return {"action": "SKIP_TICK", "instrument": instrument, "reason": "fo_market_not_open", "broker": BROKER}
 
     api = get_broker_session(BROKER) if LIVE_ENABLED else None
     if LIVE_ENABLED and api is None:

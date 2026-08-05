@@ -377,7 +377,14 @@ def orbiter_tp_check(
     # P1: Statistical Stretch (VWAP +/- 2.5 sigma)
     vwap = _f(row.get("vwap_real")) or _f(row.get("vwap"))
     if vwap:
-        bb_width = _f(row.get("bb_width")) or 0.0
+        # bb_width_real takes priority when vwap itself came from vwap_real
+        # (the 20d SMA) — pairing it with the raw intraday bb_width (~0.002)
+        # produces a nonsensically tight stretch band relative to a 20d-SMA
+        # vwap that's normally hundreds of points from spot. See
+        # _with_monthly_bb's bb_width_real docstring, 2026-08-05.
+        bb_width = _f(row.get("bb_width_real")) if row.get("vwap_real") else None
+        if bb_width is None:
+            bb_width = _f(row.get("bb_width")) or 0.0
         sigma_est = vwap * bb_width / 4 if bb_width else vwap * 0.01
         thr = ORBITER_CFG["tp.vwap_stddev"]
         upper, lower = vwap + thr * sigma_est, vwap - thr * sigma_est

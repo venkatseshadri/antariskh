@@ -241,7 +241,19 @@ def _with_monthly_bb(row: dict, closes, today: date) -> dict:
     bb_upper, bb_lower, vwap_real = _monthly_bb(closes, today)
     if bb_upper is None:
         return row
-    return {**row, "bb_upper_real": bb_upper, "bb_lower_real": bb_lower, "vwap_real": vwap_real}
+    # bb_width_real, added 2026-08-05 — same fix as
+    # monthly_ic_pilot_orbiter.py's _with_monthly_bb, see its docstring:
+    # orbiter_tp_check's P1 stretch check was pairing the real vwap_real
+    # with the still-raw intraday bb_width, producing a nonsensically tight
+    # exit band that fires within one tick of almost any entry.
+    bb_width_real = (bb_upper - bb_lower) / vwap_real if vwap_real else None
+    return {
+        **row,
+        "bb_upper_real": bb_upper,
+        "bb_lower_real": bb_lower,
+        "vwap_real": vwap_real,
+        "bb_width_real": bb_width_real,
+    }
 
 
 def _hedge_cash_shortfall(hedge_price: float | None, qty: int, cash_avail: float | None) -> dict | None:

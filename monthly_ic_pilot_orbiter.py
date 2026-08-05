@@ -616,7 +616,26 @@ def _with_monthly_bb(row: dict, closes, today: date) -> dict:
     bb_upper, bb_lower, vwap_real = _monthly_bb(closes, today)
     if bb_upper is None:
         return row
-    return {**row, "bb_upper_real": bb_upper, "bb_lower_real": bb_lower, "vwap_real": vwap_real}
+    # bb_width_real, added 2026-08-05: orbiter_tp_check's P1 stretch check
+    # (sigma_est = vwap * bb_width / 4) was silently still reading the raw
+    # intraday row['bb_width'] (~0.002) even after vwap_real got fixed to
+    # the real 20d SMA — this docstring claimed orbiter_tp_check used the
+    # *_real overrides "first-priority" but it never actually did for this
+    # specific field. Found live: an entry's own vwap_real sat ~400pts from
+    # spot (normal — 20d SMA vs a trending week), but bb_width's tiny scale
+    # produced a ~32pt stretch band, so VWAP_STRETCH fired within one tick
+    # of every entry regardless of what the position was actually doing —
+    # NEUTRON+ churning in and out every ~15min instead of holding for
+    # weeks. bb_width_real is the same (upper-lower)/mid definition, scaled
+    # to match vwap_real's real timeframe.
+    bb_width_real = (bb_upper - bb_lower) / vwap_real if vwap_real else None
+    return {
+        **row,
+        "bb_upper_real": bb_upper,
+        "bb_lower_real": bb_lower,
+        "vwap_real": vwap_real,
+        "bb_width_real": bb_width_real,
+    }
 
 
 def _try_enter(instrument: str, closes, today: date, now: datetime) -> dict:

@@ -20,16 +20,25 @@ if [ -f "$_CONF" ]; then
     . "$_CONF"
 fi
 
-REPO=/home/trading_ceo/antariksh
+PROD_DIR="${PROD_DIR:-/home/trading_ceo/antariksh}"
 CLONE="${DEV_DIR:-/home/trading_ceo/dev/antariksh}"
 BCLONE="${BDEV_DIR:-/home/trading_ceo/dev/brahmand}"
 SANDBOX=/home/trading_ceo/dev/sandbox
+# Was `REPO=/home/trading_ceo/antariksh` above, immediately overwriting
+# whatever github owner/repo slug the .conf file's own REPO= line had just
+# sourced (lines 14-21 run first) — REPO_URL's ${REPO:-...} fallback then
+# always inherited the clobbered local path, not the intended slug. Every
+# `gh` call in this script has been failing with "expected [HOST/]OWNER/REPO
+# format" since whenever this line was introduced (confirmed live 2026-08-04
+# — 24 consecutive failures that day alone, likely far longer given no
+# generator ever caught it). Renamed to PROD_DIR (matches the .conf's own
+# naming for this exact path) so REPO/REPO_URL stay untouched.
 REPO_URL="${REPO:-venkatseshadri/antariskh}"
 BREPO_URL="${BREPO:-venkatseshadri/brahmand}"
 PROJECT_NAME="${PROJECT_NAME:-antariksh}"
 # SKIP_TAG: issues whose body contains this tag are loop-unbuildable (ROOT_REPO_ONLY etc.)
 SKIP_TAG="${SKIP_TAG:-ROOT_REPO_ONLY}"
-LOG_DIR="$REPO/logs"
+LOG_DIR="$PROD_DIR/logs"
 DAY=$(TZ=Asia/Kolkata date +%Y%m%d)
 LOG="$LOG_DIR/ds_ralph_loop_$DAY.log"
 # Per-project lock (G14): allows future parallel builds for different projects.

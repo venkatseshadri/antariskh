@@ -1,52 +1,21 @@
 """Orchestration Tests — ORCH-01 through ORCH-20.
 
-import os
-import sys
-import pytest
-    from crews.om_crew import build_om_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.am_crew import financial_tracker, financial_reporter
-    from crews.ceo_crew import guardian, reporter
-    from crews.om_crew import build_om_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.am_crew import build_am_crew
-    from crews.pa_crew import build_pa_crew
-    from crews.ceo_crew import build_ceo_crew
-    from crews.om_crew import pre_flight_agent, cron_watchdog as om_reporter_ag
-    from crews.om_crew import reporter as om_reporter
-    from crews.ta_crew import trade_validator, compliance_reporter
-    from crews.pm_crew import strategist, strategy_reporter
-    from crews.am_crew import financial_tracker, financial_reporter
-    from crews.pa_crew import reviewer, analyst
-    from crews.ceo_crew import guardian, reporter as ceo_reporter
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.am_crew import build_am_crew
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.pm_crew import build_pm_crew
-    from unittest.mock import patch
-    from crewai import Crew
-    from crews.om_crew import build_om_crew
-    from crews.am_crew import build_am_crew
-    from crews.om_crew import build_om_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.om_crew import build_om_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.om_crew import build_om_crew
-    from crews.ta_crew import build_ta_crew
-    from crews.pm_crew import build_pm_crew
-    from crews.am_crew import build_am_crew
-    from crews.pa_crew import build_pa_crew
-    from crews.ceo_crew import build_ceo_crew
-from dotenv import load_dotenv
-
-
 CrewAI cross-crew orchestration: query routing, task delegation structure,
 mock LLM integration, real LLM end-to-end, and full pipeline integration.
 """
+
+import os
+import sys
+import pytest
+from unittest.mock import patch
+from crewai import Crew
+from crews.om_crew import build_om_crew, pre_flight_agent, cron_watchdog as om_reporter_ag, reporter as om_reporter
+from crews.ta_crew import build_ta_crew, trade_validator, compliance_reporter
+from crews.am_crew import build_am_crew, financial_tracker, financial_reporter
+from crews.ceo_crew import build_ceo_crew, guardian, reporter, reporter as ceo_reporter
+from crews.pm_crew import build_pm_crew, strategist, strategy_reporter
+from crews.pa_crew import build_pa_crew, reviewer, analyst
+from dotenv import load_dotenv
 
 
 

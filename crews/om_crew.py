@@ -1,4 +1,4 @@
-"""Operations Manager Crew — 3-agent pre-flight infrastructure watchdog.
+"""Operations Manager Crew — 3-agent pre-flight infrastructure watchdog."""
 
 import os
 import sys
@@ -18,7 +18,7 @@ from tools.om_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Agents: PreFlightAgent (5 infra checks), CronWatchdog (cron health),
         Reporter (evidence-backed GO/NOGO report).
 

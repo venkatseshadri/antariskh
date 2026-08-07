@@ -1,4 +1,4 @@
-"""CTO Crew — technical strategy, gatekeeping, and Dev/QA pipeline orchestration.
+"""CTO Crew — technical strategy, gatekeeping, and Dev/QA pipeline orchestration."""
 
 import os
 import sys
@@ -19,7 +19,7 @@ from tools.cto_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Single agent (CTO) with all technical authority:
 - Scouts new tools/frameworks to reduce cost and maintenance
 - Evaluates architecture and proposes improvements

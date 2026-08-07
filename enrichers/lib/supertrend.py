@@ -52,19 +52,25 @@ def compute_multiframe_supertrend(
 
 
 def _aggregate_to_timeframe(buf, minutes: int):
-    candles = list(buf.buf)
+    # Only the LATEST contiguous run counts as "current" data (IndicatorBuffer.
+    # latest_contiguous_candles() — shared with smc.py's structure detection, same
+    # class of bug, same fix). A chunk built purely from an old, internally-gap-free
+    # stretch (e.g. entirely yesterday's bars) would still be real data, just STALE,
+    # and reporting it as today's signal is the same bug as bridging the gap outright.
+    candles = buf.latest_contiguous_candles()
     if len(candles) < minutes:
         return None, None, None, None
 
     opens, highs, lows, closes = [], [], [], []
-    for i in range(minutes - 1, len(candles), minutes):
-        start = max(0, i - minutes + 1)
-        chunk = candles[start : i + 1]
-        if len(chunk) >= minutes:
+    chunk: list = []
+    for candle in candles:
+        chunk.append(candle)
+        if len(chunk) == minutes:
             opens.append(chunk[0]["open"])
             highs.append(max(c["high"] for c in chunk))
             lows.append(min(c["low"] for c in chunk))
             closes.append(chunk[-1]["close"])
+            chunk = []
 
     if len(closes) < 2:
         return None, None, None, None

@@ -502,6 +502,19 @@ def build_report(
     return "\n".join(lines)
 
 
+def _is_trading_day() -> bool:
+    """Same weekend/holiday calendar every capture unit's ExecCondition already uses —
+    reused (not reimplemented) so this can't drift out of sync with the real gate.
+    Without this, token-freshness (checked against a fixed-hours threshold, not
+    calendar-aware) flags a normal Friday-refresh as 🔴 STALE by Sunday, every week."""
+    try:
+        return subprocess.run(
+            [str(PROJECT_ROOT / "cron" / "check_market_open.sh"), "NSE"]
+        ).returncode == 0
+    except Exception:
+        return True   # fail open: on doubt, still report rather than go silent
+
+
 def main():
     logger.info("=" * 60)
     logger.info("LOG ANALYZER DAEMON — STARTING")
@@ -513,6 +526,11 @@ def main():
     while True:
         try:
             start = time.monotonic()
+
+            if not _is_trading_day():
+                logger.info("Non-trading day — skipping scan/report")
+                time.sleep(POLL_INTERVAL)
+                continue
 
             logger.info("Scanning logs...")
             findings = scan_all_sources()

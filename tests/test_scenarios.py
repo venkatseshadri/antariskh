@@ -8,13 +8,20 @@ import os, sys, json, tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent / "antariksh"
-sys.path.insert(0, str(PROJECT_ROOT.parent))
+sys.path.insert(0, str(PROJECT_ROOT))
+# Also prepend this file's OWN directory (antariksh/tests) and import scenario_runner/
+# fixtures WITHOUT a "tests." package prefix. On this box, other repos (e.g. brahmand)
+# also have a tests/ package with its own __init__.py — in a full multi-repo pytest run
+# whichever "tests" package Python resolves FIRST wins for the whole process (package
+# caching in sys.modules), so "from tests.X import Y" is not reliable here even though
+# antariksh's own tests/ is a correctly-pathed namespace package.
+sys.path.insert(0, str(Path(__file__).parent))
 
 os.environ["ANTARIKSH_MOCK_MODE"] = "1"
 
-from tests.scenario_runner import ScenarioRunner
-from tests.fixtures.seed_history import seed_jsonl, seed_consecutive_losses, seed_30day_dd_at_threshold
-from tests.fixtures.mock_llm import make_mock_responses
+from scenario_runner import ScenarioRunner
+from fixtures.seed_history import seed_jsonl, seed_consecutive_losses, seed_30day_dd_at_threshold
+from fixtures.mock_llm import make_mock_responses
 
 import crew_structure as crew
 

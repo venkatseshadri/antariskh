@@ -1,4 +1,4 @@
-"""Trading Analyst Crew — 4-agent trade validation (Varaha model: Scout → Execution → Analyst → Reporter).
+"""Trading Analyst Crew — 4-agent trade validation (Varaha model: Scout → Execution → Analyst → Reporter)."""
 
 import os
 import sys
@@ -42,7 +42,7 @@ from tools.risk_tools import (
 from dotenv import load_dotenv
 load_dotenv()
 
-
+"""
 Agents:
   - Technical Scout: market regime from DuckDB (ADX, SuperTrend, VIX)
   - Trade Execution Validator: spec conformance, slippage, duplicates

@@ -26,7 +26,12 @@ def compute_smc_indicators(buf) -> Dict:
 
     result = {}
     window = 50
-    candles = list(buf.buf)[-window:]
+    # latest_contiguous_candles() (not raw buf.buf) -- a stale prior-session tail must
+    # not blend into "current" order-block/FVG/liquidity/structure detection, same
+    # bug class as the SuperTrend consensus fix (confirmed live 2026-07-07:
+    # structure_type flipped HH/MIXED/HH/HH/LL in the first few minutes of a session
+    # because this window mixed yesterday's last bars with today's first ones).
+    candles = buf.latest_contiguous_candles()[-window:]
 
     result.update(_find_order_blocks(candles))
     result.update(_find_fvg(candles))

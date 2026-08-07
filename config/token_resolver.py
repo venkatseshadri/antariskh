@@ -60,12 +60,20 @@ WEEKLY_MONTH = {
 }
 
 
-def _download_master(exchange: str) -> Path:
+def _download_master(exchange: str, force: bool = False) -> Path:
+    """Fetch the broker master file, refreshing once per calendar day.
+
+    Bug fixed 2026-07-05: this used to be `if path.exists(): return path` — a
+    permanent cache with no TTL, so the file downloaded once ever and every expiry/
+    lot-size/strike revision since was silently invisible (found 38 days stale live).
+    """
     MASTER_DIR.mkdir(parents=True, exist_ok=True)
     fname = f"{exchange}_symbols.txt"
     path = MASTER_DIR / fname
-    if path.exists():
-        return path
+    if path.exists() and not force:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
+        if mtime == date.today():
+            return path
     import urllib.request
 
     url = MASTER_URLS.get(exchange)
@@ -75,6 +83,15 @@ def _download_master(exchange: str) -> Path:
         with zipfile.ZipFile(io.BytesIO(resp.read())) as zf:
             zf.extract(fname, MASTER_DIR)
     return path
+
+
+def master_age_days(exchange: str) -> Optional[int]:
+    """Age of the cached master file in days, or None if not downloaded yet."""
+    path = MASTER_DIR / f"{exchange}_symbols.txt"
+    if not path.exists():
+        return None
+    mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
+    return (date.today() - mtime).days
 
 
 def _broker_weekly_expiries(index: str) -> list[date]:
@@ -146,6 +163,38 @@ def _next_expiry(weekday: int) -> date:
     """Thin adapter — delegates to resolve_weekly_expiry for NIFTY/SENSEX."""
     index = "NIFTY" if weekday == NIFTY_WEEKDAY else "SENSEX"
     return resolve_weekly_expiry(index)
+
+
+def _broker_monthly_expiries(index: str) -> list[date]:
+    """Monthly = last broker-listed weekly expiry of each calendar month
+    (NSE/BSE convention). Derived from the same weekly list as
+    _broker_weekly_expiries, so holiday-aware by construction."""
+    by_month: dict[tuple[int, int], date] = {}
+    for d in _broker_weekly_expiries(index):
+        key = (d.year, d.month)
+        if key not in by_month or d > by_month[key]:
+            by_month[key] = d
+    return sorted(by_month.values())
+
+
+def resolve_monthly_expiry(index: str = "NIFTY", now: Optional[datetime] = None) -> date:
+    """Single expiry oracle for the monthly contract — mirrors resolve_weekly_expiry.
+
+    Rule: nearest unexpired monthly (last weekly-of-month) >= today, held until
+    15:25 IST on expiry day, then rolls to next month's monthly. No fallback —
+    raises if the broker master isn't available, since a hand-computed "last
+    trading day of month" (holiday-unaware) could silently mis-price a whole
+    monthly cycle rather than fail loudly.
+    """
+    if now is None:
+        now = datetime.now()
+    today = now.date()
+    for expiry in _broker_monthly_expiries(index):
+        if expiry >= today:
+            if expiry == today and (now.hour, now.minute) >= (15, 25):
+                continue
+            return expiry
+    raise ValueError(f"No unexpired monthly expiry found for {index} in broker master")
 
 
 def _build_tsym_weekly_nifty(expiry: date, strike: int, opt: str) -> str:
@@ -302,6 +351,18 @@ class TokenResolver:
     def resolve_weekly_sensex_for_expiry(self, expiry_date: date, atm_range: int = 5) -> list[dict]:
         return self._weekly_for_expiry(
             expiry_date, self.sensex_spot or 75800, 100, "BFO", _build_tsym_weekly_sensex, atm_range
+        )
+
+    def resolve_monthly_sensex_for_expiry(
+        self, expiry_date: date, atm_range: int = 5
+    ) -> list[dict]:
+        return self._weekly_for_expiry(
+            expiry_date,
+            self.sensex_spot or 75800,
+            100,
+            "BFO",
+            _build_tsym_monthly_sensex,
+            atm_range,
         )
 
     def resolve_monthly_sensex(self, atm_range: int = 5) -> list[dict]:

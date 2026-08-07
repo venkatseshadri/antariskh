@@ -1,5 +1,7 @@
 # Antariksh Trading Desk — Complete Agent Specification
 
+**Be extremely concise. Sacrifice grammar for the sake of concision.**
+
 ## System Overview
 
 The Antariksh trading desk is a **7-agent hierarchical system** where each agent has specific responsibilities, tools, and knowledge. All agents work together in a coordinated state machine with 4 phases:

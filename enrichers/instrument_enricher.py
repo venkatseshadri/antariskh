@@ -163,6 +163,10 @@ ENRICHED_COLUMNS = [
     "pivot_s1",
     "pivot_s2",
     "pivot_s3",
+    "cpr_tc",
+    "cpr_bc",
+    "cpr_width",
+    "cpr_width_pct",
     "fib_0",
     "fib_236",
     "fib_382",
@@ -302,12 +306,14 @@ class Enricher:
 
     def _warmup(self):
         rows = self.conn.execute(
-            """SELECT open, high, low, close, volume FROM market_data
+            """SELECT open, high, low, close, volume, timestamp FROM market_data
                WHERE instrument = ? ORDER BY timestamp DESC LIMIT 200""",
             (self.instrument,),
         ).fetchall()
         for row in reversed(rows):
-            self.buf.append(row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0, row[4] or 0)
+            self.buf.append(
+                row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0, row[4] or 0, ts=row[5]
+            )
         if rows:
             log.info(f"Warmup: {len(rows)} bars loaded into buffer")
 
@@ -372,7 +378,13 @@ class Enricher:
         if inst == "MCX":
             inst = "MCX"  # keep generic
         if inst not in self._mcx_buffers:
-            self._mcx_buffers[inst] = IndicatorBuffer(maxlen=200)
+            # MCX per-commodity bars arrive sparser/more irregularly than NIFTY/SENSEX
+            # (shared bars:MCX:1 stream interleaved across 7 commodities) — the default
+            # 2min contiguity gap left st_consensus null ~80-100% of the time per
+            # commodity (measured 2026-07-10: median gap 3min, p95 15min, p99 36min on
+            # NATGASMINI). 15min covers real intra-session cadence while still excluding
+            # genuine session-boundary staleness (p99+ / overnight gaps).
+            self._mcx_buffers[inst] = IndicatorBuffer(maxlen=200, max_gap_minutes=15.0)
         return inst, self._mcx_buffers[inst]
 
     def enrich_bar(self, bar: Dict) -> Dict:
@@ -389,6 +401,7 @@ class Enricher:
             bar.get("low", spot),
             spot,
             bar.get("volume", 0) or 0,
+            ts=bar.get("timestamp"),
         )
 
         if self.open_price is None:
@@ -483,7 +496,14 @@ class Enricher:
             "distance_to_resistance": None,
         }
 
-        atm_strike = round(spot / 50) * 50 if spot else None
+        # Strike gap is instrument-specific — NIFTY=50, SENSEX=100 (same convention
+        # as config/token_resolver.py's atm_strike()). Was hardcoded /50 for every
+        # instrument, so SENSEX's atm_strike came out round-50 instead of round-100
+        # (e.g. spot 77368 -> 77350, not a real listed strike) — silently poisoned
+        # every downstream strike-window lookup (ATOM's option chain came back
+        # empty on these rows, logged as "premiums_unavailable", found live 2026-07-16).
+        atm_gap = 100 if self.instrument == "SENSEX" else 50
+        atm_strike = round(spot / atm_gap) * atm_gap if spot else None
         india_vix = None
         futures_ltp = None
 
@@ -750,7 +770,9 @@ def run_live(instrument: str):
     # Spot indices carry volume=0 always (an index isn't a tradable instrument), so VWAP
     # is otherwise permanently None. Borrow real traded volume from the paired futures
     # feed at the same timestamp instead — futures move 1:1 with spot intraday.
-    fut_log_path = LIVE_DIR / f"{instrument}-FUT_1min.log" if instrument in ("NIFTY", "SENSEX") else None
+    fut_log_path = (
+        LIVE_DIR / f"{instrument}-FUT_1min.log" if instrument in ("NIFTY", "SENSEX") else None
+    )
     fut_last_size = 0
     fut_volume_by_ts: dict = {}
 

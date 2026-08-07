@@ -29,3 +29,9 @@ data/code_audit_state.json
 docs/REVIEW_FINDINGS.md
 ralph/progress/
 data/code_audit_manifest.json
+
+# Runtime DB blobs + test scratch DBs + data snapshots (not source, not meant for git)
+data/live/*.db
+data/*.sqlite
+tests/_cap_test*.sqlite
+data/export/

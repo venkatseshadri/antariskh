@@ -1,4 +1,4 @@
-"""CTO-Dev-QA Pipeline — orchestrated change management.
+"""CTO-Dev-QA Pipeline — orchestrated change management."""
 
 import json
 import os
@@ -9,20 +9,6 @@ from typing import Dict, List, Optional
 from crewai import Agent, Task, Crew, Process
 from crewai.llm import LLM
 from config_loader import load_agent_config
-    from tools.cto_tools import (
-        validate_change_spec,
-        assess_change_risk,
-        cto_signoff,
-        generate_cto_brief,
-    )
-    from tools.dev_tools import preview_edit, apply_edit, commit_change, read_source
-    from tools.qa_tools import (
-        run_test_suite,
-        validate_no_regression,
-        run_scenario,
-        generate_qa_report,
-    )
-    from tools.cto_tools import preview_diff
 from tools.cto_tools import (
     assess_change_risk,
     preview_diff,
@@ -51,7 +37,7 @@ from tools.qa_tools import (
 from crewai.tools import tool as crew_tool
 from dotenv import load_dotenv
 
-
+"""
 Single hierarchical crew: CTO is manager, Dev Engineer and QA Tester are workers.
 Flow: Change Request → CTO evaluates risk → delegates to Dev → delegates to QA → final signoff.
 

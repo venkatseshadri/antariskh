@@ -10,9 +10,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOG_FILE="$PROJECT_DIR/logs/multitf_live.log"
+LOG_FILE="$PROJECT_DIR/logs/penguin/multitf_live.log"
 LOCK_FILE="$PROJECT_DIR/locks/multitf_live.lock"
-mkdir -p "$(dirname "$LOCK_FILE")" "$PROJECT_DIR/logs"
+mkdir -p "$(dirname "$LOCK_FILE")" "$(dirname "$LOG_FILE")"
 PYTHON_BIN="/usr/bin/python3"
 
 # Primary guard: reliable liveness check (backgrounded daemon releases inherited

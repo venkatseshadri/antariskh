@@ -203,37 +203,52 @@ def test_expiry_not_in_past():
         fail(f"{s} is PAST (today={today})")
 
 
+def _real_upcoming_nifty_expiries(n: int = 2) -> list:
+    """The next `n` NIFTY weekly expiries the broker master ACTUALLY lists, from
+    today. Tests 3.3-3.5/8.1 used to hardcode '2026-06-02' etc. — that only worked
+    while "today" was before June; once real time passed June, the (correctly)
+    refreshed master no longer listed expired June contracts and every one of
+    these tests failed, even though resolve_weekly_expiry was right. Deriving the
+    test moments from whatever the master lists TODAY makes these tests permanently
+    correct instead of re-breaking every few weeks as the master rolls forward."""
+    from config.token_resolver import _broker_weekly_expiries
+
+    today = date.today()
+    upcoming = [e for e in _broker_weekly_expiries("NIFTY") if e >= today]
+    return upcoming[:n]
+
+
 def test_expiry_wednesday_to_tuesday():
-    """Mon Jun 1 10:00 → nearest Tue Jun 2 (0DTE allowed, no push-to-week guard)."""
+    """Mon → nearest listed Tue (0DTE allowed, no push-to-next-week guard)."""
     print("\n  3.3  Mon → Tue (correct 0DTE policy)")
-    mon = datetime(2026, 6, 1, 10, 0, 0)
+    tue, _ = _real_upcoming_nifty_expiries()
+    mon = datetime(tue.year, tue.month, tue.day, 10, 0, 0) - timedelta(days=1)
     from config.token_resolver import resolve_weekly_expiry
 
     expiry = resolve_weekly_expiry("NIFTY", now=mon)
-    expected = date(2026, 6, 2)  # Tue (NOT pushed to next week)
-    (ok if expiry == expected else fail)(f"{expiry} != {expected} (old bug pushed to Jun 9)")
+    (ok if expiry == tue else fail)(f"{expiry} != {tue} (old bug pushed to next week)")
 
 
 def test_expiry_tuesday_morning_today():
-    """Tue Jun 2 09:00 → TODAY (0DTE, held until 15:25, NOT rolled)."""
+    """Tue 09:00 → TODAY (0DTE, held until 15:25, NOT rolled)."""
     print("\n  3.4  Tue 09:00 → today (0DTE — correct)")
-    tue = datetime(2026, 6, 2, 9, 0, 0)
+    tue, _ = _real_upcoming_nifty_expiries()
+    tue_am = datetime(tue.year, tue.month, tue.day, 9, 0, 0)
     from config.token_resolver import resolve_weekly_expiry
 
-    expiry = resolve_weekly_expiry("NIFTY", now=tue)
-    expected = date(2026, 6, 2)  # SAME day (old bug pushed to Jun 9)
-    (ok if expiry == expected else fail)(f"{expiry} != {expected} (old bug skipped 0DTE)")
+    expiry = resolve_weekly_expiry("NIFTY", now=tue_am)
+    (ok if expiry == tue else fail)(f"{expiry} != {tue} (old bug skipped 0DTE)")
 
 
 def test_expiry_tuesday_afternoon_rolls():
-    """Tue Jun 2 15:30 → next Tue (past 15:25 rollover)."""
+    """Tue 15:30 → next listed Tue (past 15:25 rollover)."""
     print("\n  3.5  Tue 15:30 → next week (correct roll)")
-    tue_pm = datetime(2026, 6, 2, 15, 30, 0)
+    tue, next_tue = _real_upcoming_nifty_expiries()
+    tue_pm = datetime(tue.year, tue.month, tue.day, 15, 30, 0)
     from config.token_resolver import resolve_weekly_expiry
 
     expiry = resolve_weekly_expiry("NIFTY", now=tue_pm)
-    expected = date(2026, 6, 9)  # NEXT Tuesday
-    (ok if expiry == expected else fail)(f"{expiry} != {expected}")
+    (ok if expiry == next_tue else fail)(f"{expiry} != {next_tue}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -323,27 +338,35 @@ def test_b1_hold_window_boundary():
     """B1: 15:24 keeps 0DTE, 15:25 rolls to next week."""
     print("\n  8.1  B1 hold-window boundary")
     sys.path.insert(0, str(REPO_ROOT))
-    tue_1524 = datetime(2026, 6, 2, 15, 24, 0)
-    tue_1525 = datetime(2026, 6, 2, 15, 25, 0)
+    tue, next_tue = _real_upcoming_nifty_expiries()
+    tue_1524 = datetime(tue.year, tue.month, tue.day, 15, 24, 0)
+    tue_1525 = datetime(tue.year, tue.month, tue.day, 15, 25, 0)
     from config.token_resolver import resolve_weekly_expiry
 
     e1524 = resolve_weekly_expiry("NIFTY", now=tue_1524)
     e1525 = resolve_weekly_expiry("NIFTY", now=tue_1525)
-    (ok if e1524 == date(2026, 6, 2) else fail)(f"15:24 rolled: {e1524}")
-    (ok if e1525 == date(2026, 6, 9) else fail)(f"15:25 kept: {e1525}")
+    (ok if e1524 == tue else fail)(f"15:24 rolled: {e1524}")
+    (ok if e1525 == next_tue else fail)(f"15:25 kept: {e1525}")
 
 
 def test_holiday_fixture():
-    """T22 holiday: broker master has NO Oct contracts → nearest is Dec 29 (holiday-aware)."""
+    """T22 holiday: nearest real broker-listed weekly on/after Oct 2 is holiday-aware.
+
+    Asserts against the live scrip master, which is refreshed daily and grows
+    new far-dated contracts over time (2026-07-29: re-checked directly against
+    _broker_weekly_expiries — Oct 27 is now genuinely listed, wasn't when this
+    test was first written expecting Dec 29). This fixture will need updating
+    again whenever the broker lists the next contract in this window; the
+    calendar-only fallback would give Oct 6, which the assertion below still
+    correctly rules out."""
     print("\n  8.2  T22 holiday fixture")
     hol = datetime(2026, 10, 2, 10, 0, 0)
     from config.token_resolver import resolve_weekly_expiry
 
     e = resolve_weekly_expiry("NIFTY", now=hol)
-    # Broker master has no Oct dates → nearest available is Dec 29
     # Calendar-only fallback would give Oct 6 — broker IS holiday-aware
-    (ok if e == date(2026, 12, 29) else fail)(
-        f"Holiday Fri Oct 2 → {e} (calendar says Oct 6; broker knows Oct empty)"
+    (ok if e == date(2026, 10, 27) else fail)(
+        f"Holiday Fri Oct 2 → {e} (calendar says Oct 6; broker knows better)"
     )
 
 

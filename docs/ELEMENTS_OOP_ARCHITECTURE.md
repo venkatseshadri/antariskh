@@ -19,7 +19,10 @@ classDiagram
     class GenericTrader {
         +api
         +broker: str
+        +mode: str
+        +paper_orders: list~dict~
         BROKER: str | None = None
+        DEFAULT_MODE = "LIVE"
         +place_leg(action, exchange, tsym, qty, price, remarks, token)
         +place_resting_sl(action, exchange, tsym, qty, trigger, remarks)
         +cancel_order(orderno)
@@ -36,6 +39,10 @@ classDiagram
         +roll_leg(side, leg_name, resolve_new_leg, instrument, S, qty, atr, orbiter_initial_tsl_fn, remarks_prefix)
     }
 
+    class MockOptionsTrader {
+        DEFAULT_MODE = "PAPER"
+    }
+
     class FuturesTrader {
         <<placeholder>>
         no futures tier built yet
@@ -47,8 +54,16 @@ classDiagram
         HYDROGEN_BROKER env, default FLATTRADE
     }
 
+    class MockHydrogenTrader {
+        DEFAULT_MODE = "PAPER"
+    }
+
     class ProtonTrader {
         BROKER = "SHOONYA"
+    }
+
+    class MockProtonTrader {
+        DEFAULT_MODE = "PAPER"
     }
 
     class NeutronTrader {
@@ -59,9 +74,47 @@ classDiagram
 
     GenericTrader <|-- OptionsTrader
     GenericTrader <|-- FuturesTrader
+    OptionsTrader <|-- MockOptionsTrader
     OptionsTrader <|-- HydrogenTrader
     OptionsTrader <|-- ProtonTrader
     OptionsTrader <|-- NeutronTrader
+    HydrogenTrader <|-- MockHydrogenTrader
+    ProtonTrader <|-- MockProtonTrader
+```
+
+## Testing: mode injection + PAPER call recording
+
+`mode` ("LIVE"/"PAPER") is a constructor arg on `GenericTrader`, not hardcoded —
+subclasses set `DEFAULT_MODE` and a caller can still override it explicitly.
+In PAPER mode every order-placing primitive (`place_leg`, `place_resting_sl`,
+`cancel_order`, `cancel_resting_sl`) short-circuits to a canned successful
+result **without touching `self.api`** — so `api=None` works — and appends
+the call's exact parameters to `self.paper_orders`. That list is the
+assertion surface for tests: correct action/exchange/tsym/qty/price/trigger
+reached the placement call, and in the right order (hedge before short on
+entry, short before hedge on exit, cancel before replace on SL-replace).
+
+**Deliberately out of scope**: whether the broker actually accepts/fills the
+order, WS behavior, rejection handling — that's the broker's own
+responsibility, already covered by the separate Shoonya/Flattrade test
+suites. This hierarchy's tests stop at "did we send the right order," not
+"did the order execute."
+
+`MockOptionsTrader`, `MockHydrogenTrader`, `MockProtonTrader` are thin
+subclasses that just set `DEFAULT_MODE = "PAPER"` — self-documenting test
+fixtures. Functionally identical to constructing the real tier class with
+`mode="PAPER"` explicitly; the Mock names exist for readability at call
+sites in tests, not because they behave differently.
+
+```python
+from elements import MockProtonTrader
+
+t = MockProtonTrader(api=None)
+t.enter_side(side, qty, "TEST_PROTON")
+assert t.paper_orders[0]["call"] == "place_leg"
+assert t.paper_orders[0]["action"] == "B"   # hedge BUY first
+assert t.paper_orders[1]["action"] == "S"   # short SELL second
+assert t.paper_orders[2]["trigger"] == side["dynamic_sl"]
 ```
 
 ## What's live vs planned
@@ -71,8 +124,9 @@ classDiagram
 | `GenericTrader` | Built | Broker-agnostic order primitives only — no spread-shape assumptions. |
 | `OptionsTrader` | Built | 2-leg (short+hedge) spread execution. All current tiers are options tiers. |
 | `FuturesTrader` | Stub only | Sibling of `OptionsTrader`, empty — no futures tier exists to justify building it out yet. |
-| `HydrogenTrader` | Built, **wiring in progress** | `hydrogen_ic_pilot_orbiter.py` being switched from flat-function wrappers to this class. |
-| `ProtonTrader` | Built, **wiring in progress** | `proton_live.py` being switched from flat-function wrappers to this class. |
+| `HydrogenTrader` | Built + wired | `hydrogen_ic_pilot_orbiter.py`'s wrapper functions call this class. |
+| `ProtonTrader` | Built + wired | `proton_live.py`'s wrapper functions call this class. |
+| `MockOptionsTrader` / `MockHydrogenTrader` / `MockProtonTrader` | Built | `DEFAULT_MODE = "PAPER"` test fixtures — see Testing section below. |
 | `NeutronTrader` | Not started | `monthly_ic_pilot_orbiter.py` stays on its own already-fixed local copies until Hydrogen + Proton prove the hierarchy solid. Real live money — deliberately last. |
 
 ## Method reuse across tiers
